@@ -1,0 +1,77 @@
+{
+  "commands": [
+    {
+      "name": "doctor",
+      "usage": "gomoufox doctor [--json]"
+    },
+    {
+      "name": "install",
+      "usage": "gomoufox install [--dir <venv>] [--python <path>] [--force]"
+    },
+    {
+      "name": "open",
+      "usage": "gomoufox open <url> [--profile <dir>] [--save-session <path>] [--wait]"
+    },
+    {
+      "name": "get",
+      "usage": "gomoufox get <url> [--html|--text|--markdown] [--wait-selector <css>]"
+    },
+    {
+      "name": "screenshot",
+      "usage": "gomoufox screenshot <url> --out <path> [--full-page|--wait-selector <css>]"
+    },
+    {
+      "name": "eval",
+      "usage": "gomoufox eval <url> --enable-eval (--script <js>|--script-file <path>)"
+    },
+    {
+      "name": "fetch",
+      "usage": "gomoufox fetch <url> [--method GET] [--data <text>] [--navigate-first <url>]"
+    },
+    {
+      "name": "session",
+      "usage": "gomoufox session <export|import> [flags]"
+    },
+    {
+      "name": "skills",
+      "usage": "gomoufox skills <list|show|export|install> [flags]"
+    },
+    {
+      "name": "serve",
+      "usage": "gomoufox serve --auth-token <token> [--bind 127.0.0.1] [--port 3741] [--session-dir <dir>]"
+    },
+    {
+      "name": "mcp",
+      "usage": "gomoufox mcp [--transport stdio|http] [--session-dir <dir>]"
+    },
+    {
+      "name": "help",
+      "usage": "gomoufox help [command] [--json] [--fields <list>] [--full]"
+    }
+  ],
+  "discovery": [
+    "gomoufox help --json",
+    "gomoufox help <command> --json",
+    "gomoufox help --json --fields commands",
+    "gomoufox skills list --json",
+    "gomoufox skills show core --json",
+    "gomoufox mcp --help"
+  ],
+  "global": [
+    "--json",
+    "--help",
+    "--version",
+    "--verbose",
+    "--profile <dir>",
+    "--timeout <dur>",
+    "--proxy <url>",
+    "--locale <tag>",
+    "--os <windows|macos|linux>",
+    "--headless|--headful",
+    "--server <url>",
+    "--server-token <token>",
+    "--allow-schemes <csv>",
+    "--allow-private-ips"
+  ],
+  "usage": "gomoufox <command> [flags]"
+}

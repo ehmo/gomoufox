@@ -1,0 +1,1637 @@
+{
+  "tools": [
+    {
+      "_meta": {
+        "gomoufox/risk": {
+          "gates": [
+            "network_policy"
+          ],
+          "level": "medium",
+          "untrusted": true
+        }
+      },
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": false
+      },
+      "description": "Navigate to an HTTP(S) URL and return final page metadata with untrusted web provenance.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "session_id": {
+            "default": "default",
+            "description": "Session name.",
+            "type": "string"
+          },
+          "timeout_ms": {
+            "default": 30000,
+            "maximum": 120000,
+            "minimum": 1000,
+            "type": "integer"
+          },
+          "url": {
+            "description": "URL to navigate to. Must use http:// or https:// scheme.",
+            "pattern": "^https?://",
+            "type": "string"
+          },
+          "wait_until": {
+            "default": "domcontentloaded",
+            "enum": [
+              "domcontentloaded",
+              "load",
+              "networkidle"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "url"
+        ],
+        "type": "object"
+      },
+      "name": "browser_navigate"
+    },
+    {
+      "_meta": {
+        "gomoufox/risk": {
+          "level": "medium",
+          "untrusted": true
+        }
+      },
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": true,
+        "readOnlyHint": true
+      },
+      "description": "Return current page content as markdown, text, or HTML with untrusted web provenance.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "format": {
+            "default": "markdown",
+            "enum": [
+              "html",
+              "markdown",
+              "text"
+            ],
+            "type": "string"
+          },
+          "max_bytes": {
+            "default": 524288,
+            "maximum": 524288,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "selector": {
+            "description": "CSS selector to scope content extraction.",
+            "type": "string"
+          },
+          "session_id": {
+            "default": "default",
+            "description": "Session name.",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "name": "browser_get_content"
+    },
+    {
+      "_meta": {
+        "gomoufox/risk": {
+          "level": "medium",
+          "untrusted": true
+        }
+      },
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": true,
+        "readOnlyHint": true
+      },
+      "description": "Capture the current page or one selected element as a PNG image with untrusted web provenance metadata.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "full_page": {
+            "default": false,
+            "description": "Capture full scrollable page instead of visible viewport.",
+            "type": "boolean"
+          },
+          "full_page_max_bytes": {
+            "default": 10485760,
+            "maximum": 10485760,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "max_bytes": {
+            "default": 2097152,
+            "maximum": 2097152,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "selector": {
+            "description": "CSS selector for element screenshot.",
+            "type": "string"
+          },
+          "session_id": {
+            "default": "default",
+            "description": "Session name.",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "name": "browser_screenshot"
+    },
+    {
+      "_meta": {
+        "gomoufox/risk": {
+          "gates": [
+            "--allow-snapshot-values"
+          ],
+          "level": "medium",
+          "untrusted": true
+        }
+      },
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": true,
+        "readOnlyHint": true
+      },
+      "description": "Return a compact accessibility snapshot with refs and untrusted web provenance; refs expire after navigation.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "include_values": {
+            "default": false,
+            "description": "Return non-sensitive textbox values up to 120 characters. Requires --allow-snapshot-values. Password, hidden, token-like, and long values remain redacted.",
+            "type": "boolean"
+          },
+          "interactive_only": {
+            "default": false,
+            "description": "Return only interactive elements.",
+            "type": "boolean"
+          },
+          "max_elements": {
+            "default": 200,
+            "maximum": 1000,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "session_id": {
+            "default": "default",
+            "description": "Session name.",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "name": "browser_snapshot"
+    },
+    {
+      "_meta": {
+        "gomoufox/risk": {
+          "level": "high"
+        }
+      },
+      "annotations": {
+        "destructiveHint": true,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": false
+      },
+      "description": "Click an element by snapshot ref or CSS selector, with optional navigation waiting.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "oneOf": [
+          {
+            "required": [
+              "ref"
+            ]
+          },
+          {
+            "required": [
+              "selector"
+            ]
+          }
+        ],
+        "properties": {
+          "button": {
+            "default": "left",
+            "enum": [
+              "left",
+              "right",
+              "middle"
+            ],
+            "type": "string"
+          },
+          "click_count": {
+            "default": 1,
+            "maximum": 3,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "ref": {
+            "description": "Element ref from browser_snapshot.",
+            "type": "string"
+          },
+          "selector": {
+            "description": "CSS selector. Used only when ref is absent.",
+            "type": "string"
+          },
+          "session_id": {
+            "default": "default",
+            "description": "Session name.",
+            "type": "string"
+          },
+          "timeout_ms": {
+            "default": 10000,
+            "maximum": 120000,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "wait_for_navigation": {
+            "default": false,
+            "description": "Wait for navigation after click.",
+            "type": "boolean"
+          }
+        },
+        "type": "object"
+      },
+      "name": "browser_click"
+    },
+    {
+      "_meta": {
+        "gomoufox/risk": {
+          "level": "high"
+        }
+      },
+      "annotations": {
+        "destructiveHint": true,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": false
+      },
+      "description": "Type text into an element by snapshot ref or CSS selector without echoing the typed value.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "oneOf": [
+          {
+            "required": [
+              "ref"
+            ]
+          },
+          {
+            "required": [
+              "selector"
+            ]
+          }
+        ],
+        "properties": {
+          "clear_first": {
+            "default": true,
+            "description": "Clear the field before typing.",
+            "type": "boolean"
+          },
+          "delay_ms": {
+            "default": 0,
+            "maximum": 500,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "press_enter_after": {
+            "default": false,
+            "description": "Press Enter after typing.",
+            "type": "boolean"
+          },
+          "ref": {
+            "description": "Element ref from browser_snapshot.",
+            "type": "string"
+          },
+          "selector": {
+            "description": "CSS selector. Used only when ref is absent.",
+            "type": "string"
+          },
+          "session_id": {
+            "default": "default",
+            "description": "Session name.",
+            "type": "string"
+          },
+          "text": {
+            "description": "Text to type. The response must not echo this value.",
+            "maxLength": 65536,
+            "type": "string"
+          },
+          "timeout_ms": {
+            "default": 10000,
+            "maximum": 120000,
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "text"
+        ],
+        "type": "object"
+      },
+      "name": "browser_type"
+    },
+    {
+      "_meta": {
+        "gomoufox/risk": {
+          "level": "high"
+        }
+      },
+      "annotations": {
+        "destructiveHint": true,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": false
+      },
+      "description": "Press one keyboard key on an element by snapshot ref or CSS selector without echoing page state.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "oneOf": [
+          {
+            "required": [
+              "ref"
+            ]
+          },
+          {
+            "required": [
+              "selector"
+            ]
+          }
+        ],
+        "properties": {
+          "key": {
+            "description": "Keyboard key, such as Enter, Escape, Tab, ArrowDown, or Control+A.",
+            "maxLength": 128,
+            "type": "string"
+          },
+          "ref": {
+            "description": "Element ref from browser_snapshot.",
+            "type": "string"
+          },
+          "selector": {
+            "description": "CSS selector. Used only when ref is absent.",
+            "type": "string"
+          },
+          "session_id": {
+            "default": "default",
+            "description": "Session name.",
+            "type": "string"
+          },
+          "timeout_ms": {
+            "default": 10000,
+            "maximum": 120000,
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "key"
+        ],
+        "type": "object"
+      },
+      "name": "browser_press_key"
+    },
+    {
+      "_meta": {
+        "gomoufox/risk": {
+          "level": "high"
+        }
+      },
+      "annotations": {
+        "destructiveHint": true,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": false
+      },
+      "description": "Hover an element by snapshot ref or CSS selector without returning page state.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "oneOf": [
+          {
+            "required": [
+              "ref"
+            ]
+          },
+          {
+            "required": [
+              "selector"
+            ]
+          }
+        ],
+        "properties": {
+          "force": {
+            "default": false,
+            "description": "Bypass actionability checks.",
+            "type": "boolean"
+          },
+          "ref": {
+            "description": "Element ref from browser_snapshot.",
+            "type": "string"
+          },
+          "selector": {
+            "description": "CSS selector. Used only when ref is absent.",
+            "type": "string"
+          },
+          "session_id": {
+            "default": "default",
+            "description": "Session name.",
+            "type": "string"
+          },
+          "timeout_ms": {
+            "default": 10000,
+            "maximum": 120000,
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "type": "object"
+      },
+      "name": "browser_hover"
+    },
+    {
+      "_meta": {
+        "gomoufox/risk": {
+          "level": "high"
+        }
+      },
+      "annotations": {
+        "destructiveHint": true,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": false
+      },
+      "description": "Scroll the page by wheel delta or scroll one element into view by snapshot ref or CSS selector.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "delta_x": {
+            "description": "Wheel delta X in CSS pixels.",
+            "maximum": 100000,
+            "minimum": -100000,
+            "type": "number"
+          },
+          "delta_y": {
+            "description": "Wheel delta Y in CSS pixels.",
+            "maximum": 100000,
+            "minimum": -100000,
+            "type": "number"
+          },
+          "ref": {
+            "description": "Element ref from browser_snapshot. When present, the element is scrolled into view.",
+            "type": "string"
+          },
+          "selector": {
+            "description": "CSS selector. Used only when ref is absent.",
+            "type": "string"
+          },
+          "session_id": {
+            "default": "default",
+            "description": "Session name.",
+            "type": "string"
+          },
+          "timeout_ms": {
+            "default": 10000,
+            "maximum": 120000,
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "type": "object"
+      },
+      "name": "browser_scroll"
+    },
+    {
+      "_meta": {
+        "gomoufox/risk": {
+          "level": "high"
+        }
+      },
+      "annotations": {
+        "destructiveHint": true,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": false
+      },
+      "description": "Select one or more options in a select element by values, labels, or indexes.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "allOf": [
+          {
+            "oneOf": [
+              {
+                "required": [
+                  "ref"
+                ]
+              },
+              {
+                "required": [
+                  "selector"
+                ]
+              }
+            ]
+          },
+          {
+            "oneOf": [
+              {
+                "required": [
+                  "values"
+                ]
+              },
+              {
+                "required": [
+                  "labels"
+                ]
+              },
+              {
+                "required": [
+                  "indexes"
+                ]
+              }
+            ]
+          }
+        ],
+        "properties": {
+          "force": {
+            "default": false,
+            "description": "Bypass actionability checks.",
+            "type": "boolean"
+          },
+          "indexes": {
+            "description": "Option indexes to select.",
+            "items": {
+              "maximum": 10000,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "maxItems": 100,
+            "minItems": 1,
+            "type": "array"
+          },
+          "labels": {
+            "description": "Option labels to select.",
+            "items": {
+              "maxLength": 1024,
+              "type": "string"
+            },
+            "maxItems": 100,
+            "minItems": 1,
+            "type": "array"
+          },
+          "ref": {
+            "description": "Element ref from browser_snapshot.",
+            "type": "string"
+          },
+          "selector": {
+            "description": "CSS selector. Used only when ref is absent.",
+            "type": "string"
+          },
+          "session_id": {
+            "default": "default",
+            "description": "Session name.",
+            "type": "string"
+          },
+          "timeout_ms": {
+            "default": 10000,
+            "maximum": 120000,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "values": {
+            "description": "Option values to select.",
+            "items": {
+              "maxLength": 1024,
+              "type": "string"
+            },
+            "maxItems": 100,
+            "minItems": 1,
+            "type": "array"
+          }
+        },
+        "type": "object"
+      },
+      "name": "browser_select_option"
+    },
+    {
+      "_meta": {
+        "gomoufox/risk": {
+          "level": "high"
+        }
+      },
+      "annotations": {
+        "destructiveHint": true,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": false
+      },
+      "description": "Set checkbox or radio state by snapshot ref or CSS selector.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "oneOf": [
+          {
+            "required": [
+              "ref"
+            ]
+          },
+          {
+            "required": [
+              "selector"
+            ]
+          }
+        ],
+        "properties": {
+          "checked": {
+            "default": false,
+            "description": "Desired checked state.",
+            "type": "boolean"
+          },
+          "force": {
+            "default": false,
+            "description": "Bypass actionability checks.",
+            "type": "boolean"
+          },
+          "ref": {
+            "description": "Element ref from browser_snapshot.",
+            "type": "string"
+          },
+          "selector": {
+            "description": "CSS selector. Used only when ref is absent.",
+            "type": "string"
+          },
+          "session_id": {
+            "default": "default",
+            "description": "Session name.",
+            "type": "string"
+          },
+          "timeout_ms": {
+            "default": 10000,
+            "maximum": 120000,
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "checked"
+        ],
+        "type": "object"
+      },
+      "name": "browser_set_checked"
+    },
+    {
+      "_meta": {
+        "gomoufox/risk": {
+          "gates": [
+            "--allow-file-upload"
+          ],
+          "level": "high"
+        }
+      },
+      "annotations": {
+        "destructiveHint": true,
+        "idempotentHint": false,
+        "openWorldHint": false,
+        "readOnlyHint": false
+      },
+      "description": "Set files on a file input using paths confined under --session-dir; disabled unless --allow-file-upload is set.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "oneOf": [
+          {
+            "required": [
+              "ref"
+            ]
+          },
+          {
+            "required": [
+              "selector"
+            ]
+          }
+        ],
+        "properties": {
+          "paths": {
+            "description": "File paths under --session-dir.",
+            "items": {
+              "maxLength": 4096,
+              "type": "string"
+            },
+            "maxItems": 8,
+            "minItems": 1,
+            "type": "array"
+          },
+          "ref": {
+            "description": "Element ref from browser_snapshot.",
+            "type": "string"
+          },
+          "selector": {
+            "description": "CSS selector. Used only when ref is absent.",
+            "type": "string"
+          },
+          "session_id": {
+            "default": "default",
+            "description": "Session name.",
+            "type": "string"
+          },
+          "timeout_ms": {
+            "default": 10000,
+            "maximum": 120000,
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "paths"
+        ],
+        "type": "object"
+      },
+      "name": "browser_upload_file"
+    },
+    {
+      "_meta": {
+        "gomoufox/risk": {
+          "level": "medium"
+        }
+      },
+      "annotations": {
+        "destructiveHint": true,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": false
+      },
+      "description": "Set automatic dialog policy or return bounded dialog history; dialogs are handled immediately.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "action": {
+            "enum": [
+              "history",
+              "set_policy"
+            ],
+            "type": "string"
+          },
+          "clear": {
+            "default": false,
+            "description": "Clear returned dialog history after reading.",
+            "type": "boolean"
+          },
+          "max_events": {
+            "default": 50,
+            "maximum": 200,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "policy": {
+            "enum": [
+              "dismiss",
+              "accept"
+            ],
+            "type": "string"
+          },
+          "prompt_text": {
+            "description": "Prompt text to use only when policy is accept. The response does not echo it.",
+            "maxLength": 1024,
+            "type": "string"
+          },
+          "session_id": {
+            "default": "default",
+            "description": "Session name.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "action"
+        ],
+        "type": "object"
+      },
+      "name": "browser_dialog"
+    },
+    {
+      "_meta": {
+        "gomoufox/risk": {
+          "level": "high"
+        }
+      },
+      "annotations": {
+        "destructiveHint": true,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": false
+      },
+      "description": "Run a bounded batch of type, select, checked, and key actions without echoing entered text.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "actions": {
+            "items": {
+              "additionalProperties": false,
+              "oneOf": [
+                {
+                  "required": [
+                    "ref"
+                  ]
+                },
+                {
+                  "required": [
+                    "selector"
+                  ]
+                }
+              ],
+              "properties": {
+                "checked": {
+                  "default": false,
+                  "description": "Desired checked state.",
+                  "type": "boolean"
+                },
+                "clear_first": {
+                  "default": true,
+                  "description": "Clear before typing.",
+                  "type": "boolean"
+                },
+                "delay_ms": {
+                  "default": 0,
+                  "maximum": 500,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "force": {
+                  "default": false,
+                  "description": "Bypass actionability checks where supported.",
+                  "type": "boolean"
+                },
+                "indexes": {
+                  "description": "Option indexes.",
+                  "items": {
+                    "maximum": 10000,
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  "maxItems": 100,
+                  "minItems": 1,
+                  "type": "array"
+                },
+                "key": {
+                  "description": "Keyboard key.",
+                  "maxLength": 128,
+                  "type": "string"
+                },
+                "kind": {
+                  "enum": [
+                    "type",
+                    "press_key",
+                    "select_option",
+                    "set_checked"
+                  ],
+                  "type": "string"
+                },
+                "labels": {
+                  "description": "Option labels.",
+                  "items": {
+                    "maxLength": 1024,
+                    "type": "string"
+                  },
+                  "maxItems": 100,
+                  "minItems": 1,
+                  "type": "array"
+                },
+                "press_enter_after": {
+                  "default": false,
+                  "description": "Press Enter after typing.",
+                  "type": "boolean"
+                },
+                "ref": {
+                  "description": "Element ref from browser_snapshot.",
+                  "type": "string"
+                },
+                "selector": {
+                  "description": "CSS selector. Used only when ref is absent.",
+                  "type": "string"
+                },
+                "text": {
+                  "description": "Text to type. Batch responses do not echo this value.",
+                  "maxLength": 65536,
+                  "type": "string"
+                },
+                "timeout_ms": {
+                  "default": 10000,
+                  "maximum": 120000,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "values": {
+                  "description": "Option values.",
+                  "items": {
+                    "maxLength": 1024,
+                    "type": "string"
+                  },
+                  "maxItems": 100,
+                  "minItems": 1,
+                  "type": "array"
+                }
+              },
+              "required": [
+                "kind"
+              ],
+              "type": "object"
+            },
+            "maxItems": 20,
+            "minItems": 1,
+            "type": "array"
+          },
+          "session_id": {
+            "default": "default",
+            "description": "Session name.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "actions"
+        ],
+        "type": "object"
+      },
+      "name": "browser_form_batch"
+    },
+    {
+      "_meta": {
+        "gomoufox/risk": {
+          "level": "low"
+        }
+      },
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": true,
+        "readOnlyHint": true
+      },
+      "description": "Wait for one page condition: selector, text, URL substring, or load state.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "oneOf": [
+          {
+            "required": [
+              "selector"
+            ]
+          },
+          {
+            "required": [
+              "text"
+            ]
+          },
+          {
+            "required": [
+              "url_contains"
+            ]
+          },
+          {
+            "required": [
+              "load_state"
+            ]
+          }
+        ],
+        "properties": {
+          "load_state": {
+            "enum": [
+              "domcontentloaded",
+              "load",
+              "networkidle"
+            ],
+            "type": "string"
+          },
+          "selector": {
+            "description": "CSS selector to wait for.",
+            "type": "string"
+          },
+          "session_id": {
+            "default": "default",
+            "description": "Session name.",
+            "type": "string"
+          },
+          "text": {
+            "description": "Text to wait for.",
+            "type": "string"
+          },
+          "timeout_ms": {
+            "default": 30000,
+            "maximum": 120000,
+            "minimum": 500,
+            "type": "integer"
+          },
+          "url_contains": {
+            "description": "URL substring to wait for.",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "name": "browser_wait_for"
+    },
+    {
+      "_meta": {
+        "gomoufox/risk": {
+          "gates": [
+            "--enable-eval"
+          ],
+          "level": "high",
+          "untrusted": true
+        }
+      },
+      "annotations": {
+        "destructiveHint": true,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": false
+      },
+      "description": "Execute JavaScript in the current page. Disabled unless the operator starts MCP with --enable-eval.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "arg": {
+            "type": [
+              "string",
+              "number",
+              "boolean",
+              "object",
+              "array",
+              "null"
+            ]
+          },
+          "script": {
+            "description": "JavaScript expression or IIFE.",
+            "maxLength": 65536,
+            "type": "string"
+          },
+          "session_id": {
+            "default": "default",
+            "description": "Session name.",
+            "type": "string"
+          },
+          "timeout_ms": {
+            "default": 5000,
+            "maximum": 30000,
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "script"
+        ],
+        "type": "object"
+      },
+      "name": "browser_evaluate"
+    },
+    {
+      "_meta": {
+        "gomoufox/risk": {
+          "gates": [
+            "--allow-browser-fetch",
+            "--allowed-origins/--allowed-hosts",
+            "network_policy"
+          ],
+          "level": "high",
+          "untrusted": true
+        }
+      },
+      "annotations": {
+        "destructiveHint": true,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": false
+      },
+      "description": "Execute an opt-in HTTP request inside the browser context; requires --allow-browser-fetch plus --allowed-origins or --allowed-hosts.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "body": {
+            "description": "Request body string.",
+            "maxLength": 1048576,
+            "type": "string"
+          },
+          "headers": {
+            "additionalProperties": {
+              "maxLength": 4096,
+              "type": "string"
+            },
+            "maxProperties": 100,
+            "type": "object"
+          },
+          "max_bytes": {
+            "default": 524288,
+            "maximum": 524288,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "method": {
+            "default": "GET",
+            "enum": [
+              "GET",
+              "POST",
+              "PUT",
+              "PATCH",
+              "DELETE",
+              "HEAD"
+            ],
+            "type": "string"
+          },
+          "navigate_first": {
+            "description": "Navigate to this URL before fetch.",
+            "pattern": "^https?://",
+            "type": "string"
+          },
+          "session_id": {
+            "default": "default",
+            "description": "Session name.",
+            "type": "string"
+          },
+          "url": {
+            "description": "URL to fetch. Must use http:// or https:// scheme. Requires --allow-browser-fetch plus --allowed-origins or --allowed-hosts.",
+            "pattern": "^https?://",
+            "type": "string"
+          }
+        },
+        "required": [
+          "url"
+        ],
+        "type": "object"
+      },
+      "name": "browser_fetch"
+    },
+    {
+      "_meta": {
+        "gomoufox/risk": {
+          "level": "medium",
+          "untrusted": true
+        }
+      },
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": false
+      },
+      "description": "Return bounded console messages and page errors for diagnosis; values are redacted and clearable.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "clear": {
+            "default": false,
+            "description": "Clear returned console and page-error buffers after reading.",
+            "type": "boolean"
+          },
+          "max_events": {
+            "default": 50,
+            "maximum": 200,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "session_id": {
+            "default": "default",
+            "description": "Session name.",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "name": "browser_console_messages"
+    },
+    {
+      "_meta": {
+        "gomoufox/risk": {
+          "level": "medium",
+          "untrusted": true
+        }
+      },
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": false
+      },
+      "description": "Return bounded network request/response summaries without bodies; URLs and headers are redacted.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "clear": {
+            "default": false,
+            "description": "Clear returned network buffers after reading.",
+            "type": "boolean"
+          },
+          "max_events": {
+            "default": 50,
+            "maximum": 200,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "session_id": {
+            "default": "default",
+            "description": "Session name.",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "name": "browser_network_requests"
+    },
+    {
+      "_meta": {
+        "gomoufox/risk": {
+          "level": "medium",
+          "untrusted": true
+        }
+      },
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": true,
+        "readOnlyHint": true
+      },
+      "description": "Return a compact page performance and resource snapshot for diagnosis; no network bodies are included.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "session_id": {
+            "default": "default",
+            "description": "Session name.",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "name": "browser_performance_snapshot"
+    },
+    {
+      "_meta": {
+        "gomoufox/risk": {
+          "gates": [
+            "--allow-cookie-values",
+            "--allow-cookie-mutation"
+          ],
+          "level": "high"
+        }
+      },
+      "annotations": {
+        "destructiveHint": true,
+        "idempotentHint": false,
+        "openWorldHint": false,
+        "readOnlyHint": false
+      },
+      "description": "Read, set, or clear cookies; values stay redacted unless operator and tool both opt in.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "action": {
+            "description": "Use get to read cookies. set and clear require --allow-cookie-mutation.",
+            "enum": [
+              "get",
+              "set",
+              "clear"
+            ],
+            "type": "string"
+          },
+          "cookies": {
+            "description": "Cookies to set. Requires --allow-cookie-mutation when action is set.",
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "domain": {
+                  "description": "Cookie domain.",
+                  "type": "string"
+                },
+                "expires": {
+                  "type": "number"
+                },
+                "http_only": {
+                  "default": false,
+                  "type": "boolean"
+                },
+                "name": {
+                  "description": "Cookie name.",
+                  "type": "string"
+                },
+                "path": {
+                  "default": "/",
+                  "type": "string"
+                },
+                "same_site": {
+                  "enum": [
+                    "Strict",
+                    "Lax",
+                    "None"
+                  ],
+                  "type": "string"
+                },
+                "secure": {
+                  "default": false,
+                  "type": "boolean"
+                },
+                "value": {
+                  "description": "Cookie value.",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "name",
+                "value",
+                "domain"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "include_values": {
+            "default": false,
+            "description": "Return cookie values only when operator enabled --allow-cookie-values.",
+            "type": "boolean"
+          },
+          "session_id": {
+            "default": "default",
+            "description": "Session name.",
+            "type": "string"
+          },
+          "urls": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "action"
+        ],
+        "type": "object"
+      },
+      "name": "browser_cookies"
+    },
+    {
+      "_meta": {
+        "gomoufox/risk": {
+          "gates": [
+            "--allow-session-export"
+          ],
+          "level": "high"
+        }
+      },
+      "annotations": {
+        "destructiveHint": true,
+        "idempotentHint": false,
+        "openWorldHint": false,
+        "readOnlyHint": false
+      },
+      "description": "Export the named session's storage_state only when the operator enabled session export.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "include_state": {
+            "default": false,
+            "description": "Return inline state only when operator enabled --allow-session-export.",
+            "type": "boolean"
+          },
+          "overwrite": {
+            "default": false,
+            "description": "Allow replacing an existing regular file.",
+            "type": "boolean"
+          },
+          "path": {
+            "description": "Path under --session-dir for storage_state JSON. Requires --allow-session-export.",
+            "type": "string"
+          },
+          "session_id": {
+            "default": "default",
+            "description": "Session name.",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "name": "session_save"
+    },
+    {
+      "_meta": {
+        "gomoufox/risk": {
+          "gates": [
+            "--allow-session-import"
+          ],
+          "level": "high"
+        }
+      },
+      "annotations": {
+        "destructiveHint": true,
+        "idempotentHint": false,
+        "openWorldHint": false,
+        "readOnlyHint": false
+      },
+      "description": "Replace the named non-persistent session context from a confined storage_state file or inline state.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "oneOf": [
+          {
+            "required": [
+              "path"
+            ]
+          },
+          {
+            "required": [
+              "state"
+            ]
+          }
+        ],
+        "properties": {
+          "mode": {
+            "default": "replace",
+            "enum": [
+              "replace"
+            ],
+            "type": "string"
+          },
+          "path": {
+            "description": "Storage_state path under --session-dir. Requires --allow-session-import.",
+            "type": "string"
+          },
+          "session_id": {
+            "default": "default",
+            "description": "Session name.",
+            "type": "string"
+          },
+          "state": {
+            "description": "Inline storage_state JSON. Requires --allow-session-import.",
+            "type": "object"
+          }
+        },
+        "type": "object"
+      },
+      "name": "session_load"
+    },
+    {
+      "_meta": {
+        "gomoufox/risk": {
+          "gates": [
+            "--allow-session-proxy",
+            "--allow-session-import"
+          ],
+          "level": "high"
+        }
+      },
+      "annotations": {
+        "destructiveHint": true,
+        "idempotentHint": false,
+        "openWorldHint": false,
+        "readOnlyHint": false
+      },
+      "description": "Create a named session with optional profile, proxy, locale, OS, or storage_state.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "locale": {
+            "description": "Browser locale.",
+            "type": "string"
+          },
+          "os": {
+            "enum": [
+              "windows",
+              "macos",
+              "linux"
+            ],
+            "type": "string"
+          },
+          "profile_path": {
+            "description": "Persistent profile directory under --session-dir/profiles.",
+            "type": "string"
+          },
+          "proxy": {
+            "description": "Upstream proxy URL. Requires --allow-session-proxy; gomoufox network policy still runs first.",
+            "type": "string"
+          },
+          "session_id": {
+            "description": "Unique session name.",
+            "type": "string"
+          },
+          "storage_state_path": {
+            "description": "Storage_state file under --session-dir. Requires --allow-session-import.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "session_id"
+        ],
+        "type": "object"
+      },
+      "name": "session_create"
+    },
+    {
+      "_meta": {
+        "gomoufox/risk": {
+          "level": "medium"
+        }
+      },
+      "annotations": {
+        "destructiveHint": true,
+        "idempotentHint": false,
+        "openWorldHint": false,
+        "readOnlyHint": false
+      },
+      "description": "Destroy a named session and close its browser resources.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "session_id": {
+            "description": "Session name.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "session_id"
+        ],
+        "type": "object"
+      },
+      "name": "session_destroy"
+    },
+    {
+      "_meta": {
+        "gomoufox/risk": {
+          "level": "low"
+        }
+      },
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": true
+      },
+      "description": "List active sessions with URL, idle time, and creation time.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {},
+        "type": "object"
+      },
+      "name": "session_list"
+    },
+    {
+      "_meta": {
+        "gomoufox/risk": {
+          "level": "low"
+        }
+      },
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": true
+      },
+      "description": "List embedded versioned agent skills without returning skill bodies.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {},
+        "type": "object"
+      },
+      "name": "skills_list"
+    },
+    {
+      "_meta": {
+        "gomoufox/risk": {
+          "level": "low"
+        }
+      },
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": true
+      },
+      "description": "Return one embedded agent skill body with version lookup and explicit byte caps.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "max_bytes": {
+            "default": 524288,
+            "maximum": 524288,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "name": {
+            "description": "Skill name.",
+            "maxLength": 64,
+            "pattern": "^[a-z0-9-]+$",
+            "type": "string"
+          },
+          "version": {
+            "description": "Exact skill version. Omit for latest.",
+            "maxLength": 32,
+            "pattern": "^(latest|[0-9]+\\.[0-9]+\\.[0-9]+)$",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "type": "object"
+      },
+      "name": "skills_get"
+    }
+  ]
+}

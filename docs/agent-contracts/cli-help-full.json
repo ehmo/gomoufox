@@ -1,0 +1,230 @@
+{
+  "commands": [
+    {
+      "examples": [
+        "gomoufox --json doctor"
+      ],
+      "name": "doctor",
+      "summary": "check local Python, venv, Camoufox, Playwright, binary, and display readiness",
+      "usage": "gomoufox doctor [--json]"
+    },
+    {
+      "flags": [
+        "--dir",
+        "--python",
+        "--force"
+      ],
+      "name": "install",
+      "summary": "provision the pinned Camoufox Python environment and browser binary",
+      "usage": "gomoufox install [--dir <venv>] [--python <path>] [--force]"
+    },
+    {
+      "examples": [
+        "gomoufox open https://example.com --profile profiles/site"
+      ],
+      "flags": [
+        "--wait",
+        "--save-session",
+        "--humanize"
+      ],
+      "name": "open",
+      "summary": "open a headful browser for login or manual inspection",
+      "usage": "gomoufox open <url> [--profile <dir>] [--save-session <path>] [--wait]"
+    },
+    {
+      "examples": [
+        "gomoufox --json get https://example.com --text"
+      ],
+      "flags": [
+        "--html",
+        "--text",
+        "--markdown",
+        "--wait-selector",
+        "--wait-load-state",
+        "--max-bytes",
+        "--cookies-file"
+      ],
+      "name": "get",
+      "summary": "navigate and print page content with guardrails and response caps",
+      "usage": "gomoufox get <url> [--html|--text|--markdown] [--wait-selector <css>]"
+    },
+    {
+      "examples": [
+        "gomoufox screenshot https://example.com --out page.png"
+      ],
+      "flags": [
+        "--out",
+        "--full-page",
+        "--width",
+        "--height",
+        "--wait-selector",
+        "--wait-load-state",
+        "--quality",
+        "--clip",
+        "--max-bytes"
+      ],
+      "name": "screenshot",
+      "summary": "capture a page or element screenshot",
+      "usage": "gomoufox screenshot <url> --out <path> [--full-page|--wait-selector <css>]"
+    },
+    {
+      "examples": [
+        "gomoufox --json eval https://example.com --enable-eval --script 'document.title'"
+      ],
+      "flags": [
+        "--enable-eval",
+        "--script",
+        "--script-file",
+        "--wait-selector",
+        "--wait-load-state",
+        "--arg"
+      ],
+      "name": "eval",
+      "summary": "run JavaScript only when explicitly enabled",
+      "usage": "gomoufox eval <url> --enable-eval (--script <js>|--script-file <path>)"
+    },
+    {
+      "examples": [
+        "gomoufox --json fetch https://api.example.com/me --profile profiles/site"
+      ],
+      "flags": [
+        "--method",
+        "--data",
+        "--data-file",
+        "--header",
+        "--content-type",
+        "--cookies-file",
+        "--navigate-first",
+        "--max-bytes",
+        "--raw"
+      ],
+      "name": "fetch",
+      "summary": "execute an HTTP request from inside the browser context",
+      "usage": "gomoufox fetch <url> [--method GET] [--data <text>] [--navigate-first <url>]"
+    },
+    {
+      "examples": [
+        "gomoufox session export --out state.json --profile profiles/site"
+      ],
+      "flags": [
+        "export --out <path>",
+        "export --from-profile <dir>",
+        "import --file <path>",
+        "import --out <path>",
+        "import --overwrite"
+      ],
+      "name": "session",
+      "summary": "import or export Playwright storage_state JSON",
+      "usage": "gomoufox session <export|import> [flags]"
+    },
+    {
+      "examples": [
+        "gomoufox skills list --json",
+        "gomoufox skills show core",
+        "gomoufox skills export --out ./skills",
+        "gomoufox skills install --target codex --dry-run --json"
+      ],
+      "flags": [
+        "list",
+        "show <name>",
+        "export --out <dir>",
+        "install --target codex",
+        "--version",
+        "--dir",
+        "--force",
+        "--dry-run"
+      ],
+      "name": "skills",
+      "summary": "list, print, export, or install version-matched agent skills",
+      "usage": "gomoufox skills <list|show|export|install> [flags]"
+    },
+    {
+      "flags": [
+        "--auth-token",
+        "--bind",
+        "--port",
+        "--session-dir",
+        "--enable-eval",
+        "--allow-session-export",
+        "--allowed-origins",
+        "--allowed-hosts"
+      ],
+      "name": "serve",
+      "summary": "run the local daemon HTTP API for CLI forwarding",
+      "usage": "gomoufox serve --auth-token <token> [--bind 127.0.0.1] [--port 3741] [--session-dir <dir>]"
+    },
+    {
+      "examples": [
+        "gomoufox mcp",
+        "gomoufox mcp --toolset core",
+        "gomoufox mcp --allow-browser-fetch --allowed-hosts api.example.com",
+        "gomoufox mcp --transport http --auth-token $TOKEN"
+      ],
+      "flags": [
+        "--transport",
+        "--toolset",
+        "--auth-token",
+        "--port",
+        "--session-dir",
+        "--allowed-origins",
+        "--allowed-hosts",
+        "--max-input-bytes",
+        "--max-response-bytes",
+        "--session-ttl",
+        "--max-sessions",
+        "--enable-eval",
+        "--no-content-warning",
+        "--allow-browser-fetch",
+        "--allow-cookie-values",
+        "--allow-cookie-mutation",
+        "--allow-snapshot-values",
+        "--allow-session-export",
+        "--allow-session-import",
+        "--allow-session-proxy",
+        "--allow-file-upload"
+      ],
+      "name": "mcp",
+      "summary": "run the token-capped MCP browser tool server for agents",
+      "usage": "gomoufox mcp [--transport stdio|http] [--session-dir <dir>]"
+    },
+    {
+      "examples": [
+        "gomoufox help --json",
+        "gomoufox help mcp --json"
+      ],
+      "flags": [
+        "--json",
+        "--fields",
+        "--full"
+      ],
+      "name": "help",
+      "summary": "print compact command discovery for humans or agents",
+      "usage": "gomoufox help [command] [--json] [--fields <list>] [--full]"
+    }
+  ],
+  "discovery": [
+    "gomoufox help --json",
+    "gomoufox help <command> --json",
+    "gomoufox help --json --fields commands",
+    "gomoufox skills list --json",
+    "gomoufox skills show core --json",
+    "gomoufox mcp --help"
+  ],
+  "global": [
+    "--json",
+    "--help",
+    "--version",
+    "--verbose",
+    "--profile <dir>",
+    "--timeout <dur>",
+    "--proxy <url>",
+    "--locale <tag>",
+    "--os <windows|macos|linux>",
+    "--headless|--headful",
+    "--server <url>",
+    "--server-token <token>",
+    "--allow-schemes <csv>",
+    "--allow-private-ips"
+  ],
+  "usage": "gomoufox <command> [flags]"
+}

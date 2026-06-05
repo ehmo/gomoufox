@@ -1,0 +1,4 @@
+interface:
+  display_name: "gomoufox"
+  short_description: "Use gomoufox for Camoufox browser automation through the Go library, CLI, and MCP server."
+  default_prompt: "Use gomoufox to automate this browser task with compact output, explicit guardrails, and measured Camoufox parity."

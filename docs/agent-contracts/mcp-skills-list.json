@@ -1,0 +1,28 @@
+{
+  "content": [
+    {
+      "text": "{\"skills\":[{\"name\":\"core\",\"version\":\"0.1.0\",\"summary\":\"Core gomoufox browser automation workflow for agents.\",\"min_gomoufox\":\"0.1.0\",\"sha256\":\"ed3ba99766836849c77a6fb4de02361637bfad068a81714da4a97f0d36868adb\",\"bytes\":1150},{\"name\":\"mcp\",\"version\":\"0.1.0\",\"summary\":\"gomoufox MCP setup and browser-tool workflow for agents.\",\"min_gomoufox\":\"0.1.0\",\"sha256\":\"f39e9c7e32e899801935883d7d99dc53a737b2263bc89fde44a0029c533b28f6\",\"bytes\":2545}]}",
+      "type": "text"
+    }
+  ],
+  "structuredContent": {
+    "skills": [
+      {
+        "bytes": 1150,
+        "min_gomoufox": "0.1.0",
+        "name": "core",
+        "sha256": "ed3ba99766836849c77a6fb4de02361637bfad068a81714da4a97f0d36868adb",
+        "summary": "Core gomoufox browser automation workflow for agents.",
+        "version": "0.1.0"
+      },
+      {
+        "bytes": 2545,
+        "min_gomoufox": "0.1.0",
+        "name": "mcp",
+        "sha256": "f39e9c7e32e899801935883d7d99dc53a737b2263bc89fde44a0029c533b28f6",
+        "summary": "gomoufox MCP setup and browser-tool workflow for agents.",
+        "version": "0.1.0"
+      }
+    ]
+  }
+}

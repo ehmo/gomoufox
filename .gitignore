@@ -1,0 +1,19 @@
+# Go build output
+/bin/
+/dist/
+/gomoufox
+*.test
+*.out
+
+# gomoufox runtime cache
+.gomoufox/
+*.gomoufox.lock
+
+# local session or state exports may contain cookies or tokens
+*.storage-state.json
+session*.json
+
+# OS and editor
+.DS_Store
+*.swp
+.scratch-pad.md

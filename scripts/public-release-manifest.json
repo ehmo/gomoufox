@@ -1,0 +1,74 @@
+{
+  "root_files": [
+    "CHANGELOG.md",
+    "CONTRIBUTING.md",
+    "LICENSE",
+    "README.md",
+    "SECURITY.md",
+    "go.mod",
+    "go.sum",
+    "gomoufox.go"
+  ],
+  "docs": [
+    "docs/BENCHMARKS.md",
+    "docs/agent-contracts/cli-help.json",
+    "docs/agent-contracts/cli-help-full.json",
+    "docs/agent-contracts/cli-help-mcp.json",
+    "docs/agent-contracts/cli-skills-core.json",
+    "docs/agent-contracts/cli-skills-list.json",
+    "docs/agent-contracts/cli-skills-mcp.json",
+    "docs/agent-contracts/mcp-skills-core.json",
+    "docs/agent-contracts/mcp-skills-list.json",
+    "docs/agent-contracts/mcp-tools-list.json",
+    "docs/benchmarks/2026-06-03-full.json",
+    "docs/benchmarks/2026-06-05-release-gate.json"
+  ],
+  "scripts": [
+    "benchmark-realpass.py",
+    "check-agent-contracts.py",
+    "check-public-release-contract.py",
+    "format-doc-numbers.py",
+    "package-release.py",
+    "public-release-manifest.json",
+    "python-realpass.py",
+    "realpass-targets.json"
+  ],
+  "formula_files": [
+    "Formula/gomoufox.rb"
+  ],
+  "skill_files": [
+    "skills/gomoufox/SKILL.md",
+    "skills/gomoufox/agents/openai.yaml",
+    "skills/gomoufox-mcp/SKILL.md",
+    "skills/gomoufox-mcp/agents/openai.yaml"
+  ],
+  "source_dirs": [
+    "camoufoxcfg",
+    "cmd",
+    "internal"
+  ],
+  "github_files": [
+    ".github/workflows/release.yml"
+  ],
+  "generated_files": [
+    ".github/workflows/ci.yml",
+    ".gitignore"
+  ],
+  "required_script_assets": [
+    "internal/mcp/scripts/bounded_content.js",
+    "internal/mcp/scripts/fetch.js",
+    "internal/mcp/scripts/full_page_metrics.js",
+    "internal/mcp/scripts/internal_probe.js",
+    "internal/mcp/scripts/internal_probe_patch.js",
+    "internal/mcp/scripts/internal_probe_restore.js",
+    "internal/mcp/scripts/page_error_observer_drain.js",
+    "internal/mcp/scripts/page_error_observer_install.js",
+    "internal/mcp/scripts/performance_snapshot.js",
+    "internal/mcp/scripts/selector_metrics.js",
+    "internal/mcp/scripts/snapshot.js",
+    "internal/mcp/scripts/viewport_metrics.js"
+  ],
+  "excluded_tracked": [
+    "release_scripts_test.go"
+  ]
+}

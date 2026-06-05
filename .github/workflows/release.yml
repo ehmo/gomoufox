@@ -1,0 +1,99 @@
+name: release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Tag to build, for manual retries
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: public-release-${{ github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  build-public-release:
+    if: github.repository == 'ehmo/gomoufox'
+    runs-on: ubicloud-standard-2
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Resolve tag
+        id: tag
+        run: |
+          if [ "${GITHUB_EVENT_NAME}" = "workflow_dispatch" ]; then
+            tag="${{ inputs.tag }}"
+          else
+            tag="${GITHUB_REF_NAME}"
+          fi
+          if ! [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "bad tag: $tag" >&2
+            exit 2
+          fi
+          git rev-parse --verify "refs/tags/$tag^{commit}" >/dev/null
+          printf 'tag=%s\n' "$tag" >> "$GITHUB_OUTPUT"
+      - name: Checkout tag
+        if: github.event_name == 'workflow_dispatch'
+        run: git checkout --detach "refs/tags/${{ steps.tag.outputs.tag }}"
+      - name: Public contract
+        run: python3 scripts/check-public-release-contract.py .
+      - name: Docs number format
+        run: python3 scripts/format-doc-numbers.py
+      - name: Unit tests
+        run: go test -count=1 ./...
+      - name: Agent contracts
+        run: python3 scripts/check-agent-contracts.py
+      - name: Vet
+        run: go vet ./...
+      - name: Coverage
+        run: |
+          profile="$(mktemp "${TMPDIR:-/tmp}/gomoufox-coverage.XXXXXX")"
+          go test -count=1 -coverprofile="$profile" ./...
+          total="$(go tool cover -func="$profile" | awk '/^total:/ {print $3}')"
+          rm -f "$profile"
+          test "$total" = "100.0%"
+      - name: Vulnerability check
+        run: GOTOOLCHAIN="$(go env GOVERSION)" go run golang.org/x/vuln/cmd/govulncheck@v1.3.0 ./...
+      - name: Build artifacts
+        run: |
+          tag="${{ steps.tag.outputs.tag }}"
+          out="dist/release/$tag"
+          python3 scripts/package-release.py --version "$tag" --out "$out" --verify-formula Formula/gomoufox.rb
+          "$out/gomoufox" --version
+          "$out/gomoufox-realpass" --version
+      - name: Release notes
+        run: |
+          awk -v tag="${{ steps.tag.outputs.tag }}" '$0 == "## " tag {flag=1; next} /^## /{if(flag) exit} flag {print}' CHANGELOG.md > release-notes.md
+          test -s release-notes.md
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: gomoufox-${{ steps.tag.outputs.tag }}
+          path: |
+            dist/release/${{ steps.tag.outputs.tag }}/*.tar.gz
+            dist/release/${{ steps.tag.outputs.tag }}/checksums.txt
+            dist/release/${{ steps.tag.outputs.tag }}/checksums.json
+            Formula/gomoufox.rb
+            release-notes.md
+          if-no-files-found: error
+      - uses: softprops/action-gh-release@b4309332981a82ec1c5618f44dd2e27cc8bfbfda # v3
+        with:
+          tag_name: ${{ steps.tag.outputs.tag }}
+          body_path: release-notes.md
+          files: |
+            dist/release/${{ steps.tag.outputs.tag }}/*.tar.gz
+            dist/release/${{ steps.tag.outputs.tag }}/checksums.txt
+            dist/release/${{ steps.tag.outputs.tag }}/checksums.json
+            Formula/gomoufox.rb

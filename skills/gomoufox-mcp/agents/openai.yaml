@@ -1,0 +1,4 @@
+interface:
+  display_name: "gomoufox MCP"
+  short_description: "Wire agents to the gomoufox MCP browser tool server with compact, guarded workflows."
+  default_prompt: "Use gomoufox MCP tools for this browser task. Start with compact snapshots, refs, and guarded sessions."

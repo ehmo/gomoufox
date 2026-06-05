@@ -1,0 +1,307 @@
+{
+  "generated_at": "2026-06-04T10:41:16.716925+00:00",
+  "mode": "full",
+  "target_count": 8,
+  "target_catalog": "scripts/realpass-targets.json",
+  "target_names": [
+    "nowsecure-cloudflare",
+    "cloudflare-home",
+    "sannysoft",
+    "pixelscan",
+    "creepjs",
+    "incolumitas",
+    "datadome",
+    "g2"
+  ],
+  "target_tags": [
+    "auth-entry",
+    "bot-detection",
+    "cdn-security",
+    "cloudflare",
+    "spa",
+    "static"
+  ],
+  "loops": 1,
+  "options": {
+    "timeout_seconds": 60.0,
+    "settle_seconds": 7.0,
+    "sample_interval_seconds": 0.5,
+    "screenshots": false,
+    "max_targets": 0
+  },
+  "runs": [
+    {
+      "loop": 1,
+      "go_report": "dist/benchmarks/2026-06-03-full/full-loop-1/go/report.json",
+      "python_report": "dist/benchmarks/2026-06-03-full/full-loop-1/python/report.json",
+      "options": {
+        "timeout_seconds": 60.0,
+        "settle_seconds": 7.0,
+        "sample_interval_seconds": 0.5,
+        "screenshots": false
+      },
+      "go": {
+        "total": 8,
+        "passed": 6,
+        "blocked": 2,
+        "failed": 0,
+        "wall_ms": 95078,
+        "target_duration_ms": 94830,
+        "avg_target_ms": 11853,
+        "peak_rss_mib": 1966.5625,
+        "peak_cpu_percent": 282.2,
+        "report_json_bytes": 16420,
+        "report_markdown_bytes": 3579,
+        "report_json_estimated_tokens": 4105,
+        "report_markdown_estimated_tokens": 895,
+        "report_total_estimated_tokens": 5000
+      },
+      "python": {
+        "total": 8,
+        "passed": 6,
+        "blocked": 2,
+        "failed": 0,
+        "wall_ms": 79778,
+        "target_duration_ms": 79653,
+        "avg_target_ms": 9956,
+        "peak_rss_mib": 1897.96875,
+        "peak_cpu_percent": 322.8,
+        "report_json_bytes": 16722,
+        "report_markdown_bytes": 1350,
+        "report_json_estimated_tokens": 4181,
+        "report_markdown_estimated_tokens": 338,
+        "report_total_estimated_tokens": 4519
+      },
+      "ratios": {
+        "wall_time": 1.1917821955927699,
+        "target_duration": 1.1905389627509322,
+        "peak_rss": 1.0361406108504156,
+        "peak_cpu": 0.8742255266418835,
+        "report_tokens": 1.1064394777605664
+      },
+      "target_outcomes": [
+        {
+          "target": "cloudflare-home",
+          "kind": "cloudflare-edge",
+          "tags": [
+            "cloudflare",
+            "cdn-security",
+            "spa"
+          ],
+          "go_outcome": "passed",
+          "python_outcome": "passed",
+          "go_duration_ms": 11689,
+          "python_duration_ms": 9660,
+          "go_signals": [
+            "cloudflare_turnstile",
+            "captcha",
+            "robot_detection"
+          ],
+          "python_signals": [
+            "cloudflare_turnstile",
+            "captcha",
+            "robot_detection"
+          ]
+        },
+        {
+          "target": "creepjs",
+          "kind": "fingerprint-test",
+          "tags": [
+            "bot-detection",
+            "static"
+          ],
+          "go_outcome": "passed",
+          "python_outcome": "passed",
+          "go_duration_ms": 10986,
+          "python_duration_ms": 9175,
+          "go_signals": [
+            "robot_detection"
+          ],
+          "python_signals": [
+            "robot_detection"
+          ]
+        },
+        {
+          "target": "datadome",
+          "kind": "bot-defense-vendor",
+          "tags": [
+            "bot-detection",
+            "cdn-security"
+          ],
+          "go_outcome": "passed",
+          "python_outcome": "passed",
+          "go_duration_ms": 11719,
+          "python_duration_ms": 10086,
+          "go_signals": [
+            "captcha",
+            "robot_detection",
+            "datadome"
+          ],
+          "python_signals": [
+            "captcha",
+            "robot_detection",
+            "datadome"
+          ]
+        },
+        {
+          "target": "g2",
+          "kind": "real-site-anti-bot",
+          "tags": [
+            "bot-detection",
+            "auth-entry",
+            "spa"
+          ],
+          "go_outcome": "blocked",
+          "python_outcome": "blocked",
+          "go_duration_ms": 10512,
+          "python_duration_ms": 8638,
+          "go_signals": [
+            "http_403",
+            "robot_detection"
+          ],
+          "python_signals": [
+            "http_403",
+            "robot_detection"
+          ]
+        },
+        {
+          "target": "incolumitas",
+          "kind": "bot-fingerprint-test",
+          "tags": [
+            "bot-detection"
+          ],
+          "go_outcome": "passed",
+          "python_outcome": "passed",
+          "go_duration_ms": 12724,
+          "python_duration_ms": 13449,
+          "go_signals": [
+            "captcha",
+            "robot_detection",
+            "bot_detection",
+            "datadome",
+            "akamai",
+            "perimeterx",
+            "imperva_incapsula",
+            "distil"
+          ],
+          "python_signals": [
+            "captcha",
+            "robot_detection",
+            "bot_detection",
+            "datadome",
+            "akamai",
+            "perimeterx",
+            "imperva_incapsula",
+            "distil"
+          ]
+        },
+        {
+          "target": "nowsecure-cloudflare",
+          "kind": "cloudflare-challenge-test",
+          "tags": [
+            "cloudflare",
+            "bot-detection"
+          ],
+          "go_outcome": "blocked",
+          "python_outcome": "blocked",
+          "go_duration_ms": 12242,
+          "python_duration_ms": 9658,
+          "go_signals": [
+            "cloudflare_challenge",
+            "cloudflare_turnstile"
+          ],
+          "python_signals": [
+            "cloudflare_challenge",
+            "cloudflare_turnstile"
+          ]
+        },
+        {
+          "target": "pixelscan",
+          "kind": "bot-fingerprint-test",
+          "tags": [
+            "bot-detection"
+          ],
+          "go_outcome": "passed",
+          "python_outcome": "passed",
+          "go_duration_ms": 13413,
+          "python_duration_ms": 9785,
+          "go_signals": [
+            "captcha",
+            "robot_detection",
+            "bot_detection"
+          ],
+          "python_signals": [
+            "captcha",
+            "robot_detection",
+            "bot_detection"
+          ]
+        },
+        {
+          "target": "sannysoft",
+          "kind": "bot-fingerprint-test",
+          "tags": [
+            "bot-detection"
+          ],
+          "go_outcome": "passed",
+          "python_outcome": "passed",
+          "go_duration_ms": 11545,
+          "python_duration_ms": 9202,
+          "go_signals": [],
+          "python_signals": []
+        }
+      ],
+      "outcome_groups": {
+        "shared_blocked_targets": [
+          "g2",
+          "nowsecure-cloudflare"
+        ],
+        "shared_failed_targets": [],
+        "go_only_regressions": [],
+        "python_only_differences": []
+      },
+      "outcome_mismatches": []
+    }
+  ],
+  "summary": {
+    "go": {
+      "total": 8,
+      "passed": 6,
+      "blocked": 2,
+      "failed": 0,
+      "wall_ms": 95078,
+      "target_duration_ms": 94830,
+      "avg_target_ms": 11853,
+      "peak_rss_mib": 1966.5625,
+      "peak_cpu_percent": 282.2,
+      "report_json_bytes": 16420,
+      "report_markdown_bytes": 3579,
+      "report_json_estimated_tokens": 4105,
+      "report_markdown_estimated_tokens": 895,
+      "report_total_estimated_tokens": 5000
+    },
+    "python": {
+      "total": 8,
+      "passed": 6,
+      "blocked": 2,
+      "failed": 0,
+      "wall_ms": 79778,
+      "target_duration_ms": 79653,
+      "avg_target_ms": 9956,
+      "peak_rss_mib": 1897.96875,
+      "peak_cpu_percent": 322.8,
+      "report_json_bytes": 16722,
+      "report_markdown_bytes": 1350,
+      "report_json_estimated_tokens": 4181,
+      "report_markdown_estimated_tokens": 338,
+      "report_total_estimated_tokens": 4519
+    },
+    "ratios": {
+      "wall_time": 1.1917821955927699,
+      "target_duration": 1.1905389627509322,
+      "peak_rss": 1.0361406108504156,
+      "peak_cpu": 0.8742255266418835,
+      "report_tokens": 1.1064394777605664
+    },
+    "outcome_mismatch_count": 0
+  }
+}

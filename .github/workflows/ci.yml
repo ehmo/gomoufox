@@ -1,0 +1,95 @@
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      run_benchmark:
+        description: Run the Go/Python resource benchmark
+        required: false
+        default: "false"
+        type: choice
+        options:
+          - "false"
+          - "true"
+      benchmark_mode:
+        description: benchmark target tier
+        required: false
+        default: smoke
+        type: choice
+        options:
+          - smoke
+          - full
+          - extended
+      benchmark_loops:
+        description: benchmark loop count
+        required: false
+        default: "1"
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubicloud-standard-2
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Public contract
+        run: python3 scripts/check-public-release-contract.py .
+      - name: Docs number format
+        run: python3 scripts/format-doc-numbers.py
+      - name: Unit tests
+        run: go test -count=1 ./...
+      - name: Agent contracts
+        run: python3 scripts/check-agent-contracts.py
+      - name: Vet
+        run: go vet ./...
+      - name: Coverage
+        run: |
+          profile="$(mktemp "${TMPDIR:-/tmp}/gomoufox-coverage.XXXXXX")"
+          go test -count=1 -coverprofile="$profile" ./...
+          total="$(go tool cover -func="$profile" | awk '/^total:/ {print $3}')"
+          rm -f "$profile"
+          test "$total" = "100.0%"
+      - name: Vulnerability check
+        run: GOTOOLCHAIN="$(go env GOVERSION)" go run golang.org/x/vuln/cmd/govulncheck@v1.3.0 ./...
+
+  benchmark:
+    if: github.event_name == 'workflow_dispatch' && inputs.run_benchmark == 'true'
+    runs-on: ubicloud-standard-2
+    timeout-minutes: 360
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Install managed Camoufox stack
+        run: go run ./cmd/gomoufox install
+      - name: Benchmark Go versus Python
+        env:
+          BENCHMARK_LOOPS: ${{ inputs.benchmark_loops }}
+        run: |
+          case "$BENCHMARK_LOOPS" in
+            ""|*[!0-9]*|0*) echo "benchmark_loops must be a positive integer" >&2; exit 2 ;;
+          esac
+          scripts/benchmark-realpass.py --mode "${{ inputs.benchmark_mode }}" --loops "$BENCHMARK_LOOPS" --out "dist/benchmarks/ci-${{ github.run_id }}"
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        if: always()
+        with:
+          name: benchmark-${{ inputs.benchmark_mode }}-${{ github.run_id }}
+          path: dist/benchmarks/ci-${{ github.run_id }}/
+          if-no-files-found: warn

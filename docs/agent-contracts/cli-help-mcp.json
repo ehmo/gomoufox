@@ -1,0 +1,93 @@
+{
+  "commands": [
+    {
+      "examples": [
+        "gomoufox mcp",
+        "gomoufox mcp --toolset core",
+        "gomoufox mcp --allow-browser-fetch --allowed-hosts api.example.com",
+        "gomoufox mcp --transport http --auth-token $TOKEN"
+      ],
+      "flags": [
+        "--transport",
+        "--toolset",
+        "--auth-token",
+        "--port",
+        "--session-dir",
+        "--allowed-origins",
+        "--allowed-hosts",
+        "--max-input-bytes",
+        "--max-response-bytes",
+        "--session-ttl",
+        "--max-sessions",
+        "--enable-eval",
+        "--no-content-warning",
+        "--allow-browser-fetch",
+        "--allow-cookie-values",
+        "--allow-cookie-mutation",
+        "--allow-snapshot-values",
+        "--allow-session-export",
+        "--allow-session-import",
+        "--allow-session-proxy",
+        "--allow-file-upload"
+      ],
+      "name": "mcp",
+      "summary": "run the token-capped MCP browser tool server for agents",
+      "usage": "gomoufox mcp [--transport stdio|http] [--session-dir <dir>]"
+    }
+  ],
+  "discovery": [
+    "gomoufox help --json",
+    "gomoufox help <command> --json",
+    "gomoufox help --json --fields commands",
+    "gomoufox skills list --json",
+    "gomoufox skills show core --json",
+    "gomoufox mcp --help"
+  ],
+  "global": [
+    "--json",
+    "--help",
+    "--version",
+    "--verbose",
+    "--profile <dir>",
+    "--timeout <dur>",
+    "--proxy <url>",
+    "--locale <tag>",
+    "--os <windows|macos|linux>",
+    "--headless|--headful",
+    "--server <url>",
+    "--server-token <token>",
+    "--allow-schemes <csv>",
+    "--allow-private-ips"
+  ],
+  "mcp_tools": [
+    "browser_navigate",
+    "browser_get_content",
+    "browser_screenshot",
+    "browser_snapshot",
+    "browser_click",
+    "browser_type",
+    "browser_press_key",
+    "browser_hover",
+    "browser_scroll",
+    "browser_select_option",
+    "browser_set_checked",
+    "browser_upload_file",
+    "browser_dialog",
+    "browser_form_batch",
+    "browser_wait_for",
+    "browser_evaluate",
+    "browser_fetch",
+    "browser_console_messages",
+    "browser_network_requests",
+    "browser_performance_snapshot",
+    "browser_cookies",
+    "session_save",
+    "session_load",
+    "session_create",
+    "session_destroy",
+    "session_list",
+    "skills_list",
+    "skills_get"
+  ],
+  "usage": "gomoufox <command> [flags]"
+}
