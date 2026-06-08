@@ -322,7 +322,7 @@ func parseHelp(args []string) (helpOptions, error) {
 	if err != nil {
 		return helpOptions{}, err
 	}
-	if len(parsed.Positionals) > 1 {
+	if len(parsed.Positionals) > 2 {
 		return helpOptions{}, errors.New("usage: gomoufox help [command] [--json] [--fields <list>] [--full]")
 	}
 	fields, err := helpFields(parsed.value("fields"))
@@ -330,8 +330,8 @@ func parseHelp(args []string) (helpOptions, error) {
 		return helpOptions{}, err
 	}
 	opts := helpOptions{Fields: fields, Full: parsed.bool("full")}
-	if len(parsed.Positionals) == 1 {
-		opts.Command = parsed.Positionals[0]
+	if len(parsed.Positionals) > 0 {
+		opts.Command = strings.Join(parsed.Positionals, " ")
 	}
 	return opts, nil
 }
@@ -459,7 +459,59 @@ func helpForCommand(name string) (commandHelp, bool) {
 			return command, true
 		}
 	}
+	for _, command := range nestedCommandHelps() {
+		if command.Name == name {
+			return command, true
+		}
+	}
 	return commandHelp{}, false
+}
+
+func nestedCommandHelps() []commandHelp {
+	return []commandHelp{
+		{
+			Name:     "session export",
+			Usage:    "gomoufox session export --out <path> [--profile <dir>|--from-profile <dir>]",
+			Summary:  "export Playwright storage_state JSON from a profile",
+			Flags:    []string{"--out", "--profile", "--from-profile"},
+			Examples: []string{"gomoufox session export --out state.json --profile profiles/site"},
+		},
+		{
+			Name:     "session import",
+			Usage:    "gomoufox session import --file <path> --out <profile> [--overwrite]",
+			Summary:  "import Playwright storage_state JSON into a profile directory",
+			Flags:    []string{"--file", "--out", "--overwrite"},
+			Examples: []string{"gomoufox session import --file state.json --out profiles/site --overwrite"},
+		},
+		{
+			Name:     "skills list",
+			Usage:    "gomoufox skills list [--json]",
+			Summary:  "list embedded versioned agent skills",
+			Flags:    []string{"--json"},
+			Examples: []string{"gomoufox skills list --json"},
+		},
+		{
+			Name:     "skills show",
+			Usage:    "gomoufox skills show <name> [--version <v>] [--json]",
+			Summary:  "print one embedded agent skill",
+			Flags:    []string{"--version", "--json"},
+			Examples: []string{"gomoufox skills show core --json"},
+		},
+		{
+			Name:     "skills export",
+			Usage:    "gomoufox skills export --out <dir> [--force] [--json]",
+			Summary:  "write installable skill files to a directory",
+			Flags:    []string{"--out", "--force", "--json"},
+			Examples: []string{"gomoufox skills export --out ./skills"},
+		},
+		{
+			Name:     "skills install",
+			Usage:    "gomoufox skills install [--target codex] [--dir <dir>] [--force] [--dry-run] [--json]",
+			Summary:  "install version-matched agent skills for a supported agent target",
+			Flags:    []string{"--target", "--dir", "--force", "--dry-run", "--json"},
+			Examples: []string{"gomoufox skills install --target codex --dry-run --json"},
+		},
+	}
 }
 
 func globalHelpFlags() []string {

@@ -67,10 +67,15 @@ Homebrew:
 
 ```bash
 brew tap ehmo/gomoufox https://github.com/ehmo/gomoufox
+brew trust --formula ehmo/gomoufox/gomoufox  # needed when Homebrew tap trust is enforced
 brew install gomoufox
 gomoufox install
 gomoufox doctor
 ```
+
+Install through the tap. Current Homebrew rejects standalone formula files from
+outside a tap, so the release `gomoufox.rb` asset is for audit and tap metadata,
+not the primary install path.
 
 `gomoufox install` creates a managed Python environment, installs hash-locked
 Python packages, and fetches the pinned browser binary. Go callers still use the

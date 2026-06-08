@@ -564,6 +564,25 @@ func TestAgentOptimizedHelpDiscovery(t *testing.T) {
 		t.Fatalf("skills help = %q", got)
 	}
 
+	for _, tc := range []struct {
+		args []string
+		want string
+	}{
+		{args: []string{"skills", "install", "--help"}, want: "usage: gomoufox skills install"},
+		{args: []string{"help", "skills", "install"}, want: "usage: gomoufox skills install"},
+		{args: []string{"session", "export", "--help"}, want: "usage: gomoufox session export"},
+		{args: []string{"help", "session", "import"}, want: "usage: gomoufox session import"},
+	} {
+		stdout.Reset()
+		stderr.Reset()
+		if code := (Runner{}).Run(context.Background(), tc.args, Streams{Stdout: &stdout, Stderr: &stderr}); code != ExitOK {
+			t.Fatalf("%v code=%d stderr=%q", tc.args, code, stderr.String())
+		}
+		if got := stdout.String(); !strings.Contains(got, tc.want) {
+			t.Fatalf("%v help = %q, want %q", tc.args, got, tc.want)
+		}
+	}
+
 	stdout.Reset()
 	if code := (Runner{}).Run(context.Background(), []string{"--json", "help", "mcp"}, Streams{Stdout: &stdout, Stderr: &stderr}); code != ExitOK {
 		t.Fatalf("json help code=%d stderr=%q", code, stderr.String())
@@ -577,6 +596,18 @@ func TestAgentOptimizedHelpDiscovery(t *testing.T) {
 	}
 	if len(catalog.Commands[0].Flags) == 0 || catalog.Commands[0].Summary == "" {
 		t.Fatalf("command-specific catalog omitted details = %#v", catalog.Commands[0])
+	}
+
+	stdout.Reset()
+	if code := (Runner{}).Run(context.Background(), []string{"--json", "help", "skills", "install"}, Streams{Stdout: &stdout, Stderr: &stderr}); code != ExitOK {
+		t.Fatalf("nested json help code=%d stderr=%q", code, stderr.String())
+	}
+	catalog = helpCatalog{}
+	if err := json.Unmarshal(stdout.Bytes(), &catalog); err != nil {
+		t.Fatalf("nested help json = %q err=%v", stdout.String(), err)
+	}
+	if len(catalog.Commands) != 1 || catalog.Commands[0].Name != "skills install" || !strings.Contains(catalog.Commands[0].Usage, "--dry-run") {
+		t.Fatalf("nested catalog = %#v", catalog)
 	}
 
 	stdout.Reset()
@@ -658,7 +689,7 @@ func TestAgentOptimizedHelpDiscovery(t *testing.T) {
 		t.Fatalf("bad help flag code=%d stderr=%q", code, stderr.String())
 	}
 	stderr.Reset()
-	if code := (Runner{}).Run(context.Background(), []string{"help", "mcp", "extra"}, Streams{Stdout: &stdout, Stderr: &stderr}); code != ExitUsage || !strings.Contains(stderr.String(), "usage: gomoufox help") {
+	if code := (Runner{}).Run(context.Background(), []string{"help", "mcp", "extra", "more"}, Streams{Stdout: &stdout, Stderr: &stderr}); code != ExitUsage || !strings.Contains(stderr.String(), "usage: gomoufox help") {
 		t.Fatalf("too many help args code=%d stderr=%q", code, stderr.String())
 	}
 }
