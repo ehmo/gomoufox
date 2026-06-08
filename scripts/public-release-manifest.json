@@ -52,9 +52,11 @@
     "internal"
   ],
   "github_files": [
+    ".github/actionlint.yaml",
     ".github/workflows/release.yml"
   ],
   "generated_files": [
+    ".github/workflows/benchmark.yml",
     ".github/workflows/ci.yml",
     ".gitignore"
   ],

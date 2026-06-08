@@ -1,0 +1,73 @@
+name: benchmark
+
+on:
+  workflow_dispatch:
+    inputs:
+      benchmark_mode:
+        description: benchmark target tier
+        required: false
+        default: extended
+        type: choice
+        options:
+          - smoke
+          - full
+          - extended
+      benchmark_loops:
+        description: benchmark loop count
+        required: false
+        default: "1"
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: benchmark-${{ github.repository }}-${{ github.event_name }}
+  cancel-in-progress: false
+
+jobs:
+  benchmark:
+    if: github.repository == 'ehmo/gomoufox'
+    runs-on: ubicloud-standard-2
+    timeout-minutes: 360
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Install managed Camoufox stack
+        run: go run ./cmd/gomoufox install
+      - name: Benchmark Go versus Python
+        env:
+          BENCHMARK_MODE: ${{ inputs.benchmark_mode || 'extended' }}
+          BENCHMARK_LOOPS: ${{ inputs.benchmark_loops || '1' }}
+        run: |
+          case "$BENCHMARK_MODE" in
+            smoke|full|extended) ;;
+            *) echo "benchmark_mode must be smoke, full, or extended" >&2; exit 2 ;;
+          esac
+          case "$BENCHMARK_LOOPS" in
+            ""|*[!0-9]*|0*) echo "benchmark_loops must be a positive integer" >&2; exit 2 ;;
+          esac
+          if [ "$BENCHMARK_LOOPS" -gt 3 ]; then
+            echo "benchmark_loops must be 1, 2, or 3" >&2
+            exit 2
+          fi
+          scripts/benchmark-realpass.py --mode "$BENCHMARK_MODE" --loops "$BENCHMARK_LOOPS" --out "dist/benchmarks/scheduled-${{ github.run_id }}"
+          {
+            echo "### gomoufox benchmark"
+            echo
+            echo "- Mode: $BENCHMARK_MODE"
+            echo "- Loops: $BENCHMARK_LOOPS"
+            echo "- Artifact: benchmark-$BENCHMARK_MODE-${BENCHMARK_LOOPS}x-${{ github.run_id }}"
+          } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        if: always()
+        with:
+          name: benchmark-${{ inputs.benchmark_mode || 'extended' }}-${{ inputs.benchmark_loops || '1' }}x-${{ github.run_id }}
+          path: dist/benchmarks/scheduled-${{ github.run_id }}/
+          if-no-files-found: warn
+          retention-days: 30

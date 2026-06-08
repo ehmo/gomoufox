@@ -4,6 +4,24 @@
 
 - No changes yet.
 
+## v0.1.3
+
+- Harden the public release audit with bounded transient Homebrew install
+  retries, cleanup before retry, deterministic failure fail-fast behavior, and
+  unsafe checksum asset-name rejection.
+- Split private/public release workflow privileges so read-only gates run
+  before deploy keys or write-scoped release tokens are available.
+- Keep the public publication path faster by deferring duplicate coverage and
+  vulnerability checks to the public release gate while still running package,
+  contract, docs, agent contract, test, vet, and CLI smoke checks before tagging.
+- Add private scheduled and public manual Go/Python benchmark workflows with
+  loop caps, retained artifacts, and workflow summaries.
+- Add Python 3.9 CI coverage for the public audit retry path.
+- Install the pinned `uv 0.11.19` lock generator in private CI before running
+  the release gate.
+- Make Python lock generation platform-stable by omitting resolver provenance
+  annotations from generated lock files.
+
 ## v0.1.2
 
 - Add public release SBOM and provenance artifacts, plus GitHub artifact

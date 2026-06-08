@@ -33,7 +33,28 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: public-ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
+  python-compat:
+    runs-on: ubicloud-standard-2
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6
+        with:
+          python-version: "3.9"
+      - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Audit script parses on Python 3.9
+        run: |
+          python3 scripts/audit-public-release.py --help >/dev/null
+          PYTHON_BIN=python3 go test -count=1 . -run TestAuditPublicReleaseRetriesTransientBrewInstallFailure
+
   test:
     runs-on: ubicloud-standard-2
     timeout-minutes: 120
@@ -86,10 +107,22 @@ jobs:
           case "$BENCHMARK_LOOPS" in
             ""|*[!0-9]*|0*) echo "benchmark_loops must be a positive integer" >&2; exit 2 ;;
           esac
+          if [ "$BENCHMARK_LOOPS" -gt 3 ]; then
+            echo "benchmark_loops must be 1, 2, or 3" >&2
+            exit 2
+          fi
           scripts/benchmark-realpass.py --mode "${{ inputs.benchmark_mode }}" --loops "$BENCHMARK_LOOPS" --out "dist/benchmarks/ci-${{ github.run_id }}"
+          {
+            echo "### gomoufox benchmark"
+            echo
+            echo "- Mode: ${{ inputs.benchmark_mode }}"
+            echo "- Loops: $BENCHMARK_LOOPS"
+            echo "- Artifact: benchmark-${{ inputs.benchmark_mode }}-${BENCHMARK_LOOPS}x-${{ github.run_id }}"
+          } >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         if: always()
         with:
-          name: benchmark-${{ inputs.benchmark_mode }}-${{ github.run_id }}
+          name: benchmark-${{ inputs.benchmark_mode }}-${{ inputs.benchmark_loops }}x-${{ github.run_id }}
           path: dist/benchmarks/ci-${{ github.run_id }}/
           if-no-files-found: warn
+          retention-days: 30

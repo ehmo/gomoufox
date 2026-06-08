@@ -57,6 +57,7 @@ def compile_lock(name: str, out: Path) -> None:
             "--generate-hashes",
             "--upgrade",
             "--no-header",
+            "--no-annotate",
             "--custom-compile-command",
             "python3 scripts/update-python-locks.py",
             "-o",

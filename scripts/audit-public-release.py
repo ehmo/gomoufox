@@ -27,6 +27,26 @@ SUPPORTED_HOSTS = {
     ("Linux", "arm64"): ("linux", "arm64"),
 }
 FORMULA_SUPPORTED_TARGETS = {("darwin", "arm64"), ("linux", "amd64")}
+MAX_RETRY_DELAY_SECONDS = 60.0
+MAX_RETRY_DELAYS = 5
+TRANSIENT_BREW_FAILURE_MARKERS = (
+    "cdn",
+    "connection reset",
+    "connection timed out",
+    "couldn't connect",
+    "failed to connect",
+    "http 429",
+    "http 500",
+    "http 502",
+    "http 503",
+    "http 504",
+    "network is unreachable",
+    "operation timed out",
+    "remote disconnected",
+    "temporary failure",
+    "temporarily unavailable",
+    "timeout",
+)
 
 
 def run(cmd: list[str], *, cwd: Path | None = None, env: dict[str, str] | None = None, input_text: str | None = None, timeout: int = 60) -> subprocess.CompletedProcess:
@@ -47,6 +67,75 @@ def require_ok(result: subprocess.CompletedProcess, label: str) -> subprocess.Co
     if result.returncode != 0:
         raise RuntimeError(f"{label} failed with exit {result.returncode}\nstdout={result.stdout}\nstderr={result.stderr}")
     return result
+
+
+def retry_delays(env_name: str, default: list[float]) -> list[float]:
+    raw = os.environ.get(env_name)
+    if raw is None:
+        return default
+    delays: list[float] = []
+    for item in raw.split(","):
+        value = item.strip()
+        if not value:
+            continue
+        try:
+            delay = float(value)
+        except ValueError as exc:
+            raise RuntimeError(f"{env_name} must contain comma-separated seconds") from exc
+        if delay < 0:
+            raise RuntimeError(f"{env_name} cannot contain negative delays")
+        if delay > MAX_RETRY_DELAY_SECONDS:
+            raise RuntimeError(f"{env_name} delays cannot exceed {MAX_RETRY_DELAY_SECONDS:g} seconds")
+        delays.append(delay)
+        if len(delays) > MAX_RETRY_DELAYS:
+            raise RuntimeError(f"{env_name} cannot contain more than {MAX_RETRY_DELAYS} delays")
+    return delays
+
+
+def require_ok_with_retry(
+    cmd: list[str],
+    label: str,
+    *,
+    env: dict[str, str] | None = None,
+    timeout: int = 60,
+    delays: list[float] | None = None,
+    should_retry=None,
+    on_retry=None,
+) -> tuple[subprocess.CompletedProcess, int]:
+    retry_after = delays if delays is not None else []
+    last: subprocess.CompletedProcess | None = None
+    for attempt in range(len(retry_after) + 1):
+        result = run(cmd, env=env, timeout=timeout)
+        if result.returncode == 0:
+            return result, attempt + 1
+        last = result
+        if attempt < len(retry_after) and (should_retry is None or should_retry(result)):
+            if on_retry is not None:
+                on_retry()
+            time.sleep(retry_after[attempt])
+        else:
+            break
+    if last is None:
+        raise RuntimeError(f"{label} did not run")
+    require_ok(last, label)
+    raise AssertionError("unreachable")
+
+
+def is_transient_brew_install_failure(result: subprocess.CompletedProcess) -> bool:
+    text = f"{result.stdout}\n{result.stderr}".lower()
+    if result.returncode in {7, 18, 28, 35, 52, 55, 56, 92}:
+        return True
+    return any(marker in text for marker in TRANSIENT_BREW_FAILURE_MARKERS)
+
+
+def safe_asset_name(value: object, label: str) -> str:
+    if not isinstance(value, str):
+        raise RuntimeError(f"{label} must be a string")
+    name = value.strip()
+    path = PurePosixPath(name)
+    if not name or path.is_absolute() or len(path.parts) != 1 or name in {".", ".."} or "/" in name or "\\" in name:
+        raise RuntimeError(f"{label} must be an asset basename: {value!r}")
+    return name
 
 
 def sha256_file(path: Path) -> str:
@@ -111,7 +200,7 @@ def parse_checksums(path: Path) -> dict[str, str]:
         digest, name = parts
         if len(digest) != 64 or any(ch not in "0123456789abcdef" for ch in digest):
             raise RuntimeError(f"malformed sha256 digest for {name}: {digest}")
-        checksums[name.strip()] = digest
+        checksums[safe_asset_name(name, "checksums.txt asset name")] = digest
     return checksums
 
 
@@ -124,7 +213,14 @@ def verify_assets(version: str, asset_dir: Path) -> dict:
     checksum_json = json.loads((asset_dir / "checksums.json").read_text(encoding="utf-8"))
     if checksum_json.get("version") != version:
         raise RuntimeError(f"checksums.json version {checksum_json.get('version')} does not match {version}")
-    json_artifacts = {item.get("name"): item for item in checksum_json.get("artifacts", [])}
+    json_artifacts: dict[str, dict] = {}
+    for item in checksum_json.get("artifacts", []):
+        if not isinstance(item, dict):
+            raise RuntimeError("checksums.json artifacts must be objects")
+        name = safe_asset_name(item.get("name"), "checksums.json artifact name")
+        if name in json_artifacts:
+            raise RuntimeError(f"checksums.json repeats artifact {name}")
+        json_artifacts[name] = item
     verified: list[dict] = []
     for name, expected in sorted(checksums.items()):
         path = asset_dir / name
@@ -334,6 +430,10 @@ def brew_command_available(name: str) -> bool:
     return name in result.stdout.splitlines()
 
 
+def brew_install_delays() -> list[float]:
+    return retry_delays("GOMOUFOX_BREW_INSTALL_RETRY_DELAYS", [5.0, 15.0, 30.0])
+
+
 def audit_brew(repo: str, version: str, mode: str) -> dict:
     if mode == "off":
         return {"mode": mode, "status": "skipped"}
@@ -354,12 +454,20 @@ def audit_brew(repo: str, version: str, mode: str) -> dict:
         if trust_supported:
             require_ok(run(["brew", "trust", "--formula", "ehmo/gomoufox/gomoufox"], env=brew_env(), timeout=60), "brew trust")
             trust_status = "trusted"
-        require_ok(run(["brew", "install", "gomoufox"], env=brew_env(), timeout=180), "brew install")
+        _, install_attempts = require_ok_with_retry(
+            ["brew", "install", "gomoufox"],
+            "brew install",
+            env=brew_env(),
+            timeout=180,
+            delays=brew_install_delays(),
+            should_retry=is_transient_brew_install_failure,
+            on_retry=lambda: run(["brew", "uninstall", "--formula", "gomoufox"], env=brew_env(), timeout=120),
+        )
         require_ok(run(["brew", "test", "gomoufox"], env=brew_env(), timeout=120), "brew test")
         version_out = require_ok(run(["gomoufox", "--version"], env=brew_env(), timeout=30), "installed gomoufox version").stdout.strip()
         if version_out != f"gomoufox {version}":
             raise RuntimeError(f"installed gomoufox version {version_out!r} does not match {version}")
-        return {"mode": mode, "status": "passed", "trust": trust_status, "version": version_out}
+        return {"mode": mode, "status": "passed", "trust": trust_status, "version": version_out, "install_attempts": install_attempts}
     finally:
         run(["brew", "uninstall", "--formula", "gomoufox"], env=brew_env(), timeout=120)
         if trust_supported:
