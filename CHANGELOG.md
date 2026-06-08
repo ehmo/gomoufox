@@ -4,6 +4,12 @@
 
 - No changes yet.
 
+## v0.1.5
+
+- Switch the public release workflow to the Node 24-compatible
+  `actions/download-artifact` v7 pin after the v8 pin emitted a runtime
+  `Buffer()` deprecation warning.
+
 ## v0.1.4
 
 - Update the public release workflow to the Node 24-compatible
