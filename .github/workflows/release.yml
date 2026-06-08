@@ -115,6 +115,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           tag="${{ needs.gate-public-release.outputs.tag }}"
+          rm -f Formula/gomoufox.rb release-notes.md
+          rm -rf "dist/release/$tag"
           gh run download "${{ github.run_id }}" \
             --name "gomoufox-${tag}-candidate" \
             --dir .

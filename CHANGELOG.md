@@ -4,6 +4,12 @@
 
 - No changes yet.
 
+## v0.1.7
+
+- Clear checked-out release files before the public publish job runs
+  `gh run download`, so the candidate artifact can extract without file
+  collisions.
+
 ## v0.1.6
 
 - Remove `actions/download-artifact` from the public publish job. The workflow
