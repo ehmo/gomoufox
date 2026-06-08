@@ -119,6 +119,8 @@ jobs:
             dist/release/${{ steps.tag.outputs.tag }}/sbom.spdx.json
             Formula/gomoufox.rb
       - name: Post-release public audit
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           tag="${{ steps.tag.outputs.tag }}"
           python3 scripts/audit-public-release.py \
