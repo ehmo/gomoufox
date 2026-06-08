@@ -4,6 +4,12 @@
 
 - No changes yet.
 
+## v0.1.6
+
+- Remove `actions/download-artifact` from the public publish job. The workflow
+  now downloads the release candidate with `gh run download`, because the v7 and
+  v8 action pins still emitted a `Buffer()` deprecation warning.
+
 ## v0.1.5
 
 - Switch the public release workflow to the Node 24-compatible

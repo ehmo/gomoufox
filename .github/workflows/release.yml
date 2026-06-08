@@ -110,10 +110,17 @@ jobs:
           fetch-depth: 0
       - name: Checkout tag
         run: git checkout --detach "refs/tags/${{ needs.gate-public-release.outputs.tag }}"
-      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
-        with:
-          name: gomoufox-${{ needs.gate-public-release.outputs.tag }}-candidate
-          path: .
+      - name: Download release candidate
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="${{ needs.gate-public-release.outputs.tag }}"
+          gh run download "${{ github.run_id }}" \
+            --name "gomoufox-${tag}-candidate" \
+            --dir .
+          test -s release-notes.md
+          test -f "dist/release/$tag/checksums.json"
+          test -f "dist/release/$tag/sbom.spdx.json"
       - name: Attest release artifacts
         uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26 # v4
         with:
