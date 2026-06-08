@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- No changes yet.
+
+## v0.1.2
+
 - Add public release SBOM and provenance artifacts, plus GitHub artifact
   attestations in the release workflow.
 - Add a reusable post-release public audit that verifies assets, checksums,
@@ -10,7 +14,12 @@
   and Linux amd64.
 - Add Python-removal readiness reporting so node-direct cannot replace Python
   until it beats Python on correctness, resources, timing, and report tokens.
-- Add release-gate checking for hash-locked Python requirement freshness.
+- Add release-gate checking for hash-locked Python requirement freshness, with
+  the lock generator pinned to `uv 0.11.19`.
+- Install the pinned lock generator in the private public-release workflow.
+- Generate the public Homebrew formula before public contract checks during
+  publication.
+- Make sidecar diagnostics test logging race-safe under `go test -race`.
 
 ## v0.1.1
 
