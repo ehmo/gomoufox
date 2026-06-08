@@ -67,7 +67,9 @@ Homebrew:
 
 ```bash
 brew tap ehmo/gomoufox https://github.com/ehmo/gomoufox
-brew trust --formula ehmo/gomoufox/gomoufox  # needed when Homebrew tap trust is enforced
+if brew commands | grep -qx trust; then
+  brew trust --formula ehmo/gomoufox/gomoufox
+fi
 brew install gomoufox
 gomoufox install
 gomoufox doctor
@@ -76,6 +78,13 @@ gomoufox doctor
 Install through the tap. Current Homebrew rejects standalone formula files from
 outside a tap, so the release `gomoufox.rb` asset is for audit and tap metadata,
 not the primary install path.
+
+Run `brew trust` only when your Homebrew version supports it. Newer Homebrew
+builds may omit that command.
+
+The Homebrew formula installs only on platforms where the pinned Camoufox
+browser has a supported upstream binary: macOS Apple Silicon and Linux amd64.
+The release still publishes all Go archives for library and CLI users.
 
 `gomoufox install` creates a managed Python environment, installs hash-locked
 Python packages, and fetches the pinned browser binary. Go callers still use the
@@ -290,8 +299,8 @@ Latest checked baseline: see [docs/BENCHMARKS.md](docs/BENCHMARKS.md).
 
 | Runtime | Passed | Blocked | Failed | Wall ms | Peak RSS MiB | Peak CPU % | Report tokens |
 |---|---:|---:|---:|---:|---:|---:|---:|
-| gomoufox | 95 | 5 | 0 | 371,006 | 4,141.5 | 532.6 | 12,995 |
-| Python Camoufox | 95 | 5 | 0 | 445,513 | 5,097.0 | 455.4 | 68,469 |
+| gomoufox | 95 | 5 | 0 | 366,338 | 2,765.3 | 569.9 | 13,059 |
+| Python Camoufox | 95 | 5 | 0 | 363,961 | 3,083.2 | 483.1 | 68,307 |
 
 Latest extended validation: 100 targets, 45s timeout, `commit` wait, 3s settle,
 no screenshots, built gomoufox realpass binary, reused browser, compact Go
@@ -301,15 +310,15 @@ Both runtimes passed 95, blocked 5, failed 0, with zero outcome mismatches. See
 
 | Ratio | Go / Python |
 |---|---:|
-| Wall time | 0.833 |
-| Peak RSS | 0.813 |
-| Peak CPU | 1.170 |
-| Report tokens | 0.190 |
+| Wall time | 1.007 |
+| Peak RSS | 0.897 |
+| Peak CPU | 1.180 |
+| Report tokens | 0.191 |
 
 Serial wall time varies because Firefox dominates the run. The checked wins are
-lower wall time, lower RSS, and a smaller agent report. Go peak CPU was higher
-in this run but stayed inside the 1.50 release budget. Treat a report-token
-ratio above 0.50 as a regression.
+lower RSS and a smaller agent report. Go wall time was effectively parity but
+slightly slower in this serial run, and Go peak CPU stayed inside the 1.50
+release budget. Treat a report-token ratio above 0.50 as a regression.
 
 ```bash
 scripts/benchmark-realpass.py --mode smoke
@@ -343,6 +352,41 @@ ratios over the thresholds in [docs/BENCHMARKS.md](docs/BENCHMARKS.md).
 In release mode, a new shared block, failure, or performance outlier gets one
 focused retry. The gate merges that focused retry back into the full report, then
 reruns the strict resource, timing, required-target, and token checks.
+
+Python-removal work has its own promotion check. A node-direct run must use the
+extended target matrix, match Python outcomes with zero runtime failures, and
+beat Python on wall time, target duration, RSS, CPU, and report-token ratios
+before it can replace the Python sidecar:
+
+```bash
+scripts/benchmark-realpass.py --mode extended --go-sidecar-runtime node-direct
+python3 scripts/check-python-removal-readiness.py --artifact docs/benchmarks/<run>.json
+```
+
+Until that check reports `candidate`, node-direct stays experimental.
+
+## Release verification
+
+Each public release ships deterministic archives, `checksums.txt`,
+`checksums.json`, a Homebrew formula, `release-provenance.json`, and
+`sbom.spdx.json`. The public workflow also creates GitHub artifact attestations.
+
+```bash
+gh release download vX.Y.Z --repo ehmo/gomoufox --dir /tmp/gomoufox-vX.Y.Z
+cd /tmp/gomoufox-vX.Y.Z
+shasum -a 256 -c checksums.txt
+gh attestation verify gomoufox_X.Y.Z_darwin_arm64.tar.gz -R ehmo/gomoufox
+```
+
+Maintainers also run the bundled public audit after publication:
+
+```bash
+python3 scripts/audit-public-release.py \
+  --version vX.Y.Z \
+  --repo ehmo/gomoufox \
+  --verify-attestations \
+  --brew-mode inspect
+```
 
 ## Common questions
 

@@ -496,7 +496,7 @@ def outcome_groups(outcomes):
 
 
 def build_benchmark(args, runs, targets, catalog):
-    return {
+    benchmark = {
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "mode": args.mode,
         "target_count": len(targets),
@@ -509,6 +509,8 @@ def build_benchmark(args, runs, targets, catalog):
         "runs": runs,
         "summary": aggregate(runs),
     }
+    benchmark["python_removal_readiness"] = python_removal_readiness(benchmark)
+    return benchmark
 
 
 def tier_counts(catalog):
@@ -628,6 +630,57 @@ def aggregate(runs):
     }
 
 
+def python_removal_readiness(benchmark):
+    options = benchmark.get("options") or {}
+    summary = benchmark.get("summary") or {}
+    go = summary.get("go") or {}
+    python = summary.get("python") or {}
+    ratio_values = summary.get("ratios") or {}
+    criteria = [
+        {
+            "name": "go_sidecar_runtime_is_node_direct",
+            "passed": options.get("go_sidecar_runtime") == "node-direct",
+            "detail": f"go_sidecar_runtime={options.get('go_sidecar_runtime', 'python')}",
+        },
+        {
+            "name": "extended_target_matrix",
+            "passed": benchmark.get("mode") == "extended" and int(benchmark.get("target_count") or 0) >= 100,
+            "detail": f"mode={benchmark.get('mode')} targets={benchmark.get('target_count')}",
+        },
+        {
+            "name": "outcome_parity",
+            "passed": int(summary.get("outcome_mismatch_count") or 0) == 0,
+            "detail": f"outcome_mismatch_count={summary.get('outcome_mismatch_count')}",
+        },
+        {
+            "name": "no_runtime_failures",
+            "passed": int(go.get("failed") or 0) == 0 and int(python.get("failed") or 0) == 0,
+            "detail": f"go_failed={go.get('failed')} python_failed={python.get('failed')}",
+        },
+    ]
+    for name, maximum in (
+        ("wall_time", 0.95),
+        ("target_duration", 0.95),
+        ("peak_rss", 0.95),
+        ("peak_cpu", 0.95),
+        ("report_tokens", 0.50),
+    ):
+        value = ratio_values.get(name)
+        criteria.append({
+            "name": f"{name}_beats_python",
+            "passed": isinstance(value, (int, float)) and value <= maximum,
+            "detail": f"{name}={value} max={maximum}",
+        })
+    passed = all(item["passed"] for item in criteria)
+    runtime = options.get("go_sidecar_runtime", "python")
+    return {
+        "status": "candidate" if passed else ("not_node_direct" if runtime != "node-direct" else "blocked"),
+        "candidate": passed,
+        "criteria": criteria,
+        "note": "node-direct still needs Python for launch payload generation; candidate means the long-lived browser sidecar is ready to promote, not that Python is fully removed.",
+    }
+
+
 def aggregate_runtime(items):
     items = list(items)
     if not items:
@@ -675,6 +728,7 @@ def markdown_report(benchmark):
     latest_groups = latest_run.get("outcome_groups") or outcome_groups(latest_run["target_outcomes"])
     tier_counts_value = benchmark.get("target_tier_counts") or {}
     extended_count = int(tier_counts_value.get("extended") or benchmark["target_count"])
+    readiness = benchmark.get("python_removal_readiness") or {}
     lines = [
         "# Go/Python Benchmark",
         "",
@@ -766,6 +820,16 @@ def markdown_report(benchmark):
         ratio_row("Peak CPU", ratios_value["peak_cpu"]),
         ratio_row("Report tokens", ratios_value["report_tokens"]),
         "",
+        "## Python-Removal Readiness",
+        "",
+        f"- Status: {readiness.get('status', 'unknown')}",
+        f"- Candidate: {yes_no(readiness.get('candidate'))}",
+        f"- Note: {readiness.get('note', 'No readiness data recorded.')}",
+        "",
+        "| Criterion | Passed | Detail |",
+        "|---|---:|---|",
+        *readiness_rows(readiness.get("criteria") or []),
+        "",
         "## Agent Output Footprint",
         "",
         "Token estimates use `ceil(bytes / 4)`. They compare generated benchmark artifacts, not model billing.",
@@ -844,6 +908,12 @@ def ratio_row(name, value):
     if value is None:
         return f"| {name} | n/a |"
     return f"| {name} | {value:.3f} |"
+
+
+def readiness_rows(criteria):
+    if not criteria:
+        return ["| none | no | missing readiness criteria |"]
+    return [f"| {item.get('name', '')} | {yes_no(item.get('passed'))} | {item.get('detail', '')} |" for item in criteria]
 
 
 def artifact_row(name, metrics):

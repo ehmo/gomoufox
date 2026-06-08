@@ -13,6 +13,8 @@ on:
 
 permissions:
   contents: write
+  id-token: write
+  attestations: write
 
 concurrency:
   group: public-release-${{ github.ref_name }}
@@ -74,6 +76,21 @@ jobs:
           python3 scripts/package-release.py --version "$tag" --out "$out" --verify-formula Formula/gomoufox.rb
           "$out/gomoufox" --version
           "$out/gomoufox-realpass" --version
+      - name: Attest release artifacts
+        uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26 # v4
+        with:
+          subject-path: |
+            dist/release/${{ steps.tag.outputs.tag }}/*.tar.gz
+            dist/release/${{ steps.tag.outputs.tag }}/checksums.txt
+            dist/release/${{ steps.tag.outputs.tag }}/checksums.json
+            dist/release/${{ steps.tag.outputs.tag }}/release-provenance.json
+            dist/release/${{ steps.tag.outputs.tag }}/sbom.spdx.json
+            Formula/gomoufox.rb
+      - name: Attest release SBOM
+        uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26 # v4
+        with:
+          subject-path: dist/release/${{ steps.tag.outputs.tag }}/*.tar.gz
+          sbom-path: dist/release/${{ steps.tag.outputs.tag }}/sbom.spdx.json
       - name: Release notes
         run: |
           awk -v tag="${{ steps.tag.outputs.tag }}" '$0 == "## " tag {flag=1; next} /^## /{if(flag) exit} flag {print}' CHANGELOG.md > release-notes.md
@@ -85,6 +102,8 @@ jobs:
             dist/release/${{ steps.tag.outputs.tag }}/*.tar.gz
             dist/release/${{ steps.tag.outputs.tag }}/checksums.txt
             dist/release/${{ steps.tag.outputs.tag }}/checksums.json
+            dist/release/${{ steps.tag.outputs.tag }}/release-provenance.json
+            dist/release/${{ steps.tag.outputs.tag }}/sbom.spdx.json
             Formula/gomoufox.rb
             release-notes.md
           if-no-files-found: error
@@ -96,4 +115,21 @@ jobs:
             dist/release/${{ steps.tag.outputs.tag }}/*.tar.gz
             dist/release/${{ steps.tag.outputs.tag }}/checksums.txt
             dist/release/${{ steps.tag.outputs.tag }}/checksums.json
+            dist/release/${{ steps.tag.outputs.tag }}/release-provenance.json
+            dist/release/${{ steps.tag.outputs.tag }}/sbom.spdx.json
             Formula/gomoufox.rb
+      - name: Post-release public audit
+        run: |
+          tag="${{ steps.tag.outputs.tag }}"
+          python3 scripts/audit-public-release.py \
+            --version "$tag" \
+            --repo ehmo/gomoufox \
+            --verify-attestations \
+            --brew-mode inspect \
+            --json-out "dist/release/$tag/public-audit.json"
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        if: always()
+        with:
+          name: gomoufox-${{ steps.tag.outputs.tag }}-public-audit
+          path: dist/release/${{ steps.tag.outputs.tag }}/public-audit.json
+          if-no-files-found: error

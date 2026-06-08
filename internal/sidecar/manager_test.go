@@ -18,6 +18,7 @@ import (
 	"reflect"
 	"runtime"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -37,6 +38,29 @@ type failingDiagnosticReader struct{}
 
 func (failingDiagnosticReader) Read([]byte) (int, error) {
 	return 0, errors.New(diagnosticSecretFixture)
+}
+
+type lockedBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *lockedBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *lockedBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
+}
+
+func (b *lockedBuffer) Reset() {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.buf.Reset()
 }
 
 func TestWriteLauncherReadsLaunchArgsFromStdin(t *testing.T) {
@@ -1032,7 +1056,7 @@ func TestManagerStopCleanupAndDiagnosticsEdges(t *testing.T) {
 	}
 	manager := New(Config{VenvDir: t.TempDir()})
 	manager.lock = lock
-	var diagnostics bytes.Buffer
+	var diagnostics lockedBuffer
 	oldLogger := slog.Default()
 	slog.SetDefault(slog.New(slog.NewTextHandler(&diagnostics, &slog.HandlerOptions{Level: slog.LevelDebug})))
 	t.Cleanup(func() { slog.SetDefault(oldLogger) })

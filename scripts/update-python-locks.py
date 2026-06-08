@@ -18,6 +18,7 @@ INPUTS = {
     "camoufox": REQ_DIR / "camoufox-input.txt",
     "pip": REQ_DIR / "pip-input.txt",
 }
+UV_VERSION = "0.11.19"
 
 
 def run(cmd: list[str], quiet: bool = False) -> None:
@@ -25,6 +26,24 @@ def run(cmd: list[str], quiet: bool = False) -> None:
     if quiet:
         kwargs["stdout"] = subprocess.PIPE
     subprocess.run(cmd, cwd=ROOT, check=True, **kwargs)
+
+
+def validate_uv_version() -> None:
+    result = subprocess.run(
+        ["uv", "--version"],
+        cwd=ROOT,
+        check=True,
+        stdout=subprocess.PIPE,
+        text=True,
+    )
+    found = result.stdout.strip()
+    fields = found.split()
+    version = fields[1] if len(fields) >= 2 and fields[0] == "uv" else ""
+    if version != UV_VERSION:
+        raise SystemExit(
+            f"uv {UV_VERSION} is required; found {found}. "
+            f"Install with: python3 -m pip install --user uv=={UV_VERSION}"
+        )
 
 
 def compile_lock(name: str, out: Path) -> None:
@@ -36,6 +55,7 @@ def compile_lock(name: str, out: Path) -> None:
             "compile",
             "--universal",
             "--generate-hashes",
+            "--upgrade",
             "--no-header",
             "--custom-compile-command",
             "python3 scripts/update-python-locks.py",
@@ -123,6 +143,7 @@ def main() -> int:
 
     if shutil.which("uv") is None:
         raise SystemExit("uv is required: https://docs.astral.sh/uv/")
+    validate_uv_version()
 
     if args.check:
         with tempfile.TemporaryDirectory(prefix="gomoufox-python-lock-check-") as tmp:

@@ -24,8 +24,10 @@
     "docs/benchmarks/2026-06-08-release-gate.json"
   ],
   "scripts": [
+    "audit-public-release.py",
     "benchmark-realpass.py",
     "check-agent-contracts.py",
+    "check-python-removal-readiness.py",
     "check-public-release-contract.py",
     "fingerprint-audit.py",
     "format-doc-numbers.py",

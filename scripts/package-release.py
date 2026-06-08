@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import argparse
+import datetime
 import gzip
 import hashlib
 import json
@@ -7,6 +8,7 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 import tarfile
 import tempfile
 from dataclasses import dataclass
@@ -16,6 +18,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_TARGETS = (("darwin", "arm64"), ("darwin", "amd64"), ("linux", "arm64"), ("linux", "amd64"))
 SUPPORTED_TARGETS = set(DEFAULT_TARGETS)
+FORMULA_SUPPORTED_TARGETS = {("darwin", "arm64"), ("linux", "amd64")}
 
 
 @dataclass(frozen=True)
@@ -148,6 +151,152 @@ def write_checksum_files(version: str, artifacts: list[Artifact], out_dir: Path)
     (out_dir / "checksums.json").write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
+def command_output(cmd: list[str]) -> str:
+    try:
+        return subprocess.check_output(cmd, cwd=ROOT, text=True, stderr=subprocess.DEVNULL).strip()
+    except (OSError, subprocess.CalledProcessError):
+        return ""
+
+
+def source_metadata() -> dict:
+    status = command_output(["git", "status", "--porcelain", "--untracked-files=no"])
+    return {
+        "repository": "https://github.com/ehmo/gomoufox",
+        "commit": command_output(["git", "rev-parse", "HEAD"]),
+        "tag": command_output(["git", "describe", "--tags", "--exact-match"]),
+        "dirty": bool(status),
+    }
+
+
+def go_modules() -> list[dict[str, str]]:
+    raw = command_output(["go", "list", "-m", "-json", "all"])
+    modules: list[dict[str, str]] = []
+    decoder = json.JSONDecoder()
+    index = 0
+    while index < len(raw):
+        while index < len(raw) and raw[index].isspace():
+            index += 1
+        if index >= len(raw):
+            break
+        item, next_index = decoder.raw_decode(raw, index)
+        index = next_index
+        module = {"path": item.get("Path", ""), "version": item.get("Version", "")}
+        if "Replace" in item:
+            replacement = item["Replace"]
+            module["replace_path"] = replacement.get("Path", "")
+            module["replace_version"] = replacement.get("Version", "")
+        modules.append(module)
+    return modules
+
+
+def material(path: str) -> dict:
+    file_path = ROOT / path
+    return {
+        "uri": path,
+        "sha256": sha256_file(file_path),
+        "size_bytes": file_path.stat().st_size,
+    }
+
+
+def write_release_provenance(version: str, artifacts: list[Artifact], out_dir: Path) -> None:
+    payload = {
+        "schema_version": "gomoufox.release-provenance.v1",
+        "version": version,
+        "created": datetime.datetime.now(datetime.UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
+        "source": source_metadata(),
+        "builder": {
+            "tool": "scripts/package-release.py",
+            "go_version": command_output(["go", "env", "GOVERSION"]),
+            "python_version": platform_python_version(),
+        },
+        "build": {
+            "trimpath": True,
+            "buildvcs": False,
+            "cgo_enabled": False,
+            "ldflags": "-s -w -buildid= -X github.com/ehmo/gomoufox/internal/buildinfo.Version=<version>",
+        },
+        "materials": [material("go.mod"), material("go.sum"), material("LICENSE")],
+        "modules": go_modules(),
+        "artifacts": [
+            {
+                "name": artifact.name,
+                "goos": artifact.goos,
+                "goarch": artifact.goarch,
+                "sha256": artifact.sha256,
+                "size_bytes": artifact.size_bytes,
+            }
+            for artifact in sorted(artifacts, key=lambda item: item.name)
+        ],
+    }
+    (out_dir / "release-provenance.json").write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
+def platform_python_version() -> str:
+    return ".".join(str(part) for part in sys.version_info[:3])
+
+
+def spdx_id(value: str) -> str:
+    safe = re.sub(r"[^A-Za-z0-9.-]", "-", value)
+    return "SPDXRef-" + safe.strip("-")
+
+
+def write_sbom(version: str, artifacts: list[Artifact], out_dir: Path) -> None:
+    created = datetime.datetime.now(datetime.UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    packages = [
+        {
+            "SPDXID": "SPDXRef-Package-gomoufox",
+            "name": "github.com/ehmo/gomoufox",
+            "versionInfo": version,
+            "downloadLocation": "https://github.com/ehmo/gomoufox",
+            "filesAnalyzed": False,
+            "licenseConcluded": "MIT",
+            "licenseDeclared": "MIT",
+            "copyrightText": "NOASSERTION",
+        }
+    ]
+    relationships = [
+        {"spdxElementId": "SPDXRef-DOCUMENT", "relationshipType": "DESCRIBES", "relatedSpdxElement": "SPDXRef-Package-gomoufox"}
+    ]
+    for module in go_modules():
+        if not module["path"] or module["path"] == "github.com/ehmo/gomoufox":
+            continue
+        module_id = spdx_id("Module-" + module["path"] + "-" + module.get("version", ""))
+        packages.append({
+            "SPDXID": module_id,
+            "name": module["path"],
+            "versionInfo": module.get("version", ""),
+            "downloadLocation": "NOASSERTION",
+            "filesAnalyzed": False,
+            "licenseConcluded": "NOASSERTION",
+            "licenseDeclared": "NOASSERTION",
+            "copyrightText": "NOASSERTION",
+        })
+        relationships.append({"spdxElementId": "SPDXRef-Package-gomoufox", "relationshipType": "DEPENDS_ON", "relatedSpdxElement": module_id})
+    files = []
+    for artifact in sorted(artifacts, key=lambda item: item.name):
+        file_id = spdx_id("File-" + artifact.name)
+        files.append({
+            "SPDXID": file_id,
+            "fileName": artifact.name,
+            "checksums": [{"algorithm": "SHA256", "checksumValue": artifact.sha256}],
+            "licenseConcluded": "NOASSERTION",
+            "copyrightText": "NOASSERTION",
+        })
+        relationships.append({"spdxElementId": "SPDXRef-Package-gomoufox", "relationshipType": "CONTAINS", "relatedSpdxElement": file_id})
+    document = {
+        "spdxVersion": "SPDX-2.3",
+        "dataLicense": "CC0-1.0",
+        "SPDXID": "SPDXRef-DOCUMENT",
+        "name": f"gomoufox-{version}",
+        "documentNamespace": f"https://github.com/ehmo/gomoufox/releases/download/{version}/sbom.spdx.json",
+        "creationInfo": {"created": created, "creators": ["Tool: scripts/package-release.py", "Organization: ehmo"]},
+        "packages": packages,
+        "files": files,
+        "relationships": relationships,
+    }
+    (out_dir / "sbom.spdx.json").write_text(json.dumps(document, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
 def smoke_host(version: str, out_dir: Path) -> None:
     checks = (
         (out_dir / "gomoufox", f"gomoufox {version}\n"),
@@ -201,6 +350,8 @@ def formula_target_block(artifact: Artifact, version: str) -> str:
 def write_formula(path: Path, version: str, artifacts: list[Artifact]) -> str:
     by_target = {(artifact.goos, artifact.goarch): artifact for artifact in artifacts}
     version_plain = version_without_v(version)
+    darwin_arm = by_target.get(("darwin", "arm64"))
+    linux_amd = by_target.get(("linux", "amd64"))
     lines = [
         "class Gomoufox < Formula",
         '  desc "Go driver, CLI, and MCP server for Camoufox"',
@@ -209,27 +360,28 @@ def write_formula(path: Path, version: str, artifacts: list[Artifact]) -> str:
         '  license "MIT"',
         "",
     ]
-    for goos, section in (("darwin", "on_macos"), ("linux", "on_linux")):
-        available = {arch: by_target[(goos, arch)] for arch in ("arm64", "amd64") if (goos, arch) in by_target}
-        if not available:
-            continue
-        lines.append(f"  {section} do")
-        if "arm64" in available:
-            lines.append("    if Hardware::CPU.arm?")
-            lines.append(formula_target_block(available["arm64"], version))
-            if "amd64" in available:
-                lines.append("    else")
-                lines.append(formula_target_block(available["amd64"], version))
-            else:
-                lines.append("    else")
-                lines.append('      odie "gomoufox does not ship an Intel archive for this release"')
-            lines.append("    end")
+    if darwin_arm or any(goos == "darwin" for goos, _ in by_target):
+        lines.append("  on_macos do")
+        lines.append("    if Hardware::CPU.arm?")
+        if darwin_arm:
+            lines.append(formula_target_block(darwin_arm, version))
         else:
-            lines.append("    if Hardware::CPU.arm?")
-            lines.append('      odie "gomoufox does not ship an ARM archive for this release"')
-            lines.append("    else")
-            lines.append(formula_target_block(available["amd64"], version))
-            lines.append("    end")
+            lines.append('      odie "gomoufox does not ship a macOS ARM archive for this release"')
+        lines.append("    else")
+        lines.append('      odie "gomoufox Homebrew requires Apple Silicon because pinned Camoufox has no supported macOS Intel browser binary"')
+        lines.append("    end")
+        lines.append("  end")
+        lines.append("")
+    if linux_amd or any(goos == "linux" for goos, _ in by_target):
+        lines.append("  on_linux do")
+        lines.append("    if Hardware::CPU.arm?")
+        lines.append('      odie "gomoufox Homebrew requires Linux amd64 because pinned Camoufox has no supported Linux ARM browser binary"')
+        lines.append("    else")
+        if linux_amd:
+            lines.append(formula_target_block(linux_amd, version))
+        else:
+            lines.append('      odie "gomoufox does not ship a Linux amd64 archive for this release"')
+        lines.append("    end")
         lines.append("  end")
         lines.append("")
     lines.extend([
@@ -255,12 +407,17 @@ def write_formula(path: Path, version: str, artifacts: list[Artifact]) -> str:
 def verify_formula(path: Path, artifacts: list[Artifact], targets: list[tuple[str, str]]) -> None:
     text = path.read_text(encoding="utf-8")
     for artifact in artifacts:
-        if (artifact.goos, artifact.goarch) not in targets:
+        target = (artifact.goos, artifact.goarch)
+        if target not in targets or target not in FORMULA_SUPPORTED_TARGETS:
             continue
         url = f"https://github.com/ehmo/gomoufox/releases/download/"
         for want in (url, artifact.name, artifact.sha256):
             if want not in text:
                 raise SystemExit(f"{path} missing {want} for {artifact.goos}/{artifact.goarch}")
+    for goos, goarch in set(targets) - FORMULA_SUPPORTED_TARGETS:
+        for artifact in artifacts:
+            if (artifact.goos, artifact.goarch) == (goos, goarch) and artifact.name in text:
+                raise SystemExit(f"{path} must not install unsupported Homebrew target {goos}/{goarch}")
 
 
 def main() -> int:
@@ -294,6 +451,8 @@ def main() -> int:
             print(f"archive: {out_dir / f'gomoufox_{version_plain}_{goos}_{goarch}.tar.gz'}")
         print(f"checksums.txt: {out_dir / 'checksums.txt'}")
         print(f"checksums.json: {out_dir / 'checksums.json'}")
+        print(f"release-provenance.json: {out_dir / 'release-provenance.json'}")
+        print(f"sbom.spdx.json: {out_dir / 'sbom.spdx.json'}")
         if formula_path:
             print(f"Homebrew formula: {formula_path}")
         if verify_formula_path:
@@ -301,6 +460,8 @@ def main() -> int:
         return 0
 
     artifacts = build_artifacts(args.version, targets, out_dir, smoke=not args.skip_host_smoke)
+    write_release_provenance(args.version, artifacts, out_dir)
+    write_sbom(args.version, artifacts, out_dir)
     if formula_path:
         write_formula(formula_path, args.version, artifacts)
     if verify_formula_path:

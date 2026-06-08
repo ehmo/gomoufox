@@ -2,7 +2,15 @@
 
 ## Unreleased
 
-- Nothing yet.
+- Add public release SBOM and provenance artifacts, plus GitHub artifact
+  attestations in the release workflow.
+- Add a reusable post-release public audit that verifies assets, checksums,
+  attestations, archives, CLI discovery, MCP, skills, and the Homebrew path.
+- Narrow the Homebrew formula to browser-supported hosts: macOS Apple Silicon
+  and Linux amd64.
+- Add Python-removal readiness reporting so node-direct cannot replace Python
+  until it beats Python on correctness, resources, timing, and report tokens.
+- Add release-gate checking for hash-locked Python requirement freshness.
 
 ## v0.1.1
 

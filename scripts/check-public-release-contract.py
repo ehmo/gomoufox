@@ -60,10 +60,12 @@ FORMULA_URL_PATTERN = re.compile(
 )
 FORMULA_SHA_PATTERN = re.compile(r'^\s*sha256 "([0-9a-f]{64})"\s*$', re.MULTILINE)
 EXPECTED_FORMULA_PLATFORMS = {
-    ("darwin", "amd64"),
     ("darwin", "arm64"),
     ("linux", "amd64"),
-    ("linux", "arm64"),
+}
+FORMULA_UNSUPPORTED_MARKERS = {
+    "no supported macOS Intel browser binary",
+    "no supported Linux ARM browser binary",
 }
 
 macos_user_pattern = s(r"(?<![A-Za-z0-9])/(?:", "Users", r"|Volumes)/[^\s\"'`<>)\]]+")
@@ -239,10 +241,13 @@ def formula_release_failures(root: Path, file_set: set[str]) -> list[str]:
             failures.append(f"Formula/gomoufox.rb has unexpected platform archives: {', '.join('/'.join(p) for p in sorted(extra))}")
 
     shas = FORMULA_SHA_PATTERN.findall(formula)
-    if len(shas) != 4:
-        failures.append(f"Formula/gomoufox.rb should contain four sha256 values, found {len(shas)}")
-    elif len(set(shas)) != 4:
+    if len(shas) != len(EXPECTED_FORMULA_PLATFORMS):
+        failures.append(f"Formula/gomoufox.rb should contain {len(EXPECTED_FORMULA_PLATFORMS)} sha256 values, found {len(shas)}")
+    elif len(set(shas)) != len(EXPECTED_FORMULA_PLATFORMS):
         failures.append("Formula/gomoufox.rb sha256 values should be unique per archive")
+    for marker in FORMULA_UNSUPPORTED_MARKERS:
+        if marker not in formula:
+            failures.append(f"Formula/gomoufox.rb missing unsupported-platform guard: {marker}")
     return failures
 
 
