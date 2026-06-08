@@ -51,6 +51,20 @@ TEXT_FILE_NAMES = {".gitignore", "LICENSE"}
 ALLOWED_DOT_PARTS = {".github", ".gitignore"}
 SOURCE_DIRS = {"camoufoxcfg", "cmd", "internal"}
 BENCHMARK_LINK_PATTERN = re.compile(r"\]\((docs/benchmarks/[^)\s]+\.json)\)")
+RELEASE_HEADING_PATTERN = re.compile(r"^## (v[0-9]+\.[0-9]+\.[0-9]+)\b", re.MULTILINE)
+FORMULA_VERSION_PATTERN = re.compile(r'^\s*version "([0-9]+\.[0-9]+\.[0-9]+)"\s*$', re.MULTILINE)
+FORMULA_URL_PATTERN = re.compile(
+    r'^\s*url "https://github\.com/ehmo/gomoufox/releases/download/'
+    r'(v[0-9]+\.[0-9]+\.[0-9]+)/(gomoufox_([0-9]+\.[0-9]+\.[0-9]+)_(darwin|linux)_(amd64|arm64)\.tar\.gz)"\s*$',
+    re.MULTILINE,
+)
+FORMULA_SHA_PATTERN = re.compile(r'^\s*sha256 "([0-9a-f]{64})"\s*$', re.MULTILINE)
+EXPECTED_FORMULA_PLATFORMS = {
+    ("darwin", "amd64"),
+    ("darwin", "arm64"),
+    ("linux", "amd64"),
+    ("linux", "arm64"),
+}
 
 macos_user_pattern = s(r"(?<![A-Za-z0-9])/(?:", "Users", r"|Volumes)/[^\s\"'`<>)\]]+")
 linux_home_pattern = s(r"(?<![A-Za-z0-9])/(?:", "home", r"|root)/[^\s\"'`<>)\]]+")
@@ -181,6 +195,57 @@ def benchmark_link_failures(rel: Path, text: str, file_set: set[str], manifest_b
     return failures
 
 
+def latest_release_version(changelog: str) -> str | None:
+    match = RELEASE_HEADING_PATTERN.search(changelog)
+    if not match:
+        return None
+    return match.group(1)
+
+
+def formula_release_failures(root: Path, file_set: set[str]) -> list[str]:
+    failures: list[str] = []
+    if "CHANGELOG.md" not in file_set or "Formula/gomoufox.rb" not in file_set:
+        return failures
+    try:
+        changelog = (root / "CHANGELOG.md").read_text(encoding="utf-8")
+        formula = (root / "Formula" / "gomoufox.rb").read_text(encoding="utf-8")
+    except OSError as err:
+        return [f"could not read formula release metadata: {err}"]
+    latest = latest_release_version(changelog)
+    if latest is None:
+        return ["CHANGELOG.md has no concrete vX.Y.Z release heading for formula validation"]
+    latest_no_v = latest[1:]
+
+    version_match = FORMULA_VERSION_PATTERN.search(formula)
+    if version_match is None:
+        failures.append("Formula/gomoufox.rb missing version declaration")
+    elif version_match.group(1) != latest_no_v:
+        failures.append(f"Formula/gomoufox.rb version {version_match.group(1)} does not match latest release {latest_no_v}")
+
+    seen_platforms: set[tuple[str, str]] = set()
+    for match in FORMULA_URL_PATTERN.finditer(formula):
+        tag, archive, archive_version, goos, goarch = match.groups()
+        if tag != latest:
+            failures.append(f"Formula/gomoufox.rb URL tag {tag} does not match latest release {latest}")
+        if archive_version != latest_no_v:
+            failures.append(f"Formula/gomoufox.rb archive {archive} does not match latest release {latest_no_v}")
+        seen_platforms.add((goos, goarch))
+    if seen_platforms != EXPECTED_FORMULA_PLATFORMS:
+        missing = EXPECTED_FORMULA_PLATFORMS - seen_platforms
+        extra = seen_platforms - EXPECTED_FORMULA_PLATFORMS
+        if missing:
+            failures.append(f"Formula/gomoufox.rb missing platform archives: {', '.join('/'.join(p) for p in sorted(missing))}")
+        if extra:
+            failures.append(f"Formula/gomoufox.rb has unexpected platform archives: {', '.join('/'.join(p) for p in sorted(extra))}")
+
+    shas = FORMULA_SHA_PATTERN.findall(formula)
+    if len(shas) != 4:
+        failures.append(f"Formula/gomoufox.rb should contain four sha256 values, found {len(shas)}")
+    elif len(set(shas)) != 4:
+        failures.append("Formula/gomoufox.rb sha256 values should be unique per archive")
+    return failures
+
+
 def check(root: Path) -> list[str]:
     failures: list[str] = []
     try:
@@ -200,6 +265,7 @@ def check(root: Path) -> list[str]:
         failures.append(f"public manifest source_dirs widen checker allowlist: {', '.join(sorted(extra_source_dirs))}")
     files = rel_files(root)
     file_set = {path.as_posix() for path in files}
+    failures.extend(formula_release_failures(root, file_set))
     for required in sorted(required_files):
         if required not in file_set:
             failures.append(f"missing required public file: {required}")
