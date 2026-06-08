@@ -110,7 +110,7 @@ jobs:
           fetch-depth: 0
       - name: Checkout tag
         run: git checkout --detach "refs/tags/${{ needs.gate-public-release.outputs.tag }}"
-      - uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: gomoufox-${{ needs.gate-public-release.outputs.tag }}-candidate
           path: .

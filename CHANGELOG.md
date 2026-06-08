@@ -4,6 +4,11 @@
 
 - No changes yet.
 
+## v0.1.4
+
+- Update the public release workflow to the Node 24-compatible
+  `actions/download-artifact` v8 pin.
+
 ## v0.1.3
 
 - Harden the public release audit with bounded transient Homebrew install
