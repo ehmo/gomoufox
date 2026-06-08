@@ -31,4 +31,16 @@ type SidecarInfo struct {
 	CamoufoxVersion    string
 	PlaywrightVersion  string
 	WSEndpointRedacted string
+	Runtime            SidecarRuntime
 }
+
+// SidecarRuntime selects the long-lived sidecar process model.
+type SidecarRuntime string
+
+const (
+	// SidecarRuntimePython uses Camoufox's Python server wrapper.
+	SidecarRuntimePython SidecarRuntime = "python"
+	// SidecarRuntimeNodeDirect asks Python to generate Camoufox launch options,
+	// then runs the Playwright Node server directly as the long-lived sidecar.
+	SidecarRuntimeNodeDirect SidecarRuntime = "node-direct"
+)

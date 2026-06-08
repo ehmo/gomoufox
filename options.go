@@ -134,6 +134,15 @@ func WithExtraEnv(pairs ...string) Option {
 	return func(c *launchConfig) { c.extraEnv = append([]string(nil), pairs...) }
 }
 
+// WithSidecarRuntime selects the long-lived sidecar process model.
+//
+// SidecarRuntimePython is the compatibility default. SidecarRuntimeNodeDirect
+// still uses Python during startup to compute Camoufox's launch options, but the
+// long-lived sidecar process is Playwright's Node server instead of Python.
+func WithSidecarRuntime(runtime SidecarRuntime) Option {
+	return func(c *launchConfig) { c.sidecarRuntime = runtime }
+}
+
 // withConnector is intentionally unexported; tests and internal packages use it
 // to swap playwright-go for deterministic fakes without expanding the public API.
 func withConnector(connector pwbridge.Connector) Option {

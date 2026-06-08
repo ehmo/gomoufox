@@ -110,11 +110,34 @@ func TestInstallLockContextTimeoutAndNilPath(t *testing.T) {
 	}
 }
 
-func TestEnsureBinaryOfflinePathSkipsFetchAndChecksum(t *testing.T) {
+func TestEnsureBinaryOfflinePathRequiresManifestByDefault(t *testing.T) {
 	browser := fakeBrowserTree(t)
 	missingPython := filepath.Join(t.TempDir(), "python")
-	if err := EnsureBinary(context.Background(), missingPython, InstallOptions{CamoufoxPath: browser}); err != nil {
+	if err := EnsureBinary(context.Background(), missingPython, InstallOptions{CamoufoxPath: browser}); !errors.Is(err, ErrVersionMismatch) || !strings.Contains(err.Error(), EnvTrustUnverifiedCamoufoxPath) {
+		t.Fatalf("unverified offline path err = %v", err)
+	}
+
+	expected, err := camoufoxBrowserManifestSHA256(browser)
+	if err != nil {
 		t.Fatal(err)
+	}
+	restore := replaceManifestChecksum(t, expected)
+	defer restore()
+	if err := EnsureBinary(context.Background(), missingPython, InstallOptions{CamoufoxPath: browser}); err != nil {
+		t.Fatalf("verified offline path err = %v", err)
+	}
+}
+
+func TestEnsureBinaryOfflinePathAllowsExplicitUnverifiedTrust(t *testing.T) {
+	browser := fakeBrowserTree(t)
+	t.Setenv(EnvTrustUnverifiedCamoufoxPath, "1")
+	if err := EnsureBinary(context.Background(), filepath.Join(t.TempDir(), "python"), InstallOptions{CamoufoxPath: browser}); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Setenv(EnvTrustUnverifiedCamoufoxPath, "true")
+	if err := EnsureBinary(context.Background(), filepath.Join(t.TempDir(), "python"), InstallOptions{CamoufoxPath: browser}); !errors.Is(err, ErrVersionMismatch) {
+		t.Fatalf("non-explicit trust override err = %v", err)
 	}
 }
 
@@ -143,7 +166,13 @@ func TestEnsureBinarySkipFetchWithEmptyDiscovery(t *testing.T) {
 
 func TestEnsureBinaryEnvOfflinePath(t *testing.T) {
 	browser := fakeBrowserTree(t)
-	t.Setenv("GOMOUFOX_CAMOUFOX_PATH", browser)
+	t.Setenv(EnvCamoufoxPath, browser)
+	expected, err := camoufoxBrowserManifestSHA256(browser)
+	if err != nil {
+		t.Fatal(err)
+	}
+	restore := replaceManifestChecksum(t, expected)
+	defer restore()
 	if err := EnsureBinary(context.Background(), filepath.Join(t.TempDir(), "python"), InstallOptions{}); err != nil {
 		t.Fatal(err)
 	}
@@ -247,6 +276,7 @@ func TestEnsureVenvCreatesAndUpgradesPipWithFakePython(t *testing.T) {
 		t.Skip("fake shell python is unix-only")
 	}
 	marker := filepath.Join(t.TempDir(), "pip-args")
+	lockMarker := filepath.Join(t.TempDir(), "pip-lock")
 	python := fakePython(t, `#!/bin/sh
 if [ "$1" = "-m" ] && [ "$2" = "venv" ]; then
 	mkdir -p "$3/bin"
@@ -260,6 +290,12 @@ PY
 	cat > "$3/bin/pip" <<PIP
 #!/bin/sh
 printf '%s\n' "\$*" > `+shQuote(marker)+`
+while [ "\$#" -gt 0 ]; do
+	if [ "\$1" = "-r" ]; then
+		cat "\$2" > `+shQuote(lockMarker)+`
+	fi
+	shift
+done
 exit 0
 PIP
 	chmod +x "$3/bin/python" "$3/bin/pip"
@@ -275,7 +311,15 @@ exit 42
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(data), "install --upgrade pip=="+RequiredPip) {
+	assertHashLockedPipArgs(t, string(data), true)
+	lockData, err := os.ReadFile(lockMarker)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(lockData), "pip=="+RequiredPip) || !strings.Contains(string(lockData), "--hash=sha256:") {
+		t.Fatalf("pip lock = %q", lockData)
+	}
+	if !strings.Contains(string(data), "install") {
 		t.Fatalf("pip args = %q", data)
 	}
 	if err := EnsureVenv(context.Background(), python, venv); err != nil {
@@ -318,6 +362,15 @@ exit 42
 		t.Fatalf("upgrade failure err = %v", err)
 	}
 
+	lockErr := errors.New("pip lock missing")
+	oldReadLock := readPythonRequirementsLock
+	readPythonRequirementsLock = func(string) ([]byte, error) { return nil, lockErr }
+	t.Cleanup(func() { readPythonRequirementsLock = oldReadLock })
+	if err := EnsureVenv(context.Background(), python, filepath.Join(t.TempDir(), "venv")); !errors.Is(err, lockErr) || !strings.Contains(err.Error(), "locked pip requirements") {
+		t.Fatalf("missing pip lock err = %v", err)
+	}
+	readPythonRequirementsLock = oldReadLock
+
 	oldPipAfterCreate := venvPipAfterCreate
 	pipPathErr := errors.New("pip path failed")
 	venvPipAfterCreate = func(string) (string, error) { return "", pipPathErr }
@@ -359,8 +412,15 @@ exit 64
 	}
 
 	forceMarker := filepath.Join(t.TempDir(), "pip-args")
+	forceLockMarker := filepath.Join(t.TempDir(), "camoufox-lock")
 	writeFakePip(t, venv, `#!/bin/sh
 printf '%s\n' "$*" > `+shQuote(forceMarker)+`
+while [ "$#" -gt 0 ]; do
+	if [ "$1" = "-r" ]; then
+		cat "$2" > `+shQuote(forceLockMarker)+`
+	fi
+	shift
+done
 exit 0
 `)
 	if err := EnsureCamoufox(context.Background(), venv, InstallOptions{ForceReinstall: true}); err != nil {
@@ -371,7 +431,16 @@ exit 0
 		t.Fatal(err)
 	}
 	text := string(data)
-	if !strings.Contains(text, "camoufox[geoip]=="+RequiredCamoufox) || !strings.Contains(text, "playwright=="+RequiredPlaywright) {
+	assertHashLockedPipArgs(t, text, false)
+	lockData, err := os.ReadFile(forceLockMarker)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lockText := string(lockData)
+	if !strings.Contains(lockText, "camoufox=="+RequiredCamoufox) || !strings.Contains(lockText, "playwright=="+RequiredPlaywright) || !strings.Contains(lockText, "--hash=sha256:") {
+		t.Fatalf("camoufox lock = %q", lockText)
+	}
+	if !strings.Contains(text, "install") {
 		t.Fatalf("pip args = %q", text)
 	}
 	if compatibleInstalled(context.Background(), t.TempDir()) {
@@ -383,9 +452,22 @@ exit 0
 echo install failed
 exit 9
 `)
-	if err := EnsureCamoufox(context.Background(), brokenVenv, InstallOptions{}); err == nil || !strings.Contains(err.Error(), "pip install pinned") {
+	if err := EnsureCamoufox(context.Background(), brokenVenv, InstallOptions{}); err == nil || !strings.Contains(err.Error(), "pip install locked") {
 		t.Fatalf("pip failure err = %v", err)
 	}
+
+	lockErr := errors.New("camoufox lock missing")
+	oldReadLock := readPythonRequirementsLock
+	readPythonRequirementsLock = func(string) ([]byte, error) { return nil, lockErr }
+	t.Cleanup(func() { readPythonRequirementsLock = oldReadLock })
+	lockVenv := fakeCompatibleVenv(t, siteRoot, "0.0.0")
+	writeFakePip(t, lockVenv, `#!/bin/sh
+exit 0
+`)
+	if err := EnsureCamoufox(context.Background(), lockVenv, InstallOptions{}); !errors.Is(err, lockErr) || !strings.Contains(err.Error(), "locked camoufox/playwright requirements") {
+		t.Fatalf("missing camoufox lock err = %v", err)
+	}
+	readPythonRequirementsLock = oldReadLock
 
 	oldPipForCamoufox := venvPipForCamoufox
 	pipPathErr := errors.New("pip path failed")
@@ -395,6 +477,81 @@ exit 9
 		t.Fatalf("camoufox pip path err = %v", err)
 	}
 	venvPipForCamoufox = oldPipForCamoufox
+}
+
+func TestPythonRequirementsLocksMatchPinsAndFailClosed(t *testing.T) {
+	camoufoxLock, err := readPythonRequirementsLock(camoufoxRequirementsLock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	camoufoxText := string(camoufoxLock)
+	if !strings.Contains(camoufoxText, "camoufox=="+RequiredCamoufox) ||
+		!strings.Contains(camoufoxText, "playwright=="+RequiredPlaywright) ||
+		!strings.Contains(camoufoxText, "--hash=sha256:") {
+		t.Fatalf("camoufox lock does not match pins")
+	}
+	pipLock, err := readPythonRequirementsLock(pipRequirementsLock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pipText := string(pipLock)
+	if !strings.Contains(pipText, "pip=="+RequiredPip) || !strings.Contains(pipText, "--hash=sha256:") {
+		t.Fatalf("pip lock does not match pin")
+	}
+
+	path, cleanup, err := materializePythonRequirementsLock(pipRequirementsLock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	written, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(written) != pipText {
+		t.Fatalf("materialized lock mismatch")
+	}
+	cleanup()
+	if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("materialized lock cleanup err = %v", err)
+	}
+
+	oldRead := readPythonRequirementsLock
+	oldMkdir := mkdirPythonRequirementsTemp
+	oldWrite := writePythonRequirementsFile
+	t.Cleanup(func() {
+		readPythonRequirementsLock = oldRead
+		mkdirPythonRequirementsTemp = oldMkdir
+		writePythonRequirementsFile = oldWrite
+	})
+
+	readErr := errors.New("read lock failed")
+	readPythonRequirementsLock = func(string) ([]byte, error) { return nil, readErr }
+	if _, cleanup, err := materializePythonRequirementsLock(pipRequirementsLock); !errors.Is(err, readErr) {
+		cleanup()
+		t.Fatalf("read lock err = %v", err)
+	}
+
+	readPythonRequirementsLock = func(string) ([]byte, error) { return []byte(" \n"), nil }
+	if _, cleanup, err := materializePythonRequirementsLock(pipRequirementsLock); err == nil || !strings.Contains(err.Error(), "empty Python requirements lock") {
+		cleanup()
+		t.Fatalf("empty lock err = %v", err)
+	}
+
+	readPythonRequirementsLock = oldRead
+	mkdirErr := errors.New("mkdir lock failed")
+	mkdirPythonRequirementsTemp = func(string, string) (string, error) { return "", mkdirErr }
+	if _, cleanup, err := materializePythonRequirementsLock(pipRequirementsLock); !errors.Is(err, mkdirErr) {
+		cleanup()
+		t.Fatalf("mkdir lock err = %v", err)
+	}
+
+	mkdirPythonRequirementsTemp = oldMkdir
+	writeErr := errors.New("write lock failed")
+	writePythonRequirementsFile = func(string, []byte, os.FileMode) error { return writeErr }
+	if _, cleanup, err := materializePythonRequirementsLock(pipRequirementsLock); !errors.Is(err, writeErr) {
+		cleanup()
+		t.Fatalf("write lock err = %v", err)
+	}
 }
 
 func TestEnsureInstalledWithCompatibleOfflineVenv(t *testing.T) {
@@ -413,7 +570,7 @@ exit 65
 	if err := EnsureInstalled(context.Background(), InstallOptions{
 		VenvDir:      venv,
 		PythonBin:    python,
-		CamoufoxPath: fakeBrowserTree(t),
+		CamoufoxPath: fakeVerifiedBrowserTree(t),
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -474,7 +631,7 @@ exit 0
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := EnsureInstalled(context.Background(), InstallOptions{VenvDir: mismatchedVenv, PythonBin: mismatchedPython, CamoufoxPath: fakeBrowserTree(t)}); !errors.Is(err, ErrVersionMismatch) {
+	if err := EnsureInstalled(context.Background(), InstallOptions{VenvDir: mismatchedVenv, PythonBin: mismatchedPython, CamoufoxPath: fakeVerifiedBrowserTree(t)}); !errors.Is(err, ErrVersionMismatch) {
 		t.Fatalf("final compatibility err = %v", err)
 	}
 
@@ -486,7 +643,7 @@ exit 0
 	writeFakePip(t, forcedVenv, `#!/bin/sh
 exit 0
 `)
-	if err := EnsureInstalled(context.Background(), InstallOptions{VenvDir: forcedVenv, PythonBin: forcedPython, CamoufoxPath: fakeBrowserTree(t), ForceReinstall: true}); err != nil {
+	if err := EnsureInstalled(context.Background(), InstallOptions{VenvDir: forcedVenv, PythonBin: forcedPython, CamoufoxPath: fakeVerifiedBrowserTree(t), ForceReinstall: true}); err != nil {
 		t.Fatalf("forced reinstall err = %v", err)
 	}
 
@@ -494,7 +651,7 @@ exit 0
 	venvPythonErr := errors.New("venv python failed")
 	venvPythonAfterInstall = func(string) (string, error) { return "", venvPythonErr }
 	t.Cleanup(func() { venvPythonAfterInstall = oldVenvPythonAfterInstall })
-	if err := EnsureInstalled(context.Background(), InstallOptions{VenvDir: forcedVenv, PythonBin: forcedPython, CamoufoxPath: fakeBrowserTree(t)}); !errors.Is(err, venvPythonErr) {
+	if err := EnsureInstalled(context.Background(), InstallOptions{VenvDir: forcedVenv, PythonBin: forcedPython, CamoufoxPath: fakeVerifiedBrowserTree(t)}); !errors.Is(err, venvPythonErr) {
 		t.Fatalf("post-install venv python err = %v", err)
 	}
 	venvPythonAfterInstall = oldVenvPythonAfterInstall
@@ -528,7 +685,7 @@ func TestInstallLifecycleAdditionalLocalBranchEdges(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := EnsureCamoufox(context.Background(), t.TempDir(), InstallOptions{}); err == nil || !strings.Contains(err.Error(), "pip install pinned") {
+	if err := EnsureCamoufox(context.Background(), t.TempDir(), InstallOptions{}); err == nil || !strings.Contains(err.Error(), "pip install locked") {
 		t.Fatalf("missing pip err = %v", err)
 	}
 
@@ -1207,6 +1364,33 @@ func fakeBrowserTree(t *testing.T) string {
 		t.Fatal(err)
 	}
 	return dir
+}
+
+func fakeVerifiedBrowserTree(t *testing.T) string {
+	t.Helper()
+	browser := fakeBrowserTree(t)
+	expected, err := camoufoxBrowserManifestSHA256(browser)
+	if err != nil {
+		t.Fatal(err)
+	}
+	restore := replaceManifestChecksum(t, expected)
+	t.Cleanup(restore)
+	return browser
+}
+
+func assertHashLockedPipArgs(t *testing.T, args string, upgrade bool) {
+	t.Helper()
+	for _, want := range []string{"--disable-pip-version-check", "--require-hashes", "--only-binary=:all:", "-r"} {
+		if !strings.Contains(args, want) {
+			t.Fatalf("pip args %q missing %s", args, want)
+		}
+	}
+	if upgrade && !strings.Contains(args, "--upgrade") {
+		t.Fatalf("pip args %q missing --upgrade", args)
+	}
+	if !upgrade && strings.Contains(args, "--upgrade") {
+		t.Fatalf("pip args %q unexpectedly upgrades", args)
+	}
 }
 
 func fakePython(t *testing.T, script string) string {

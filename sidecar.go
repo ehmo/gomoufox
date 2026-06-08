@@ -13,9 +13,14 @@ type sidecarHandle interface {
 }
 
 func newSidecarManager(cfg launchConfig) (sidecarHandle, error) {
+	return sidecarAdapter{manager: sidecar.New(sidecarConfigFromLaunchConfig(cfg))}, nil
+}
+
+func sidecarConfigFromLaunchConfig(cfg launchConfig) sidecar.Config {
 	sidecarCfg := sidecar.Config{
 		PythonBin:       cfg.pythonBin,
 		VenvDir:         cfg.venvDir,
+		Runtime:         string(cfg.sidecarRuntime),
 		ConnectTimeout:  cfg.connectTimeout,
 		Headless:        int(cfg.headless),
 		Persistent:      cfg.persistentCtx,
@@ -64,7 +69,7 @@ func newSidecarManager(cfg launchConfig) (sidecarHandle, error) {
 			sidecarCfg.Fingerprint[key] = value
 		}
 	}
-	return sidecarAdapter{manager: sidecar.New(sidecarCfg)}, nil
+	return sidecarCfg
 }
 
 type sidecarAdapter struct {
@@ -80,5 +85,6 @@ func (a sidecarAdapter) Info() SidecarInfo {
 		CamoufoxVersion:    info.CamoufoxVersion,
 		PlaywrightVersion:  info.PlaywrightVersion,
 		WSEndpointRedacted: info.WSEndpointRedacted,
+		Runtime:            SidecarRuntime(info.Runtime),
 	}
 }

@@ -3,7 +3,10 @@ package sidecar
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net"
@@ -12,6 +15,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"strings"
 	"testing"
@@ -35,7 +39,7 @@ func (failingDiagnosticReader) Read([]byte) (int, error) {
 	return 0, errors.New(diagnosticSecretFixture)
 }
 
-func TestWriteLauncherReflectsConfig(t *testing.T) {
+func TestWriteLauncherReadsLaunchArgsFromStdin(t *testing.T) {
 	venv := t.TempDir()
 	profile := filepath.Join(t.TempDir(), "profile")
 	path, err := WriteLauncher(venv, Config{Headless: 1, Persistent: true, UserDataDir: profile})
@@ -48,9 +52,7 @@ func TestWriteLauncherReflectsConfig(t *testing.T) {
 	}
 	text := string(data)
 	for _, want := range []string{
-		`\"headless\":false`,
-		`\"persistent_context\":true`,
-		profile,
+		`orjson.loads(sys.stdin.buffer.read())`,
 		`persistent_user_data_dir = launch_kwargs.pop("user_data_dir", None)`,
 		`payload["_userDataDir"] = persistent_user_data_dir`,
 		`payload["_sharedBrowser"] = True`,
@@ -69,10 +71,69 @@ func TestWriteLauncherReflectsConfig(t *testing.T) {
 	}
 }
 
-func TestWriteLauncherIncludesProxyAndPersonaOptions(t *testing.T) {
+func TestWriteLauncherDoesNotPersistLaunchSecrets(t *testing.T) {
 	venv := t.TempDir()
 	humanize := 1.25
 	path, err := WriteLauncher(venv, Config{
+		Headless:        0,
+		LaunchProxy:     &ProxyConfig{Server: "http://127.0.0.1:4567", Username: "secret-user", Password: "secret-pass"},
+		GeoIP:           true,
+		Humanize:        &humanize,
+		OS:              "linux",
+		Locale:          []string{"en-US", "en"},
+		BlockImages:     true,
+		BlockWebRTC:     true,
+		BlockWebGL:      true,
+		Addons:          []string{"/addon"},
+		Window:          &Size{Width: 1200, Height: 800},
+		Screen:          &Size{Width: 1440, Height: 900},
+		WebGL:           &WebGLConfig{Vendor: "Intel", Renderer: "Iris"},
+		FirefoxPrefs:    map[string]any{"privacy.resistFingerprinting": false},
+		BrowserArgs:     []string{"--safe-mode"},
+		CustomFontsOnly: true,
+		FFVersion:       135,
+		CamoufoxDebug:   true,
+		Fonts:           []string{"Inter"},
+		Fingerprint:     map[string]any{"navigator.userAgent": "ua"},
+		MainWorldEval:   true,
+		EnableCache:     true,
+		DisableCOOP:     true,
+		ExtraEnv:        []string{"TOKEN=secret-token"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	for _, want := range []string{
+		`orjson.loads(sys.stdin.buffer.read())`,
+		`from browserforge.fingerprints import Screen`,
+		`launch_kwargs["screen"] = Screen(min_width=width, max_width=width, min_height=height, max_height=height)`,
+		`launch_kwargs["window"] = (window_value.get("width"), window_value.get("height"))`,
+		`launch_kwargs["webgl_config"] = (webgl_value.get("vendor"), webgl_value.get("renderer"))`,
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("launcher missing %q:\n%s", want, text)
+		}
+	}
+	for _, secret := range []string{"secret-user", "secret-pass", "secret-token", "navigator.userAgent", "privacy.resistFingerprinting"} {
+		if strings.Contains(text, secret) {
+			t.Fatalf("launcher persisted secret/config value %q:\n%s", secret, text)
+		}
+	}
+}
+
+func TestLaunchArgsJSONIncludesPersonaOptionsAndSanitizesEnv(t *testing.T) {
+	t.Setenv("PATH", "/safe/bin")
+	t.Setenv("HOME", "/gomoufox-home")
+	t.Setenv("PUBLIC_FLAG", "kept")
+	t.Setenv("AWS_SECRET_ACCESS_KEY", "ambient-secret")
+	t.Setenv("GOMOUFOX_DAEMON_TOKEN", "ambient-token")
+	humanize := 1.25
+	raw, err := launchArgsJSON(Config{
 		Headless:        0,
 		LaunchProxy:     &ProxyConfig{Server: "http://127.0.0.1:4567", Username: "user", Password: "pass"},
 		GeoIP:           true,
@@ -96,46 +157,160 @@ func TestWriteLauncherIncludesProxyAndPersonaOptions(t *testing.T) {
 		MainWorldEval:   true,
 		EnableCache:     true,
 		DisableCOOP:     true,
+		ExtraEnv:        []string{"NO_EQUALS", "=blank", "EXPLICIT_TOKEN=explicit-secret"},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	data, err := os.ReadFile(path)
+	text := string(raw)
+	for _, want := range []string{
+		`"proxy":{"password":"pass","server":"http://127.0.0.1:4567","username":"user"}`,
+		`"geoip":true`,
+		`"humanize":1.25`,
+		`"os":"linux"`,
+		`"locale":["en-US","en"]`,
+		`"block_images":true`,
+		`"block_webrtc":true`,
+		`"block_webgl":true`,
+		`"addons":["/addon"]`,
+		`"window":{"height":800,"width":1200}`,
+		`"screen":{"height":900,"width":1440}`,
+		`"webgl_config":{"renderer":"Iris","vendor":"Intel"}`,
+		`"firefox_user_prefs":{"privacy.resistFingerprinting":false}`,
+		`"args":["--safe-mode"]`,
+		`"custom_fonts_only":true`,
+		`"ff_version":135`,
+		`"debug":true`,
+		`"fonts":["Inter"]`,
+		`"config":{"navigator.userAgent":"ua"}`,
+		`"main_world_eval":true`,
+		`"enable_cache":true`,
+		`"disable_coop":true`,
+		`"PUBLIC_FLAG":"kept"`,
+		`"EXPLICIT_TOKEN":"explicit-secret"`,
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("launch args missing %q:\n%s", want, text)
+		}
+	}
+	for _, secret := range []string{"ambient-secret", "ambient-token", "AWS_SECRET_ACCESS_KEY", "GOMOUFOX_DAEMON_TOKEN"} {
+		if strings.Contains(text, secret) {
+			t.Fatalf("launch args leaked ambient env %q:\n%s", secret, text)
+		}
+	}
+}
+
+func TestLaunchPlanDumpBuildsPythonPayloadFromLaunchArgs(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("fake shell python is unix-only")
+	}
+	t.Setenv("AWS_SECRET_ACCESS_KEY", "ambient-secret")
+	python := fakeExecutable(t, `#!/bin/sh
+if [ "$1" = "-c" ]; then
+	input="$(/bin/cat)"
+	case "$input" in
+		*"\"locale\":[\"en-US\",\"en\"]"* ) ;;
+		*) printf '%s\n' "$input" >&2; exit 44 ;;
+	esac
+	printf '%s\n' '{"browserType":"firefox","env":{"PATH":"/safe/bin"},"proxy":{"server":"http://127.0.0.1:4567","username":"user","password":"pass"},"args":["--safe-mode"]}'
+	exit 0
+fi
+exit 45
+`)
+	cfg := Config{
+		Headless:    0,
+		Locale:      []string{"en-US", "en"},
+		LaunchProxy: &ProxyConfig{Server: "http://127.0.0.1:4567", Username: "user", Password: "pass"},
+		BrowserArgs: []string{"--safe-mode"},
+	}
+	launchArgs, err := LaunchArgsMap(cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
-	text := string(data)
-	for _, want := range []string{
-		`\"proxy\":{\"password\":\"pass\",\"server\":\"http://127.0.0.1:4567\",\"username\":\"user\"}`,
-		`\"geoip\":true`,
-		`\"humanize\":1.25`,
-		`\"os\":\"linux\"`,
-		`\"locale\":[\"en-US\",\"en\"]`,
-		`\"block_images\":true`,
-		`\"block_webrtc\":true`,
-		`\"block_webgl\":true`,
-		`\"addons\":[\"/addon\"]`,
-		`\"window\":{\"height\":800,\"width\":1200}`,
-		`\"screen\":{\"height\":900,\"width\":1440}`,
-		`from browserforge.fingerprints import Screen`,
-		`launch_kwargs["screen"] = Screen(min_width=width, max_width=width, min_height=height, max_height=height)`,
-		`launch_kwargs["window"] = (window_value.get("width"), window_value.get("height"))`,
-		`\"webgl_config\":{\"renderer\":\"Iris\",\"vendor\":\"Intel\"}`,
-		`launch_kwargs["webgl_config"] = (webgl_value.get("vendor"), webgl_value.get("renderer"))`,
-		`\"firefox_user_prefs\":{\"privacy.resistFingerprinting\":false}`,
-		`\"args\":[\"--safe-mode\"]`,
-		`\"custom_fonts_only\":true`,
-		`\"ff_version\":135`,
-		`\"debug\":true`,
-		`\"fonts\":[\"Inter\"]`,
-		`\"config\":{\"navigator.userAgent\":\"ua\"}`,
-		`\"main_world_eval\":true`,
-		`\"enable_cache\":true`,
-		`\"disable_coop\":true`,
-	} {
-		if !strings.Contains(text, want) {
-			t.Fatalf("launcher missing %q:\n%s", want, text)
-		}
+	if launchArgs["headless"] != true || launchArgs["env"] == nil {
+		t.Fatalf("launch args = %#v", launchArgs)
+	}
+	payload, err := BuildPythonLaunchPayload(context.Background(), python, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if payload["browserType"] != "firefox" || payload["proxy"].(map[string]any)["password"] != "pass" {
+		t.Fatalf("payload = %#v", payload)
+	}
+}
+
+func TestLaunchPlanDumpErrorBranches(t *testing.T) {
+	if _, err := LaunchArgsMap(Config{Fingerprint: map[string]any{"bad": func() {}}}); err == nil {
+		t.Fatal("launch args accepted unmarshalable config")
+	}
+	if _, err := BuildPythonLaunchPayload(context.Background(), "python", Config{Fingerprint: map[string]any{"bad": func() {}}}); err == nil {
+		t.Fatal("python payload accepted unmarshalable config")
+	}
+	if runtime.GOOS == "windows" {
+		t.Skip("fake shell python is unix-only")
+	}
+	failing := fakeExecutable(t, `#!/bin/sh
+printf '%s\n' 'token=secret' >&2
+exit 7
+`)
+	if _, err := BuildPythonLaunchPayload(context.Background(), failing, Config{}); err == nil || strings.Contains(err.Error(), "secret") {
+		t.Fatalf("failing python err = %v", err)
+	}
+	invalidJSON := fakeExecutable(t, `#!/bin/sh
+printf '%s\n' '{bad'
+`)
+	if _, err := BuildPythonLaunchPayload(context.Background(), invalidJSON, Config{}); err == nil || !strings.Contains(err.Error(), "decode Python launch payload") {
+		t.Fatalf("invalid json err = %v", err)
+	}
+	nullJSON := fakeExecutable(t, `#!/bin/sh
+printf '%s\n' 'null'
+`)
+	if _, err := BuildPythonLaunchPayload(context.Background(), nullJSON, Config{}); err == nil || !strings.Contains(err.Error(), "not a JSON object") {
+		t.Fatalf("null json err = %v", err)
+	}
+}
+
+func TestPythonLaunchCommandPassesLaunchArgsOnStdin(t *testing.T) {
+	venv := t.TempDir()
+	manager := New(Config{
+		VenvDir:     venv,
+		LaunchProxy: &ProxyConfig{Server: "http://127.0.0.1:4567", Username: "secret-user", Password: "secret-pass"},
+	})
+	cmd, err := manager.launchCommand(context.Background(), "python", RuntimePython)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stdin, ok := cmd.Stdin.(*bytes.Reader)
+	if !ok {
+		t.Fatalf("stdin type = %T", cmd.Stdin)
+	}
+	raw, err := io.ReadAll(stdin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), "secret-pass") {
+		t.Fatalf("stdin launch args missing proxy password: %s", raw)
+	}
+	data, err := os.ReadFile(filepath.Join(venv, "gomoufox_sidecar_launcher.py"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), "secret-pass") || strings.Contains(string(data), "secret-user") {
+		t.Fatalf("launcher persisted proxy credentials:\n%s", data)
+	}
+
+	badManager := New(Config{Fingerprint: map[string]any{"bad": func() {}}})
+	if _, err := badManager.launchCommand(context.Background(), "python", RuntimePython); err == nil {
+		t.Fatal("python launch command with unmarshalable launch args succeeded")
+	}
+
+	blocker := filepath.Join(t.TempDir(), "file")
+	if err := os.WriteFile(blocker, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	blockedManager := New(Config{VenvDir: filepath.Join(blocker, "child")})
+	if _, err := blockedManager.launchCommand(context.Background(), "python", RuntimePython); err == nil {
+		t.Fatal("python launch command under blocked venv path succeeded")
 	}
 }
 
@@ -268,13 +443,18 @@ func TestPidfileInvalidAndStaleProcessReaping(t *testing.T) {
 		sidecarTerminatePID = oldTerminatePID
 	})
 	terminateErr := errors.New("terminate failed")
-	sidecarProcessExists = func(int) bool { return true }
+	sidecarProcessExists = func(pid int) bool {
+		return pid == 123
+	}
 	sidecarTerminatePID = func(int) error { return terminateErr }
 	if err := os.WriteFile(pidfilePath(venv), []byte("123\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := ReapStalePidfile(venv); !errors.Is(err, ErrSidecarStart) || !strings.Contains(err.Error(), "terminate failed") {
-		t.Fatalf("stale pid terminate err = %v", err)
+	if err := ReapStalePidfile(venv); err != nil {
+		t.Fatalf("live legacy pidfile should not terminate without ownership metadata: %v", err)
+	}
+	if _, err := os.Stat(pidfilePath(venv)); err != nil {
+		t.Fatalf("live legacy pidfile should remain: %v", err)
 	}
 	sidecarProcessExists = oldProcessExists
 	sidecarTerminatePID = oldTerminatePID
@@ -292,7 +472,24 @@ func TestPidfileInvalidAndStaleProcessReaping(t *testing.T) {
 			_ = waitWithTimeout(cmd, time.Second)
 		}
 	})
-	if err := writePidfile(venv, cmd.Process.Pid); err != nil {
+	stalePath, err := writePidfile(venv, cmd.Process.Pid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	recordData, err := os.ReadFile(stalePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var record pidfileRecord
+	if err := json.Unmarshal(recordData, &record); err != nil {
+		t.Fatal(err)
+	}
+	record.ParentPID = 999999
+	recordData, err = json.Marshal(record)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(stalePath, recordData, 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if err := ReapStalePidfile(venv); err != nil {
@@ -301,16 +498,227 @@ func TestPidfileInvalidAndStaleProcessReaping(t *testing.T) {
 	if err := waitWithTimeout(cmd, 2*time.Second); errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("stale process did not exit: %v", err)
 	}
-	if _, err := os.Stat(pidfilePath(venv)); !os.IsNotExist(err) {
+	if _, err := os.Stat(stalePath); !os.IsNotExist(err) {
 		t.Fatalf("stale pidfile still exists: %v", err)
 	}
 	blocker := filepath.Join(t.TempDir(), "file")
 	if err := os.WriteFile(blocker, []byte("x"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := writePidfile(blocker, 1); err == nil {
+	if _, err := writePidfile(blocker, 1); err == nil {
 		t.Fatal("pidfile under regular file succeeded")
 	}
+}
+
+func TestManagedPidfilesDoNotReapLiveParentOwnedSidecars(t *testing.T) {
+	venv := t.TempDir()
+	path, err := writePidfile(venv, 123)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	oldProcessExists := sidecarProcessExists
+	oldTerminatePID := sidecarTerminatePID
+	var terminated []int
+	sidecarProcessExists = func(pid int) bool {
+		return pid == 123 || pid == os.Getpid()
+	}
+	sidecarTerminatePID = func(pid int) error {
+		terminated = append(terminated, pid)
+		return nil
+	}
+	t.Cleanup(func() {
+		sidecarProcessExists = oldProcessExists
+		sidecarTerminatePID = oldTerminatePID
+	})
+
+	if err := ReapStalePidfile(venv); err != nil {
+		t.Fatal(err)
+	}
+	if len(terminated) != 0 {
+		t.Fatalf("reaped live parent-owned pidfile: %v", terminated)
+	}
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("live pidfile removed: %v", err)
+	}
+}
+
+func TestManagedPidfilesReapOrphanedSidecars(t *testing.T) {
+	venv := t.TempDir()
+	path, err := writePidfile(venv, 123)
+	if err != nil {
+		t.Fatal(err)
+	}
+	recordData, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var record pidfileRecord
+	if err := json.Unmarshal(recordData, &record); err != nil {
+		t.Fatal(err)
+	}
+	record.ParentPID = 456
+	recordData, err = json.Marshal(record)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, recordData, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	oldProcessExists := sidecarProcessExists
+	oldTerminatePID := sidecarTerminatePID
+	var terminated []int
+	sidecarProcessExists = func(pid int) bool {
+		return pid == 123
+	}
+	sidecarTerminatePID = func(pid int) error {
+		terminated = append(terminated, pid)
+		return nil
+	}
+	t.Cleanup(func() {
+		sidecarProcessExists = oldProcessExists
+		sidecarTerminatePID = oldTerminatePID
+	})
+
+	if err := ReapStalePidfile(venv); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(terminated, []int{123}) {
+		t.Fatalf("terminated = %v", terminated)
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("orphan pidfile still exists: %v", err)
+	}
+}
+
+func TestManagedPidfileRejectsFinalSymlink(t *testing.T) {
+	venv := t.TempDir()
+	path := managedPidfilePath(venv, 123)
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	target := filepath.Join(t.TempDir(), "target")
+	if err := os.WriteFile(target, []byte("keep"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, path); err != nil {
+		t.Skipf("symlink unavailable: %v", err)
+	}
+	if _, err := writePidfile(venv, 123); err == nil || !strings.Contains(err.Error(), "symlink") {
+		t.Fatalf("write through pidfile symlink err = %v", err)
+	}
+	data, err := os.ReadFile(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != "keep" {
+		t.Fatalf("symlink target overwritten: %q", data)
+	}
+}
+
+func TestManagedPidfileReapEdges(t *testing.T) {
+	if err := ReapStalePidfile(t.TempDir()); err != nil {
+		t.Fatalf("missing managed pidfile dir err = %v", err)
+	}
+
+	venv := t.TempDir()
+	dir := pidfileDir(venv)
+	if err := os.MkdirAll(filepath.Join(dir, "subdir"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := ReapStalePidfile(venv); err != nil {
+		t.Fatalf("directory pidfile entry should be ignored: %v", err)
+	}
+
+	blocker := filepath.Join(t.TempDir(), "not-a-dir")
+	if err := os.WriteFile(blocker, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := ReapStalePidfile(blocker); err == nil {
+		t.Fatal("pidfile dir over regular file succeeded")
+	}
+	readDirBlockedVenv := t.TempDir()
+	if err := os.WriteFile(pidfileDir(readDirBlockedVenv), []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := ReapStalePidfile(readDirBlockedVenv); err == nil {
+		t.Fatal("managed pidfile dir as file succeeded")
+	}
+	if err := reapManagedPidfile(filepath.Join(t.TempDir(), "missing.pid")); err != nil {
+		t.Fatalf("missing managed pidfile err = %v", err)
+	}
+	if err := reapManagedPidfile(t.TempDir()); err == nil {
+		t.Fatal("managed pidfile directory read succeeded")
+	}
+	entryErrorVenv := t.TempDir()
+	entryErrorDir := pidfileDir(entryErrorVenv)
+	if err := os.MkdirAll(entryErrorDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(t.TempDir(), filepath.Join(entryErrorDir, "link.pid")); err == nil {
+		if err := ReapStalePidfile(entryErrorVenv); err == nil {
+			t.Fatal("managed pidfile entry read error succeeded")
+		}
+	}
+
+	invalid := filepath.Join(dir, "invalid.pid")
+	if err := os.WriteFile(invalid, []byte("{"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := reapManagedPidfile(invalid); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(invalid); !os.IsNotExist(err) {
+		t.Fatalf("invalid managed pidfile still exists: %v", err)
+	}
+
+	dead := filepath.Join(dir, "dead.pid")
+	if err := os.WriteFile(dead, []byte(`{"pid":321,"parent_pid":0}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	oldProcessExists := sidecarProcessExists
+	oldTerminatePID := sidecarTerminatePID
+	sidecarProcessExists = func(int) bool { return false }
+	sidecarTerminatePID = func(pid int) error {
+		t.Fatalf("dead process should not be terminated: %d", pid)
+		return nil
+	}
+	t.Cleanup(func() {
+		sidecarProcessExists = oldProcessExists
+		sidecarTerminatePID = oldTerminatePID
+	})
+	if err := reapManagedPidfile(dead); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(dead); !os.IsNotExist(err) {
+		t.Fatalf("dead managed pidfile still exists: %v", err)
+	}
+
+	liveUnknownParent := filepath.Join(dir, "live-unknown-parent.pid")
+	if err := os.WriteFile(liveUnknownParent, []byte(`{"pid":333,"parent_pid":0}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	sidecarProcessExists = func(pid int) bool { return pid == 333 }
+	if err := reapManagedPidfile(liveUnknownParent); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(liveUnknownParent); err != nil {
+		t.Fatalf("live unknown-parent pidfile removed: %v", err)
+	}
+
+	terminateErr := errors.New("terminate failed")
+	orphan := filepath.Join(dir, "orphan-error.pid")
+	if err := os.WriteFile(orphan, []byte(`{"pid":444,"parent_pid":555}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	sidecarProcessExists = func(pid int) bool { return pid == 444 }
+	sidecarTerminatePID = func(int) error { return terminateErr }
+	if err := reapManagedPidfile(orphan); !errors.Is(err, ErrSidecarStart) || !strings.Contains(err.Error(), "terminate failed") {
+		t.Fatalf("orphan terminate err = %v", err)
+	}
+	sidecarProcessExists = oldProcessExists
+	sidecarTerminatePID = oldTerminatePID
 }
 
 func TestProcessBoundaryNoProcessGuards(t *testing.T) {
@@ -339,8 +747,15 @@ func TestProcessBoundaryNoProcessGuards(t *testing.T) {
 
 func TestManagerStartStopWithFakePython(t *testing.T) {
 	venv := fakeVenv(t, `#!/bin/sh
-grep -q '"proxy"' "$2" || exit 42
-grep -q '127.0.0.1' "$2" || exit 43
+payload="$(cat)"
+case "$payload" in
+  *'"proxy"'*) ;;
+  *) exit 42 ;;
+esac
+case "$payload" in
+  *'127.0.0.1'*) ;;
+  *) exit 43 ;;
+esac
 echo "Websocket endpoint: ws://127.0.0.1:4321/token"
 while true; do sleep 1; done
 `)
@@ -358,8 +773,14 @@ while true; do sleep 1; done
 	if info := manager.Info(); info.PID == 0 || info.WSEndpointRedacted != "ws://127.0.0.1:4321/<redacted>" {
 		t.Fatalf("info = %#v", info)
 	}
-	if _, err := os.Stat(pidfilePath(venv)); err != nil {
-		t.Fatalf("pidfile missing: %v", err)
+	manager.mu.Lock()
+	pidfile := manager.pidfile
+	manager.mu.Unlock()
+	if pidfile == "" {
+		t.Fatal("manager pidfile path is empty")
+	}
+	if _, err := os.Stat(pidfile); err != nil {
+		t.Fatalf("managed pidfile missing: %v", err)
 	}
 	if _, err := manager.Start(context.Background()); err == nil {
 		t.Fatal("second start succeeded")
@@ -390,8 +811,211 @@ while true; do sleep 1; done
 	case <-time.After(time.Second):
 		t.Fatalf("manager done did not close")
 	}
-	if _, err := os.Stat(pidfilePath(venv)); !os.IsNotExist(err) {
+	if _, err := os.Stat(pidfile); !os.IsNotExist(err) {
 		t.Fatalf("pidfile after stop = %v", err)
+	}
+}
+
+func TestConcurrentManagersShareVenvWithoutReapingEachOther(t *testing.T) {
+	venv := fakeVenv(t, `#!/bin/sh
+echo "Websocket endpoint: ws://127.0.0.1:4321/token"
+while true; do sleep 1; done
+`)
+	first := New(Config{VenvDir: venv, ConnectTimeout: time.Second})
+	if _, err := first.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	defer first.Stop(context.Background())
+
+	second := New(Config{VenvDir: venv, ConnectTimeout: time.Second})
+	if _, err := second.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	defer second.Stop(context.Background())
+
+	select {
+	case <-first.Done():
+		t.Fatal("second manager start reaped the first live sidecar")
+	case <-time.After(250 * time.Millisecond):
+	}
+	if first.CurrentState() != StateReady || second.CurrentState() != StateReady {
+		t.Fatalf("states = %v/%v", first.CurrentState(), second.CurrentState())
+	}
+	entries, err := os.ReadDir(pidfileDir(venv))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 2 {
+		t.Fatalf("managed pidfile count = %d, want 2", len(entries))
+	}
+}
+
+func TestManagerStartStopWithFakeNodeDirectPayload(t *testing.T) {
+	launchScript := filepath.Join(t.TempDir(), "launchServer.js")
+	if err := os.WriteFile(launchScript, []byte("// fake"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	node := fakeExecutable(t, `#!/bin/sh
+test "$1" = "`+launchScript+`" || exit 42
+payload="$(cat)"
+test "$payload" = "e30=" || exit 43
+echo "Websocket endpoint: ws://127.0.0.1:4321/token"
+while true; do sleep 1; done
+`)
+	cwd := t.TempDir()
+	venv := fakeVenv(t, fmt.Sprintf(`#!/bin/sh
+test "$1" = "-c" || exit 44
+input="$(cat)"
+case "$input" in
+  *'"headless":true'*) ;;
+  *) exit 45 ;;
+esac
+printf '{"nodejs":%q,"launch_script":%q,"cwd":%q,"stdin_base64":"e30="}\n'
+`, node, launchScript, cwd))
+	manager := New(Config{VenvDir: venv, Runtime: "node-direct", ConnectTimeout: time.Second})
+	endpoint, err := manager.Start(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if endpoint != "ws://127.0.0.1:4321/token" || manager.CurrentState() != StateReady {
+		t.Fatalf("endpoint/state = %q/%v", endpoint, manager.CurrentState())
+	}
+	if info := manager.Info(); info.PID == 0 || info.Runtime != "node-direct" || info.WSEndpointRedacted != "ws://127.0.0.1:4321/<redacted>" {
+		t.Fatalf("info = %#v", info)
+	}
+	manager.Stop(context.Background())
+	if manager.CurrentState() != StateDead {
+		t.Fatalf("state after stop = %v", manager.CurrentState())
+	}
+}
+
+func TestNodeDirectSpecValidationAndBuildErrors(t *testing.T) {
+	node := fakeExecutable(t, "#!/bin/sh\n")
+	launchScript := filepath.Join(t.TempDir(), "launchServer.js")
+	if err := os.WriteFile(launchScript, []byte("// fake"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cwd := t.TempDir()
+	valid := nodeDirectSpec{NodeJS: node, LaunchScript: launchScript, CWD: cwd, StdinBase64: "e30="}
+	if err := validateNodeDirectSpec(valid); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name string
+		spec nodeDirectSpec
+		want string
+	}{
+		{"missing node", nodeDirectSpec{LaunchScript: launchScript, CWD: cwd, StdinBase64: "x"}, "missing nodejs"},
+		{"missing launch", nodeDirectSpec{NodeJS: node, CWD: cwd, StdinBase64: "x"}, "missing launch_script"},
+		{"missing cwd", nodeDirectSpec{NodeJS: node, LaunchScript: launchScript, StdinBase64: "x"}, "missing cwd"},
+		{"missing stdin", nodeDirectSpec{NodeJS: node, LaunchScript: launchScript, CWD: cwd}, "missing stdin_base64"},
+		{"invalid stdin base64", nodeDirectSpec{NodeJS: node, LaunchScript: launchScript, CWD: cwd, StdinBase64: "not base64"}, "invalid stdin_base64"},
+		{"stdin not json", nodeDirectSpec{NodeJS: node, LaunchScript: launchScript, CWD: cwd, StdinBase64: "bm90LWpzb24="}, "not JSON"},
+		{"stdin not object", nodeDirectSpec{NodeJS: node, LaunchScript: launchScript, CWD: cwd, StdinBase64: "bnVsbA=="}, "not a JSON object"},
+		{"node unusable", nodeDirectSpec{NodeJS: filepath.Join(t.TempDir(), "missing"), LaunchScript: launchScript, CWD: cwd, StdinBase64: "e30="}, "nodejs path unusable"},
+		{"node dir", nodeDirectSpec{NodeJS: t.TempDir(), LaunchScript: launchScript, CWD: cwd, StdinBase64: "e30="}, "nodejs path is a directory"},
+		{"launch unusable", nodeDirectSpec{NodeJS: node, LaunchScript: filepath.Join(t.TempDir(), "missing"), CWD: cwd, StdinBase64: "e30="}, "launch script unusable"},
+		{"launch dir", nodeDirectSpec{NodeJS: node, LaunchScript: t.TempDir(), CWD: cwd, StdinBase64: "e30="}, "launch script is a directory"},
+		{"cwd unusable", nodeDirectSpec{NodeJS: node, LaunchScript: launchScript, CWD: filepath.Join(t.TempDir(), "missing"), StdinBase64: "e30="}, "cwd unusable"},
+		{"cwd file", nodeDirectSpec{NodeJS: node, LaunchScript: launchScript, CWD: launchScript, StdinBase64: "e30="}, "cwd is not a directory"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := validateNodeDirectSpec(tc.spec); !errors.Is(err, ErrSidecarStart) || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("err = %v, want %q", err, tc.want)
+			}
+		})
+	}
+
+	badConfig := Config{Fingerprint: map[string]any{"bad": func() {}}}
+	if _, err := buildNodeDirectSpec(context.Background(), fakePython(t, "#!/bin/sh\nexit 0\n"), badConfig); err == nil {
+		t.Fatal("unmarshalable launch args succeeded")
+	}
+	failingPython := fakePython(t, `#!/bin/sh
+printf '%s\n' '`+diagnosticSecretFixture+`' >&2
+exit 7
+`)
+	if _, err := buildNodeDirectSpec(context.Background(), failingPython, Config{}); !errors.Is(err, ErrSidecarStart) || strings.Contains(err.Error(), "sid=secret") {
+		t.Fatalf("failing python err = %v", err)
+	}
+	malformedPython := fakePython(t, `#!/bin/sh
+printf 'not-json'
+`)
+	if _, err := buildNodeDirectSpec(context.Background(), malformedPython, Config{}); !errors.Is(err, ErrSidecarStart) || !strings.Contains(err.Error(), "decode node-direct") {
+		t.Fatalf("malformed payload err = %v", err)
+	}
+	invalidSpecPython := fakePython(t, `#!/bin/sh
+printf '{"nodejs":"","launch_script":"x","cwd":"x","stdin_base64":"x"}'
+`)
+	if _, err := buildNodeDirectSpec(context.Background(), invalidSpecPython, Config{}); !errors.Is(err, ErrSidecarStart) || !strings.Contains(err.Error(), "missing nodejs") {
+		t.Fatalf("invalid spec err = %v", err)
+	}
+
+	manager := New(Config{VenvDir: t.TempDir()})
+	if _, err := manager.launchCommand(context.Background(), "python", "bogus"); !errors.Is(err, ErrSidecarStart) {
+		t.Fatalf("bad runtime err = %v", err)
+	}
+	if _, err := manager.launchCommand(context.Background(), failingPython, RuntimeNodeDirect); !errors.Is(err, ErrSidecarStart) {
+		t.Fatalf("node-direct build err = %v", err)
+	}
+}
+
+func TestNodeDirectLaunchPayloadFreshnessLive(t *testing.T) {
+	if os.Getenv("GOMOUFOX_LIVE") != "1" {
+		t.Skip("set GOMOUFOX_LIVE=1 to compare live Camoufox launch payload freshness")
+	}
+	python, err := VenvPython("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := Config{OS: "linux", BlockWebRTC: true}
+	first, err := buildNodeDirectSpec(context.Background(), python, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := buildNodeDirectSpec(context.Background(), python, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.StdinBase64 == second.StdinBase64 {
+		t.Fatalf("live Camoufox returned identical node-direct payloads; full-payload caching would need a stricter deterministic proof")
+	}
+	payload := decodeNodeDirectPayloadForTest(t, first.StdinBase64)
+	env, ok := payload["env"].(map[string]any)
+	if !ok {
+		t.Fatalf("payload env = %#v", payload["env"])
+	}
+	if _, ok := env["CAMOU_CONFIG_1"].(string); !ok {
+		t.Fatalf("payload missing CAMOU_CONFIG_1: %#v", env)
+	}
+}
+
+func decodeNodeDirectPayloadForTest(t *testing.T, raw string) map[string]any {
+	t.Helper()
+	decoded, err := base64.StdEncoding.DecodeString(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(decoded, &payload); err != nil {
+		t.Fatal(err)
+	}
+	return payload
+}
+
+func TestManagerStartRuntimeDefaultAndInvalidRuntime(t *testing.T) {
+	venv := fakeVenv(t, `#!/bin/sh
+echo "Websocket endpoint: ws://127.0.0.1:4321/token"
+while true; do sleep 1; done
+`)
+	manager := &Manager{cfg: Config{VenvDir: venv, ConnectTimeout: time.Second}, state: StateIdle, done: make(chan struct{})}
+	if endpoint, err := manager.Start(context.Background()); err != nil || endpoint == "" {
+		t.Fatalf("manual default runtime start endpoint=%q err=%v", endpoint, err)
+	}
+	manager.Stop(context.Background())
+
+	manager = New(Config{VenvDir: venv, Runtime: "bogus", ConnectTimeout: time.Second})
+	if _, err := manager.Start(context.Background()); !errors.Is(err, ErrSidecarStart) || !strings.Contains(err.Error(), "unsupported sidecar runtime") {
+		t.Fatalf("invalid runtime err = %v", err)
 	}
 }
 
@@ -802,7 +1426,7 @@ while true; do sleep 1; done
 
 	writeErr := errors.New("pidfile failed")
 	oldWritePidfile := sidecarWritePidfile
-	sidecarWritePidfile = func(string, int) error { return writeErr }
+	sidecarWritePidfile = func(string, int) (string, error) { return "", writeErr }
 	t.Cleanup(func() { sidecarWritePidfile = oldWritePidfile })
 	venv = fakeVenv(t, `#!/bin/sh
 echo "Websocket endpoint: ws://127.0.0.1:4321/token"
@@ -848,6 +1472,18 @@ func fakeVenv(t *testing.T, script string) string {
 		t.Fatal(err)
 	}
 	return venv
+}
+
+func fakeExecutable(t *testing.T, script string) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "fake-exec")
+	if runtime.GOOS == "windows" {
+		path += ".cmd"
+	}
+	if err := os.WriteFile(path, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	return path
 }
 
 func waitWithTimeout(cmd *exec.Cmd, timeout time.Duration) error {

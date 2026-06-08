@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -298,6 +299,7 @@ func TestRunValidationAndCompareErrors(t *testing.T) {
 		{[]string{"--max-rss-mib", "-1"}, "max-rss-mib must be >= 0"},
 		{[]string{"--max-cpu-percent", "-1"}, "max-cpu-percent must be >= 0"},
 		{[]string{"--wait-until", "idle"}, "wait-until must be commit, domcontentloaded, load, or networkidle"},
+		{[]string{"--sidecar-runtime", "bad"}, "sidecar-runtime must be python or node-direct"},
 		{[]string{"compare"}, "--go and --python are required"},
 		{[]string{"compare", "--go", "missing", "--python", "missing"}, "read go report"},
 	} {
@@ -346,13 +348,16 @@ func TestLaunchBrowserOptionsAndFailure(t *testing.T) {
 		called = true
 		return &fakeRealpassBrowser{pid: os.Getpid(), page: &fakeRealpassPage{}}, nil
 	}
-	if _, err := launchBrowser(context.Background(), false, false, false); err != nil || !called {
+	if _, err := launchBrowser(context.Background(), false, false, false, "node-direct", t.TempDir()); err != nil || !called {
 		t.Fatalf("launch err=%v called=%v", err, called)
+	}
+	if _, err := launchBrowser(context.Background(), false, false, false, "bad", ""); err == nil {
+		t.Fatal("bad sidecar runtime succeeded")
 	}
 	newRealpassBrowser = func(context.Context, ...gomoufox.Option) (realpassBrowser, error) {
 		return nil, errors.New("boom")
 	}
-	if _, err := launchBrowser(context.Background(), true, true, true); err == nil {
+	if _, err := launchBrowser(context.Background(), true, true, true, "python", ""); err == nil {
 		t.Fatal("launch error branch succeeded")
 	}
 }
@@ -1147,6 +1152,27 @@ func TestRunTargetWithBrowserContextUsesCombinedCapture(t *testing.T) {
 	}
 }
 
+func TestFingerprintDetectorExpressionCoversHighRiskSurface(t *testing.T) {
+	for _, want := range []string{
+		"navigator.webdriver",
+		"navigator.userAgent",
+		"navigator.platform",
+		"navigator.languages",
+		"screen.availWidth",
+		"screen.colorDepth",
+		"window.devicePixelRatio",
+		"Intl.DateTimeFormat",
+		"WEBGL_debug_renderer_info",
+		"RTCPeerConnection",
+		"document.fonts.check",
+		"canvas.toDataURL",
+	} {
+		if !strings.Contains(fingerprintDetectorExpression, want) {
+			t.Fatalf("fingerprint detector missing %q\n%s", want, fingerprintDetectorExpression)
+		}
+	}
+}
+
 func TestPageCaptureAndContentCapBranches(t *testing.T) {
 	ctx := context.Background()
 	page := &fakeRealpassPage{evaluate: map[string]any{
@@ -1192,7 +1218,7 @@ func TestLaunchAndRunTargetUseInjectedBrowserFactory(t *testing.T) {
 	newRealpassBrowser = func(context.Context, ...gomoufox.Option) (realpassBrowser, error) {
 		return nil, launchErr
 	}
-	res := runTarget(context.Background(), target{Name: "x", URL: "https://example.com"}, 1, time.Second, "commit", 0, 0, 0, time.Hour, false, true, true, false, t.TempDir())
+	res := runTarget(context.Background(), target{Name: "x", URL: "https://example.com"}, 1, time.Second, "commit", 0, 0, 0, time.Hour, false, true, true, "python", "", false, t.TempDir())
 	if res.Outcome != "failed" || res.Error != launchErr.Error() {
 		t.Fatalf("launch failure result = %#v", res)
 	}
@@ -1202,7 +1228,7 @@ func TestLaunchAndRunTargetUseInjectedBrowserFactory(t *testing.T) {
 	newRealpassBrowser = func(context.Context, ...gomoufox.Option) (realpassBrowser, error) {
 		return &fakeRealpassBrowser{pid: os.Getpid(), page: page, closeFunc: func() { closed = true }}, nil
 	}
-	res = runTarget(context.Background(), target{Name: "x", URL: "https://example.com"}, 1, time.Second, "commit", 0, 0, 0, time.Hour, true, true, true, false, t.TempDir())
+	res = runTarget(context.Background(), target{Name: "x", URL: "https://example.com"}, 1, time.Second, "commit", 0, 0, 0, time.Hour, true, true, true, "node-direct", t.TempDir(), false, t.TempDir())
 	if res.Outcome != "passed" || !closed {
 		t.Fatalf("run target result=%#v closed=%v", res, closed)
 	}
@@ -1222,6 +1248,7 @@ func TestRunWithInjectedReusableBrowserGatesAndReportErrors(t *testing.T) {
 		return browser, nil
 	}
 	dir := t.TempDir()
+	customVenv := filepath.Join(t.TempDir(), "custom-venv")
 	code, stdout, stderr := runRealpassForTest(t,
 		"--out", dir,
 		"--target", "one=https://user:pass@example.com/one?token=secret",
@@ -1234,6 +1261,8 @@ func TestRunWithInjectedReusableBrowserGatesAndReportErrors(t *testing.T) {
 		"--settle", "0s",
 		"--timeout", "1s",
 		"--wait-until", "domcontentloaded",
+		"--sidecar-runtime", "node-direct",
+		"--venv-dir", customVenv,
 		"--sample-interval", "1h",
 		"--expect-passed", "2",
 		"--max-blocked", "0",
@@ -1249,7 +1278,7 @@ func TestRunWithInjectedReusableBrowserGatesAndReportErrors(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(rep.Results) != 2 || rep.Summary.Passed != 2 || rep.Options.ReuseBrowser != true || rep.Options.ReportStyle != "compact" || rep.Options.Screenshots != false || rep.Options.WaitUntil != "domcontentloaded" {
+	if len(rep.Results) != 2 || rep.Summary.Passed != 2 || rep.Options.ReuseBrowser != true || rep.Options.ReportStyle != "compact" || rep.Options.Screenshots != false || rep.Options.WaitUntil != "domcontentloaded" || rep.Options.SidecarRuntime != "node-direct" || rep.Options.CustomVenv != true {
 		t.Fatalf("report = %#v", rep)
 	}
 	reportJSON, err := os.ReadFile(filepath.Join(dir, "report.json"))
@@ -1270,6 +1299,9 @@ func TestRunWithInjectedReusableBrowserGatesAndReportErrors(t *testing.T) {
 	assertNoDiagnosticSecrets(t, string(reportJSON))
 	assertNoDiagnosticSecrets(t, string(reportMD))
 	assertNoDiagnosticSecrets(t, string(resultsJSONL))
+	if bytes.Contains(reportJSON, []byte(customVenv)) || bytes.Contains(reportMD, []byte(customVenv)) {
+		t.Fatal("report leaked custom venv path")
+	}
 	if lines := strings.Split(strings.TrimSpace(string(resultsJSONL)), "\n"); len(lines) != 2 {
 		t.Fatalf("results.jsonl lines = %d\n%s", len(lines), resultsJSONL)
 	}

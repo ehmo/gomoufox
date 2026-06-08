@@ -9,6 +9,15 @@ type Connector interface {
 	Connect(ctx context.Context, endpoint string, opts ConnectOptions) (Session, error)
 }
 
+type PreparableConnector interface {
+	Prepare(ctx context.Context) (PreparedConnector, error)
+}
+
+type PreparedConnector interface {
+	Connect(ctx context.Context, endpoint string, opts ConnectOptions) (Session, error)
+	Stop() error
+}
+
 type ConnectOptions struct {
 	Timeout time.Duration
 }

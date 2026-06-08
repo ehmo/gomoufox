@@ -21,17 +21,19 @@
     "docs/agent-contracts/mcp-skills-list.json",
     "docs/agent-contracts/mcp-tools-list.json",
     "docs/benchmarks/2026-06-03-full.json",
-    "docs/benchmarks/2026-06-05-release-gate.json"
+    "docs/benchmarks/2026-06-08-release-gate.json"
   ],
   "scripts": [
     "benchmark-realpass.py",
     "check-agent-contracts.py",
     "check-public-release-contract.py",
+    "fingerprint-audit.py",
     "format-doc-numbers.py",
     "package-release.py",
     "public-release-manifest.json",
     "python-realpass.py",
-    "realpass-targets.json"
+    "realpass-targets.json",
+    "update-python-locks.py"
   ],
   "formula_files": [
     "Formula/gomoufox.rb"
@@ -66,7 +68,11 @@
     "internal/mcp/scripts/performance_snapshot.js",
     "internal/mcp/scripts/selector_metrics.js",
     "internal/mcp/scripts/snapshot.js",
-    "internal/mcp/scripts/viewport_metrics.js"
+    "internal/mcp/scripts/viewport_metrics.js",
+    "internal/sidecar/requirements/camoufox-input.txt",
+    "internal/sidecar/requirements/camoufox.txt",
+    "internal/sidecar/requirements/pip-input.txt",
+    "internal/sidecar/requirements/pip.txt"
   ],
   "excluded_tracked": [
     "release_scripts_test.go"

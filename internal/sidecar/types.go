@@ -15,6 +15,11 @@ const (
 	CamoufoxBinaryVersion  = "v135.0.1-beta.24"
 )
 
+const (
+	RuntimePython     = "python"
+	RuntimeNodeDirect = "node-direct"
+)
+
 type State int
 
 const (
@@ -28,6 +33,7 @@ const (
 type Config struct {
 	PythonBin       string
 	VenvDir         string
+	Runtime         string
 	ConnectTimeout  time.Duration
 	Headless        int
 	Persistent      bool
@@ -81,6 +87,7 @@ type Info struct {
 	CamoufoxVersion    string
 	PlaywrightVersion  string
 	WSEndpointRedacted string
+	Runtime            string
 }
 
 type InstallOptions struct {

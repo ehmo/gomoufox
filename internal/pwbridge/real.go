@@ -36,6 +36,14 @@ var runPlaywright = func(opts *playwright.RunOptions) (playwrightRuntime, error)
 }
 
 func (c RealConnector) Connect(ctx context.Context, endpoint string, opts ConnectOptions) (Session, error) {
+	prepared, err := c.Prepare(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return prepared.Connect(ctx, endpoint, opts)
+}
+
+func (c RealConnector) Prepare(ctx context.Context) (PreparedConnector, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -44,20 +52,41 @@ func (c RealConnector) Connect(ctx context.Context, endpoint string, opts Connec
 	if err != nil {
 		return nil, err
 	}
+	return &preparedRealConnector{pw: pw}, nil
+}
+
+type preparedRealConnector struct {
+	pw playwrightRuntime
+}
+
+func (c *preparedRealConnector) Connect(ctx context.Context, endpoint string, opts ConnectOptions) (Session, error) {
+	if err := ctx.Err(); err != nil {
+		_ = c.Stop()
+		return nil, err
+	}
 	timeout := opts.Timeout
 	if timeout <= 0 {
 		timeout = 30 * time.Second
 	}
-	browser, err := pw.firefox.Connect(endpoint, playwright.BrowserTypeConnectOptions{
+	browser, err := c.pw.firefox.Connect(endpoint, playwright.BrowserTypeConnectOptions{
 		Timeout: playwright.Float(float64(timeout.Milliseconds())),
 	})
 	if err != nil {
-		if pw.stop != nil {
-			_ = pw.stop()
-		}
+		_ = c.Stop()
 		return nil, err
 	}
+	pw := c.pw
+	c.pw = playwrightRuntime{}
 	return &realSession{pw: pw, browser: &realBrowser{raw: browser}}, nil
+}
+
+func (c *preparedRealConnector) Stop() error {
+	if c == nil || c.pw.stop == nil {
+		return nil
+	}
+	stop := c.pw.stop
+	c.pw = playwrightRuntime{}
+	return stop()
 }
 
 func EnsureDriver(driverDirectory string) error {

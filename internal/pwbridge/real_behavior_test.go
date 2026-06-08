@@ -57,6 +57,71 @@ func TestRealConnectorConnectUsesInjectedPlaywrightRuntime(t *testing.T) {
 	}
 }
 
+func TestRealConnectorPrepareCanConnectLater(t *testing.T) {
+	raw := &fakeBrowser{connected: true}
+	browserType := &fakePlaywrightBrowserType{browser: raw}
+	stopCalls := 0
+	restore := replacePlaywrightRunner(t, func(opts *playwright.RunOptions) (playwrightRuntime, error) {
+		if opts.DriverDirectory != "/driver" {
+			t.Fatalf("driver directory = %q", opts.DriverDirectory)
+		}
+		return playwrightRuntime{firefox: browserType, stop: func() error {
+			stopCalls++
+			return nil
+		}}, nil
+	})
+	defer restore()
+
+	prepared, err := (RealConnector{DriverDirectory: "/driver"}).Prepare(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	session, err := prepared.Connect(context.Background(), "ws://127.0.0.1:1234", ConnectOptions{Timeout: 1500 * time.Millisecond})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if browserType.endpoint != "ws://127.0.0.1:1234" || browserType.options[0].Timeout == nil || *browserType.options[0].Timeout != 1500 {
+		t.Fatalf("connect endpoint=%q options=%#v", browserType.endpoint, browserType.options)
+	}
+	if err := prepared.Stop(); err != nil {
+		t.Fatal(err)
+	}
+	if stopCalls != 0 {
+		t.Fatalf("prepared Stop after successful Connect should not own runtime anymore, calls=%d", stopCalls)
+	}
+	if err := session.Stop(); err != nil {
+		t.Fatal(err)
+	}
+	if raw.closeCalls != 1 || stopCalls != 1 {
+		t.Fatalf("close calls browser=%d runtime=%d", raw.closeCalls, stopCalls)
+	}
+}
+
+func TestPreparedRealConnectorConnectContextCancelStopsRuntime(t *testing.T) {
+	browserType := &fakePlaywrightBrowserType{browser: &fakeBrowser{connected: true}}
+	stopCalls := 0
+	restore := replacePlaywrightRunner(t, func(*playwright.RunOptions) (playwrightRuntime, error) {
+		return playwrightRuntime{firefox: browserType, stop: func() error {
+			stopCalls++
+			return nil
+		}}, nil
+	})
+	defer restore()
+
+	prepared, err := (RealConnector{}).Prepare(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if session, err := prepared.Connect(ctx, "ws://127.0.0.1:1234", ConnectOptions{}); !errors.Is(err, context.Canceled) || session != nil {
+		t.Fatalf("session=%#v err=%v", session, err)
+	}
+	if stopCalls != 1 {
+		t.Fatalf("runtime stop calls = %d", stopCalls)
+	}
+}
+
 func TestRealConnectorConnectInjectedRuntimeErrors(t *testing.T) {
 	runErr := errors.New("run failed")
 	restore := replacePlaywrightRunner(t, func(*playwright.RunOptions) (playwrightRuntime, error) {

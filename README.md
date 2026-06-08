@@ -72,12 +72,34 @@ gomoufox install
 gomoufox doctor
 ```
 
-`gomoufox install` creates a managed Python environment, installs the pinned
-Camoufox package, and fetches the pinned browser binary. Go callers still use the
+`gomoufox install` creates a managed Python environment, installs hash-locked
+Python packages, and fetches the pinned browser binary. Go callers still use the
 Go API and CLI. The Python environment is runtime plumbing for Camoufox.
 
+Python remains required because Camoufox owns launch-option generation,
+BrowserForge fingerprint generation, geoip handling, and browser payload
+validation. gomoufox keeps that boundary explicit: launcher arguments are passed
+over stdin, the launcher file does not persist proxy credentials, and browser
+processes inherit the operating-system environment with secret-like and
+agent-control variables removed. Values you pass with `WithExtraEnv` are added
+explicitly. Generated launch payloads are not cached because they include fresh
+fingerprint state.
+
 Use `GOMOUFOX_CAMOUFOX_PATH` when you already have a compatible Camoufox browser
-directory and want gomoufox to use it instead of the managed one.
+directory and want gomoufox to use it instead of the managed one. gomoufox
+verifies the pinned browser manifest for that path by default. For trusted local
+Camoufox builds that do not match the release manifest, set
+`GOMOUFOX_TRUST_UNVERIFIED_CAMOUFOX_PATH=1`; `gomoufox doctor` reports that as a
+warning.
+
+Python packages are installed from embedded lock files with `--require-hashes`
+and `--only-binary=:all:`. A missing wheel or hash mismatch fails the install
+instead of falling back to an unpinned source build. Regenerate the locks only
+when changing the version matrix:
+
+```bash
+python3 scripts/update-python-locks.py
+```
 
 ## Go library
 
@@ -263,30 +285,41 @@ Latest checked baseline: see [docs/BENCHMARKS.md](docs/BENCHMARKS.md).
 
 | Runtime | Passed | Blocked | Failed | Wall ms | Peak RSS MiB | Peak CPU % | Report tokens |
 |---|---:|---:|---:|---:|---:|---:|---:|
-| gomoufox | 95 | 5 | 0 | 370,799 | 4,483.4 | 391.1 | 13,004 |
-| Python Camoufox | 95 | 5 | 0 | 437,249 | 4,498.6 | 448.2 | 46,442 |
+| gomoufox | 95 | 5 | 0 | 371,006 | 4,141.5 | 532.6 | 12,995 |
+| Python Camoufox | 95 | 5 | 0 | 445,513 | 5,097.0 | 455.4 | 68,469 |
 
 Latest extended validation: 100 targets, 45s timeout, `commit` wait, 3s settle,
 no screenshots, built gomoufox realpass binary, reused browser, compact Go
 report, 0s extra load-state wait, and 250,000-byte classification cap.
 Both runtimes passed 95, blocked 5, failed 0, with zero outcome mismatches. See
-[docs/benchmarks/2026-06-05-release-gate.json](docs/benchmarks/2026-06-05-release-gate.json).
+[docs/benchmarks/2026-06-08-release-gate.json](docs/benchmarks/2026-06-08-release-gate.json).
 
 | Ratio | Go / Python |
 |---|---:|
-| Wall time | 0.848 |
-| Peak RSS | 0.997 |
-| Peak CPU | 0.873 |
-| Report tokens | 0.280 |
+| Wall time | 0.833 |
+| Peak RSS | 0.813 |
+| Peak CPU | 1.170 |
+| Report tokens | 0.190 |
 
 Serial wall time varies because Firefox dominates the run. The checked wins are
-lower wall time, lower CPU, and a smaller agent report. RSS is effectively parity
-in the release-gate run. Treat a report-token ratio above 0.50 as a regression.
+lower wall time, lower RSS, and a smaller agent report. Go peak CPU was higher
+in this run but stayed inside the 1.50 release budget. Treat a report-token
+ratio above 0.50 as a regression.
 
 ```bash
 scripts/benchmark-realpass.py --mode smoke
+scripts/benchmark-realpass.py --mode smoke --loops 2 --run-order alternate
 scripts/benchmark-realpass.py --mode extended --list-targets
+scripts/fingerprint-audit.py
 ```
+
+Run the fingerprint audit when changing launch options, sidecar runtime code,
+Camoufox pins, Firefox prefs, WebGL handling, locale, timezone, screen, fonts,
+canvas, or node-direct. It serves one local page, captures Python Camoufox,
+gomoufox with the Python sidecar, and gomoufox with node-direct, then fails on
+unexplained gomoufox Python-vs-node-direct drift. Python Camoufox direct is kept
+as baseline context because its generated persona can legitimately differ on a
+single local run.
 
 For a new checked baseline, run full mode with `--update-doc docs/BENCHMARKS.md`
 and commit the generated JSON under `docs/benchmarks/`.
@@ -295,21 +328,44 @@ Use `--mode extended` for the 100-target matrix before release candidates or
 major browser, sidecar, MCP, CLI, or resource-related changes. The catalog lives
 in `scripts/realpass-targets.json`; the runner also accepts `--max-targets <n>`
 for bounded investigations.
+Use `--run-order alternate` for timing work so Go and Python both take a turn
+running after warmed OS and network caches.
 
 Release gates fail on Go-only blocked, failed, or missing targets; Go/Python
 outcome mismatches that reproduce on retry; missing required targets; peak RSS or
 CPU over budget; and Go wall time, target duration, RSS, CPU, or report-token
 ratios over the thresholds in [docs/BENCHMARKS.md](docs/BENCHMARKS.md).
-In release mode, a new shared block or failure gets one focused retry. That retry
-must confirm Go/Python outcome parity; the full-run resource, timing,
-required-target, and token budgets still apply.
+In release mode, a new shared block, failure, or performance outlier gets one
+focused retry. The gate merges that focused retry back into the full report, then
+reruns the strict resource, timing, required-target, and token checks.
 
 ## Common questions
 
 ### Do I still need Python?
 
 Yes, for the managed Camoufox runtime. `gomoufox install` creates the venv and
-pins the Camoufox package. Your application code can stay in Go.
+pins the Camoufox package. `node-direct` changes the long-lived sidecar process,
+not the launch-options source of truth. Your application code can stay in Go.
+
+### Can gomoufox remove the Python dependency?
+
+Not safely yet. Camoufox's Python `launch_options` path generates BrowserForge
+fingerprints, geoip and locale settings, WebGL/font/canvas values, Firefox
+preferences, and the final browser payload. That payload changes between
+launches. gomoufox does not cache it because stale fingerprints are a detection
+risk. A replacement needs either an upstream stable launch-plan contract or a
+parity-gated Go implementation against the pinned Camoufox package.
+
+The removal track starts with a launch-plan audit:
+
+```bash
+go run ./cmd/gomoufox-launchplan --scenario all --out dist/launch-plan/latest
+```
+
+That command dumps gomoufox's Go launch input beside the Python Camoufox launch
+payload. It can also compare an optional future pure-Go candidate payload with
+`--candidate <json>` and fails on drift. Until that candidate exists and passes
+real-site plus fingerprint gates, Python stays required.
 
 ### Why use gomoufox instead of Python Camoufox directly?
 
@@ -352,7 +408,8 @@ gomoufox --verbose doctor
 ```
 
 Check `GOMOUFOX_CAMOUFOX_PATH` only when you intentionally bypass the managed
-runtime.
+runtime. Offline browser paths are manifest-verified unless
+`GOMOUFOX_TRUST_UNVERIFIED_CAMOUFOX_PATH=1` is set for a trusted local build.
 
 ## Compatibility
 
@@ -375,6 +432,7 @@ go test -race -count=1 ./...
 go vet ./...
 python3 scripts/check-agent-contracts.py
 python3 scripts/format-doc-numbers.py
+python3 scripts/update-python-locks.py --check --skip-pip-validate
 go run golang.org/x/vuln/cmd/govulncheck@v1.3.0 ./...
 ```
 

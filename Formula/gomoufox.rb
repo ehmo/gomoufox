@@ -1,26 +1,26 @@
 class Gomoufox < Formula
   desc "Go driver, CLI, and MCP server for Camoufox"
   homepage "https://github.com/ehmo/gomoufox"
-  version "0.1.0"
+  version "0.1.1"
   license "MIT"
 
   on_macos do
     if Hardware::CPU.arm?
-      url "https://github.com/ehmo/gomoufox/releases/download/v0.1.0/gomoufox_0.1.0_darwin_arm64.tar.gz"
-      sha256 "a81d416c19fe531517a4647945b423d3da55c0d22846ef0c044037ed6a72661b"
+      url "https://github.com/ehmo/gomoufox/releases/download/v0.1.1/gomoufox_0.1.1_darwin_arm64.tar.gz"
+      sha256 "f1cef6599e50fb6ca55c222c12c5c823d4f21ba49f290008fff7521413dce5d6"
     else
-      url "https://github.com/ehmo/gomoufox/releases/download/v0.1.0/gomoufox_0.1.0_darwin_amd64.tar.gz"
-      sha256 "53ad48b2f7b5d718e7507dac86908a1422bf7324b2785a244d4c150f17b7f004"
+      url "https://github.com/ehmo/gomoufox/releases/download/v0.1.1/gomoufox_0.1.1_darwin_amd64.tar.gz"
+      sha256 "7e2522e574800154979a86d13789abb5522f8d613a986bbff62d7a75f8214906"
     end
   end
 
   on_linux do
     if Hardware::CPU.arm?
-      url "https://github.com/ehmo/gomoufox/releases/download/v0.1.0/gomoufox_0.1.0_linux_arm64.tar.gz"
-      sha256 "34365ac258b5270d5e6d4d740857e6fb84af7b6f98a75ce5cfdb7bd86d1917ca"
+      url "https://github.com/ehmo/gomoufox/releases/download/v0.1.1/gomoufox_0.1.1_linux_arm64.tar.gz"
+      sha256 "e209d3c84ccb6b544f2b97a8706dfa971fe5bfb2c1ebc8c038994c4ba53df329"
     else
-      url "https://github.com/ehmo/gomoufox/releases/download/v0.1.0/gomoufox_0.1.0_linux_amd64.tar.gz"
-      sha256 "e154a4494049e5c70c71e8afedba50b68b40cd31f821c887810d7a17dd3ceafb"
+      url "https://github.com/ehmo/gomoufox/releases/download/v0.1.1/gomoufox_0.1.1_linux_amd64.tar.gz"
+      sha256 "caca74f1b8893cb31bff336b26b40642f44add70cb5bcd24856310962c3d10a9"
     end
   end
 

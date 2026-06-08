@@ -117,6 +117,137 @@ func TestNewAutoInstallAndConnectErrorStopsSidecar(t *testing.T) {
 	}
 }
 
+func TestNewPreparesConnectorWhileSidecarStarts(t *testing.T) {
+	prepareStarted := make(chan struct{})
+	allowPrepare := make(chan struct{})
+	prepared := &fakePreparedConnector{session: &fakeSession{browser: &fakeBrowser{connected: true}}}
+	connector := &fakePreparableConnector{
+		started:  prepareStarted,
+		release:  allowPrepare,
+		prepared: prepared,
+	}
+	sidecar := &fakeSidecar{
+		endpoint: "ws://localhost:1234/token",
+		startFn: func(context.Context) (string, error) {
+			select {
+			case <-prepareStarted:
+			case <-time.After(time.Second):
+				t.Fatal("connector preparation did not start before sidecar startup completed")
+			}
+			close(allowPrepare)
+			return "ws://localhost:1234/token", nil
+		},
+	}
+	b, err := New(context.Background(), WithAutoInstall(false), withSidecarFactory(fakeSidecarFactory(sidecar)), withConnector(connector))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = b.Close() }()
+	if prepared.endpoint != sidecar.endpoint {
+		t.Fatalf("prepared connector endpoint = %q", prepared.endpoint)
+	}
+	if connector.fallbackConnect {
+		t.Fatalf("fallback connector path used instead of prepared connector")
+	}
+}
+
+func TestNewStopsPreparedConnectorWhenSidecarStartFails(t *testing.T) {
+	prepareStarted := make(chan struct{})
+	allowPrepare := make(chan struct{})
+	prepared := &fakePreparedConnector{session: &fakeSession{browser: &fakeBrowser{connected: true}}}
+	connector := &fakePreparableConnector{
+		started:  prepareStarted,
+		release:  allowPrepare,
+		prepared: prepared,
+	}
+	startErr := errors.New("sidecar failed")
+	sidecar := &fakeSidecar{
+		err: startErr,
+		startFn: func(context.Context) (string, error) {
+			select {
+			case <-prepareStarted:
+			case <-time.After(time.Second):
+				t.Fatal("connector preparation did not start")
+			}
+			close(allowPrepare)
+			return "", startErr
+		},
+	}
+	if _, err := New(context.Background(), WithAutoInstall(false), withSidecarFactory(fakeSidecarFactory(sidecar)), withConnector(connector)); !errors.Is(err, startErr) {
+		t.Fatalf("err = %v", err)
+	}
+	if !prepared.stopped {
+		t.Fatalf("prepared connector was not stopped after sidecar failure")
+	}
+}
+
+func TestNewStopsSidecarWhenConnectorPrepareFails(t *testing.T) {
+	prepareStarted := make(chan struct{})
+	allowPrepare := make(chan struct{})
+	prepareErr := errors.New("prepare failed")
+	connector := &fakePreparableConnector{
+		started: prepareStarted,
+		release: allowPrepare,
+		err:     prepareErr,
+	}
+	sidecar := &fakeSidecar{
+		endpoint: "ws://localhost:1234/token",
+		startFn: func(context.Context) (string, error) {
+			select {
+			case <-prepareStarted:
+			case <-time.After(time.Second):
+				t.Fatal("connector preparation did not start")
+			}
+			close(allowPrepare)
+			return "ws://localhost:1234/token", nil
+		},
+	}
+	if _, err := New(context.Background(), WithAutoInstall(false), withSidecarFactory(fakeSidecarFactory(sidecar)), withConnector(connector)); !errors.Is(err, ErrConnect) || !strings.Contains(err.Error(), "prepare failed") {
+		t.Fatalf("err = %v", err)
+	}
+	if !sidecar.stopped {
+		t.Fatalf("sidecar was not stopped after prepare failure")
+	}
+}
+
+func TestNewStopsPreparedConnectorWhenPreparedConnectFails(t *testing.T) {
+	prepareStarted := make(chan struct{})
+	allowPrepare := make(chan struct{})
+	connectErr := errors.New("prepared connect failed")
+	prepared := &fakePreparedConnector{err: connectErr}
+	connector := &fakePreparableConnector{
+		started:  prepareStarted,
+		release:  allowPrepare,
+		prepared: prepared,
+	}
+	sidecar := &fakeSidecar{
+		endpoint: "ws://localhost:1234/token",
+		startFn: func(context.Context) (string, error) {
+			select {
+			case <-prepareStarted:
+			case <-time.After(time.Second):
+				t.Fatal("connector preparation did not start")
+			}
+			close(allowPrepare)
+			return "ws://localhost:1234/token", nil
+		},
+	}
+	if _, err := New(context.Background(), WithAutoInstall(false), withSidecarFactory(fakeSidecarFactory(sidecar)), withConnector(connector)); !errors.Is(err, ErrConnect) || !strings.Contains(err.Error(), "prepared connect failed") {
+		t.Fatalf("err = %v", err)
+	}
+	if !sidecar.stopped || !prepared.stopped {
+		t.Fatalf("cleanup sidecar=%v prepared=%v", sidecar.stopped, prepared.stopped)
+	}
+}
+
+func TestNewSidecarStartFailureWithoutPreparedConnector(t *testing.T) {
+	startErr := errors.New("sidecar failed before connect")
+	sidecar := &fakeSidecar{err: startErr}
+	if _, err := New(context.Background(), WithAutoInstall(false), withSidecarFactory(fakeSidecarFactory(sidecar)), withConnector(&fakeConnector{})); !errors.Is(err, startErr) {
+		t.Fatalf("err = %v", err)
+	}
+}
+
 func TestNewAndBrowserCreationErrorEdges(t *testing.T) {
 	orig := sidecarEnsureInstalled
 	defer func() { sidecarEnsureInstalled = orig }()
@@ -339,6 +470,15 @@ func TestSidecarManagerReceivesLaunchOptions(t *testing.T) {
 	}
 	if strings.Join(scfg.Policy.AllowedOrigins, ",") != "https://example.com,https://api.example.com:8443" || strings.Join(scfg.Policy.AllowedHosts, ",") != "example.com,.example.org" {
 		t.Fatalf("network policy not mapped: %#v", scfg.Policy)
+	}
+	WithSidecarRuntime(SidecarRuntimeNodeDirect)(&cfg)
+	handle, err = newSidecarManager(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	scfg = handle.(sidecarAdapter).manager.Config()
+	if scfg.Runtime != string(SidecarRuntimeNodeDirect) {
+		t.Fatalf("runtime not mapped: %#v", scfg)
 	}
 }
 
@@ -1148,15 +1288,21 @@ type fakeSidecar struct {
 	info     SidecarInfo
 	stopped  bool
 	err      error
+	startFn  func(context.Context) (string, error)
 }
 
 func fakeSidecarFactory(s *fakeSidecar) func(launchConfig) (sidecarHandle, error) {
 	return func(launchConfig) (sidecarHandle, error) { return s, nil }
 }
 
-func (s *fakeSidecar) Start(context.Context) (string, error) { return s.endpoint, s.err }
-func (s *fakeSidecar) Stop(context.Context)                  { s.stopped = true }
-func (s *fakeSidecar) Info() SidecarInfo                     { return s.info }
+func (s *fakeSidecar) Start(ctx context.Context) (string, error) {
+	if s.startFn != nil {
+		return s.startFn(ctx)
+	}
+	return s.endpoint, s.err
+}
+func (s *fakeSidecar) Stop(context.Context) { s.stopped = true }
+func (s *fakeSidecar) Info() SidecarInfo    { return s.info }
 
 type fakeConnector struct {
 	endpoint string
@@ -1173,6 +1319,55 @@ func (c *fakeConnector) Connect(ctx context.Context, endpoint string, opts pwbri
 		return nil, c.err
 	}
 	return c.session, nil
+}
+
+type fakePreparableConnector struct {
+	started         chan struct{}
+	release         chan struct{}
+	prepared        *fakePreparedConnector
+	err             error
+	fallbackConnect bool
+}
+
+func (c *fakePreparableConnector) Prepare(ctx context.Context) (pwbridge.PreparedConnector, error) {
+	close(c.started)
+	select {
+	case <-c.release:
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+	if c.err != nil {
+		return nil, c.err
+	}
+	return c.prepared, nil
+}
+
+func (c *fakePreparableConnector) Connect(ctx context.Context, endpoint string, opts pwbridge.ConnectOptions) (pwbridge.Session, error) {
+	c.fallbackConnect = true
+	return c.prepared.Connect(ctx, endpoint, opts)
+}
+
+type fakePreparedConnector struct {
+	endpoint string
+	session  pwbridge.Session
+	err      error
+	stopped  bool
+}
+
+func (c *fakePreparedConnector) Connect(ctx context.Context, endpoint string, opts pwbridge.ConnectOptions) (pwbridge.Session, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	c.endpoint = endpoint
+	if c.err != nil {
+		return nil, c.err
+	}
+	return c.session, nil
+}
+
+func (c *fakePreparedConnector) Stop() error {
+	c.stopped = true
+	return nil
 }
 
 type fakeSession struct {

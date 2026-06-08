@@ -54,6 +54,8 @@ type reportOptions struct {
 	ReuseBrowser     bool   `json:"reuse_browser"`
 	UnsafeDirect     bool   `json:"unsafe_direct_network"`
 	GeneratedPersona bool   `json:"generated_persona"`
+	SidecarRuntime   string `json:"sidecar_runtime,omitempty"`
+	CustomVenv       bool   `json:"custom_venv,omitempty"`
 	ExpectPassed     int    `json:"expect_passed,omitempty"`
 	MaxBlocked       int    `json:"max_blocked"`
 	MaxFailed        int    `json:"max_failed"`
@@ -348,6 +350,8 @@ func run(ctx context.Context, args []string, stdout, stderr *os.File) int {
 	reuseBrowser := false
 	unsafeDirectNetwork := false
 	generatedPersona := false
+	sidecarRuntime := string(gomoufox.SidecarRuntimePython)
+	venvDir := ""
 	expectPassed := 0
 	maxBlocked := -1
 	maxFailed := 0
@@ -377,6 +381,8 @@ func run(ctx context.Context, args []string, stdout, stderr *os.File) int {
 	fs.BoolVar(&reuseBrowser, "reuse-browser", reuseBrowser, "reuse one browser process across targets")
 	fs.BoolVar(&unsafeDirectNetwork, "unsafe-direct-network", unsafeDirectNetwork, "UNSAFE: bypass gomoufox local filtering proxy and URL guardrails for browser navigations")
 	fs.BoolVar(&generatedPersona, "generated-persona", generatedPersona, "let Camoufox generate launch/context persona defaults")
+	fs.StringVar(&sidecarRuntime, "sidecar-runtime", sidecarRuntime, "gomoufox sidecar runtime: python or node-direct")
+	fs.StringVar(&venvDir, "venv-dir", venvDir, "managed gomoufox venv directory; default cache")
 	fs.IntVar(&expectPassed, "expect-passed", expectPassed, "fail if passed target count is lower than this value; 0 disables")
 	fs.IntVar(&maxBlocked, "max-blocked", maxBlocked, "fail if blocked target count exceeds this value; -1 disables")
 	fs.IntVar(&maxFailed, "max-failed", maxFailed, "fail if failed target count exceeds this value; -1 disables")
@@ -414,6 +420,10 @@ func run(ctx context.Context, args []string, stdout, stderr *os.File) int {
 		return 2
 	}
 	if err := validateWaitUntil(waitUntil); err != nil {
+		_, _ = fmt.Fprintln(stderr, err)
+		return 2
+	}
+	if _, err := parseSidecarRuntime(sidecarRuntime); err != nil {
 		_, _ = fmt.Fprintln(stderr, err)
 		return 2
 	}
@@ -465,6 +475,8 @@ func run(ctx context.Context, args []string, stdout, stderr *os.File) int {
 			ReuseBrowser:     reuseBrowser,
 			UnsafeDirect:     unsafeDirectNetwork,
 			GeneratedPersona: generatedPersona,
+			SidecarRuntime:   sidecarRuntime,
+			CustomVenv:       venvDir != "",
 			ExpectPassed:     expectPassed,
 			MaxBlocked:       maxBlocked,
 			MaxFailed:        maxFailed,
@@ -474,7 +486,7 @@ func run(ctx context.Context, args []string, stdout, stderr *os.File) int {
 	}
 	var sharedBrowser realpassBrowser
 	if reuseBrowser {
-		browser, err := launchBrowser(ctx, headful, unsafeDirectNetwork, generatedPersona)
+		browser, err := launchBrowser(ctx, headful, unsafeDirectNetwork, generatedPersona, sidecarRuntime, venvDir)
 		if err != nil {
 			_, _ = fmt.Fprintf(stderr, "start reusable browser: %s\n", policy.Redact(err.Error()))
 			return 1
@@ -489,7 +501,7 @@ func run(ctx context.Context, args []string, stdout, stderr *os.File) int {
 			if sharedBrowser != nil {
 				res = runTargetWithBrowser(ctx, sharedBrowser, tgt, attempt, timeout, waitUntil, settle, loadStateTimeout, contentMaxBytes, sampleInterval, generatedPersona, screenshots, shotDir)
 			} else {
-				res = runTarget(ctx, tgt, attempt, timeout, waitUntil, settle, loadStateTimeout, contentMaxBytes, sampleInterval, headful, unsafeDirectNetwork, generatedPersona, screenshots, shotDir)
+				res = runTarget(ctx, tgt, attempt, timeout, waitUntil, settle, loadStateTimeout, contentMaxBytes, sampleInterval, headful, unsafeDirectNetwork, generatedPersona, sidecarRuntime, venvDir, screenshots, shotDir)
 			}
 			rep.Results = append(rep.Results, res)
 			_ = appendResultJSONL(outDir, res)
@@ -525,13 +537,13 @@ func defaultTargets() []target {
 	}
 }
 
-func runTarget(ctx context.Context, tgt target, attempt int, timeout time.Duration, waitUntil string, settle, loadStateTimeout time.Duration, contentMaxBytes int, sampleInterval time.Duration, headful, unsafeDirectNetwork, generatedPersona, screenshots bool, shotDir string) (res targetResult) {
+func runTarget(ctx context.Context, tgt target, attempt int, timeout time.Duration, waitUntil string, settle, loadStateTimeout time.Duration, contentMaxBytes int, sampleInterval time.Duration, headful, unsafeDirectNetwork, generatedPersona bool, sidecarRuntime, venvDir string, screenshots bool, shotDir string) (res targetResult) {
 	start := time.Now()
 	res = targetResult{Name: tgt.Name, URL: tgt.URL, Kind: tgt.Kind, Attempt: attempt, StartedAt: start}
 	targetCtx, cancel := context.WithTimeout(ctx, timeout+settle+45*time.Second)
 	defer cancel()
 
-	browser, err := launchBrowser(targetCtx, headful, unsafeDirectNetwork, generatedPersona)
+	browser, err := launchBrowser(targetCtx, headful, unsafeDirectNetwork, generatedPersona, sidecarRuntime, venvDir)
 	if err != nil {
 		res.Error = err.Error()
 		res.Outcome = "failed"
@@ -551,12 +563,19 @@ func runTargetWithBrowser(ctx context.Context, browser realpassBrowser, tgt targ
 	return runTargetWithBrowserContext(targetCtx, browser, res, start, timeout, waitUntil, settle, loadStateTimeout, contentMaxBytes, sampleInterval, generatedPersona, screenshots, shotDir)
 }
 
-func launchBrowser(ctx context.Context, headful, unsafeDirectNetwork, generatedPersona bool) (realpassBrowser, error) {
+func launchBrowser(ctx context.Context, headful, unsafeDirectNetwork, generatedPersona bool, sidecarRuntime, venvDir string) (realpassBrowser, error) {
 	headlessMode := camoufoxcfg.HeadlessTrue
 	if headful {
 		headlessMode = camoufoxcfg.HeadlessFalse
 	}
-	opts := []gomoufox.Option{gomoufox.WithHeadless(headlessMode)}
+	runtime, err := parseSidecarRuntime(sidecarRuntime)
+	if err != nil {
+		return nil, err
+	}
+	opts := []gomoufox.Option{gomoufox.WithHeadless(headlessMode), gomoufox.WithSidecarRuntime(runtime)}
+	if venvDir != "" {
+		opts = append(opts, gomoufox.WithVenvDir(venvDir))
+	}
 	if unsafeDirectNetwork {
 		opts = append(opts, gomoufox.WithUnsafeDirectNetwork(true))
 	}
@@ -569,6 +588,17 @@ func launchBrowser(ctx context.Context, headful, unsafeDirectNetwork, generatedP
 		)
 	}
 	return newRealpassBrowser(ctx, opts...)
+}
+
+func parseSidecarRuntime(raw string) (gomoufox.SidecarRuntime, error) {
+	switch raw {
+	case "", string(gomoufox.SidecarRuntimePython):
+		return gomoufox.SidecarRuntimePython, nil
+	case string(gomoufox.SidecarRuntimeNodeDirect):
+		return gomoufox.SidecarRuntimeNodeDirect, nil
+	default:
+		return "", fmt.Errorf("sidecar-runtime must be %s or %s", gomoufox.SidecarRuntimePython, gomoufox.SidecarRuntimeNodeDirect)
+	}
 }
 
 func runTargetWithBrowserContext(targetCtx context.Context, browser realpassBrowser, res targetResult, start time.Time, timeout time.Duration, waitUntil string, settle, loadStateTimeout time.Duration, contentMaxBytes int, sampleInterval time.Duration, generatedPersona, screenshots bool, shotDir string) (out targetResult) {
@@ -660,6 +690,74 @@ func runTargetWithBrowserContext(targetCtx context.Context, browser realpassBrow
 	return out
 }
 
+const fingerprintDetectorExpression = `() => {
+const canvas = document.createElement("canvas");
+canvas.width = 240;
+canvas.height = 60;
+const ctx = canvas.getContext("2d");
+if (ctx) {
+  ctx.textBaseline = "top";
+  ctx.font = "16px Arial";
+  ctx.fillStyle = "#f60";
+  ctx.fillRect(0, 0, 120, 40);
+  ctx.fillStyle = "#069";
+  ctx.fillText("gomoufox fingerprint audit", 4, 8);
+}
+const glCanvas = document.createElement("canvas");
+const gl = glCanvas.getContext("webgl") || glCanvas.getContext("experimental-webgl");
+let webgl = {supported: false};
+if (gl) {
+  const debug = gl.getExtension("WEBGL_debug_renderer_info");
+  webgl = {
+    supported: true,
+    vendor: gl.getParameter(gl.VENDOR),
+    renderer: gl.getParameter(gl.RENDERER),
+    unmaskedVendor: debug ? gl.getParameter(debug.UNMASKED_VENDOR_WEBGL) : null,
+    unmaskedRenderer: debug ? gl.getParameter(debug.UNMASKED_RENDERER_WEBGL) : null
+  };
+}
+const fontNames = ["Arial", "Times New Roman", "Courier New", "Helvetica", "Segoe UI", "Noto Sans"];
+const fonts = {};
+if (document.fonts && document.fonts.check) {
+  for (const name of fontNames) {
+    fonts[name] = document.fonts.check("12px \"" + name + "\"");
+  }
+}
+const dataURL = canvas.toDataURL();
+return {
+  webdriver: navigator.webdriver,
+  userAgent: navigator.userAgent,
+  appVersion: navigator.appVersion,
+  platform: navigator.platform,
+  vendor: navigator.vendor,
+  productSub: navigator.productSub,
+  languages: navigator.languages,
+  hardwareConcurrency: navigator.hardwareConcurrency,
+  deviceMemory: navigator.deviceMemory || null,
+  maxTouchPoints: navigator.maxTouchPoints,
+  cookieEnabled: navigator.cookieEnabled,
+  doNotTrack: navigator.doNotTrack || null,
+  pdfViewerEnabled: navigator.pdfViewerEnabled,
+  plugins: navigator.plugins ? navigator.plugins.length : null,
+  outerWidth: window.outerWidth,
+  outerHeight: window.outerHeight,
+  innerWidth: window.innerWidth,
+  innerHeight: window.innerHeight,
+  screenWidth: screen.width,
+  screenHeight: screen.height,
+  screenAvailWidth: screen.availWidth,
+  screenAvailHeight: screen.availHeight,
+  colorDepth: screen.colorDepth,
+  pixelDepth: screen.pixelDepth,
+  devicePixelRatio: window.devicePixelRatio,
+  timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+  webgl,
+  webrtc: {supported: typeof RTCPeerConnection !== "undefined"},
+  fonts,
+  canvas: {dataURLPrefix: dataURL.slice(0, 96), dataURLLength: dataURL.length}
+};
+}`
+
 func capturePageData(ctx context.Context, page realpassPage, maxBytes int) (string, string, int, map[string]any, error) {
 	value, err := page.Evaluate(ctx, `max => {
 const html = document.documentElement ? document.documentElement.outerHTML : "";
@@ -668,22 +766,7 @@ return {
   title: document.title || "",
   content: html.slice(0, limit),
   content_bytes: html.length,
-  detector: {
-    webdriver: navigator.webdriver,
-    userAgent: navigator.userAgent,
-    platform: navigator.platform,
-    languages: navigator.languages,
-    hardwareConcurrency: navigator.hardwareConcurrency,
-    deviceMemory: navigator.deviceMemory || null,
-    plugins: navigator.plugins ? navigator.plugins.length : null,
-    outerWidth: window.outerWidth,
-    outerHeight: window.outerHeight,
-    innerWidth: window.innerWidth,
-    innerHeight: window.innerHeight,
-    screenWidth: screen.width,
-    screenHeight: screen.height,
-    timezone: Intl.DateTimeFormat().resolvedOptions().timeZone
-  }
+  detector: (`+fingerprintDetectorExpression+`)()
 };
 }`, maxBytes)
 	if err != nil {
@@ -767,23 +850,7 @@ func parseReportStyle(value string) (reportStyle, error) {
 }
 
 func detectorSnapshot(ctx context.Context, page realpassPage) map[string]any {
-	const expression = `() => ({
-webdriver: navigator.webdriver,
-userAgent: navigator.userAgent,
-platform: navigator.platform,
-languages: navigator.languages,
-hardwareConcurrency: navigator.hardwareConcurrency,
-deviceMemory: navigator.deviceMemory || null,
-plugins: navigator.plugins ? navigator.plugins.length : null,
-outerWidth: window.outerWidth,
-outerHeight: window.outerHeight,
-innerWidth: window.innerWidth,
-innerHeight: window.innerHeight,
-screenWidth: screen.width,
-screenHeight: screen.height,
-timezone: Intl.DateTimeFormat().resolvedOptions().timeZone
-})`
-	value, err := page.Evaluate(ctx, expression)
+	value, err := page.Evaluate(ctx, fingerprintDetectorExpression)
 	if err != nil {
 		return map[string]any{"error": err.Error()}
 	}

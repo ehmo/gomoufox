@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-06-05T05:59:34.509406+00:00",
+  "generated_at": "2026-06-08T03:50:59.028211+00:00",
   "mode": "extended",
   "target_count": 100,
   "target_tier_counts": {
@@ -131,7 +131,10 @@
     "load_state_timeout_seconds": 0.0,
     "content_max_bytes": 250000,
     "sample_interval_seconds": 0.5,
+    "run_order": "alternate",
     "go_runner": "existing_report",
+    "go_sidecar_runtime": "python",
+    "go_custom_venv": false,
     "screenshots": false,
     "max_targets": 0,
     "reuse_browser": true,
@@ -140,8 +143,12 @@
   "runs": [
     {
       "loop": 1,
-      "go_report": "dist/benchmarks/2026-06-05-release-gate/release-loop-1/go/report.json",
-      "python_report": "dist/benchmarks/2026-06-05-release-gate/release-loop-1/python/report.json",
+      "run_order": [
+        "go",
+        "python"
+      ],
+      "go_report": "dist/benchmarks/2026-06-08-omarchy-release-gate/release-loop-1/go/report.json",
+      "python_report": "dist/benchmarks/2026-06-08-omarchy-release-gate/release-loop-1/python/report.json",
       "options": {
         "timeout_seconds": 45.0,
         "settle_seconds": 3.0,
@@ -151,46 +158,47 @@
         "wait_until": "commit",
         "reuse_browser": true,
         "content_max_bytes": 250000,
-        "go_report_style": "compact"
+        "go_report_style": "compact",
+        "go_sidecar_runtime": "python"
       },
       "go": {
         "total": 100,
         "passed": 95,
         "blocked": 5,
         "failed": 0,
-        "wall_ms": 370799,
-        "target_duration_ms": 367206,
-        "avg_target_ms": 3672,
-        "peak_rss_mib": 4483.44140625,
-        "peak_cpu_percent": 391.09999999999997,
-        "report_json_bytes": 43088,
-        "report_markdown_bytes": 8928,
-        "report_json_estimated_tokens": 10772,
-        "report_markdown_estimated_tokens": 2232,
-        "report_total_estimated_tokens": 13004
+        "wall_ms": 371006,
+        "target_duration_ms": 367886,
+        "avg_target_ms": 3678,
+        "peak_rss_mib": 4141.51953125,
+        "peak_cpu_percent": 532.6,
+        "report_json_bytes": 43042,
+        "report_markdown_bytes": 8934,
+        "report_json_estimated_tokens": 10761,
+        "report_markdown_estimated_tokens": 2234,
+        "report_total_estimated_tokens": 12995
       },
       "python": {
         "total": 100,
         "passed": 95,
         "blocked": 5,
         "failed": 0,
-        "wall_ms": 437249,
-        "target_duration_ms": 436474,
-        "avg_target_ms": 4364,
-        "peak_rss_mib": 4498.59375,
-        "peak_cpu_percent": 448.2,
-        "report_json_bytes": 176841,
-        "report_markdown_bytes": 8921,
-        "report_json_estimated_tokens": 44211,
-        "report_markdown_estimated_tokens": 2231,
-        "report_total_estimated_tokens": 46442
+        "wall_ms": 445513,
+        "target_duration_ms": 444740,
+        "avg_target_ms": 4447,
+        "peak_rss_mib": 5096.984375,
+        "peak_cpu_percent": 455.40000000000003,
+        "report_json_bytes": 264957,
+        "report_markdown_bytes": 8914,
+        "report_json_estimated_tokens": 66240,
+        "report_markdown_estimated_tokens": 2229,
+        "report_total_estimated_tokens": 68469
       },
       "ratios": {
-        "wall_time": 0.8480270966886145,
-        "target_duration": 0.8413009709627607,
-        "peak_rss": 0.9966317599249765,
-        "peak_cpu": 0.8726015171798304,
-        "report_tokens": 0.28000516773610096
+        "wall_time": 0.8327613335637792,
+        "target_duration": 0.8271934163781085,
+        "peak_rss": 0.8125431091300922,
+        "peak_cpu": 1.1695212999560824,
+        "report_tokens": 0.1897939213366633
       },
       "target_outcomes": [
         {
@@ -204,9 +212,10 @@
           ],
           "go_outcome": "passed",
           "python_outcome": "passed",
-          "go_duration_ms": 3681,
-          "python_duration_ms": 4698,
+          "go_duration_ms": 4491,
+          "python_duration_ms": 4622,
           "go_signals": [
+            "robot_detection",
             "akamai"
           ],
           "python_signals": [
@@ -224,8 +233,8 @@
           ],
           "go_outcome": "passed",
           "python_outcome": "passed",
-          "go_duration_ms": 3655,
-          "python_duration_ms": 4670,
+          "go_duration_ms": 3778,
+          "python_duration_ms": 4760,
           "go_signals": [
             "robot_detection"
           ],
@@ -242,8 +251,8 @@
           ],
           "go_outcome": "passed",
           "python_outcome": "passed",
-          "go_duration_ms": 3308,
-          "python_duration_ms": 3369,
+          "go_duration_ms": 3505,
+          "python_duration_ms": 4558,
           "go_signals": [
             "akamai"
           ],
@@ -260,8 +269,8 @@
           ],
           "go_outcome": "passed",
           "python_outcome": "passed",
-          "go_duration_ms": 3603,
-          "python_duration_ms": 4685,
+          "go_duration_ms": 3490,
+          "python_duration_ms": 4618,
           "go_signals": [
             "robot_detection"
           ],
@@ -278,8 +287,8 @@
           ],
           "go_outcome": "passed",
           "python_outcome": "passed",
-          "go_duration_ms": 4572,
-          "python_duration_ms": 4556,
+          "go_duration_ms": 4434,
+          "python_duration_ms": 4607,
           "go_signals": [],
           "python_signals": []
         },
@@ -292,8 +301,8 @@
           ],
           "go_outcome": "passed",
           "python_outcome": "passed",
-          "go_duration_ms": 3384,
-          "python_duration_ms": 4441,
+          "go_duration_ms": 3392,
+          "python_duration_ms": 4467,
           "go_signals": [],
           "python_signals": []
         },
@@ -305,12 +314,9 @@
           ],
           "go_outcome": "passed",
           "python_outcome": "passed",
-          "go_duration_ms": 3395,
-          "python_duration_ms": 4484,
-          "go_signals": [
-            "captcha",
-            "robot_detection"
-          ],
+          "go_duration_ms": 3340,
+          "python_duration_ms": 4597,
+          "go_signals": [],
           "python_signals": [
             "captcha",
             "robot_detection"
@@ -325,8 +331,8 @@
           ],
           "go_outcome": "passed",
           "python_outcome": "passed",
-          "go_duration_ms": 4184,
-          "python_duration_ms": 4369,
+          "go_duration_ms": 3325,
+          "python_duration_ms": 4446,
           "go_signals": [],
           "python_signals": []
         },
@@ -339,8 +345,8 @@
           ],
           "go_outcome": "passed",
           "python_outcome": "passed",
-          "go_duration_ms": 3390,
-          "python_duration_ms": 4814,
+          "go_duration_ms": 3361,
+          "python_duration_ms": 4523,
           "go_signals": [
             "robot_detection"
           ],
@@ -358,8 +364,8 @@
           ],
           "go_outcome": "passed",
           "python_outcome": "passed",
-          "go_duration_ms": 3418,
-          "python_duration_ms": 4420,
+          "go_duration_ms": 3393,
+          "python_duration_ms": 4479,
           "go_signals": [
             "robot_detection"
           ],
@@ -378,8 +384,8 @@
           ],
           "go_outcome": "passed",
           "python_outcome": "passed",
-          "go_duration_ms": 4414,
-          "python_duration_ms": 4559,
+          "go_duration_ms": 4419,
+          "python_duration_ms": 4666,
           "go_signals": [
             "robot_detection",
             "akamai"
@@ -397,8 +403,8 @@
           ],
           "go_outcome": "passed",
           "python_outcome": "passed",
-          "go_duration_ms": 3532,
-          "python_duration_ms": 3362,
+          "go_duration_ms": 3344,
+          "python_duration_ms": 4336,
           "go_signals": [
             "robot_detection"
           ],
@@ -416,8 +422,8 @@
           ],
           "go_outcome": "passed",
           "python_outcome": "passed",
-          "go_duration_ms": 4098,
-          "python_duration_ms": 5219,
+          "go_duration_ms": 4044,
+          "python_duration_ms": 5205,
           "go_signals": [
             "captcha",
             "akamai"
@@ -437,8 +443,8 @@
           ],
           "go_outcome": "passed",
           "python_outcome": "passed",
-          "go_duration_ms": 3665,
-          "python_duration_ms": 3657,
+          "go_duration_ms": 3587,
+          "python_duration_ms": 4517,
           "go_signals": [
             "robot_detection"
           ],
@@ -454,8 +460,8 @@
           ],
           "go_outcome": "passed",
           "python_outcome": "passed",
-          "go_duration_ms": 3663,
-          "python_duration_ms": 4708,
+          "go_duration_ms": 3607,
+          "python_duration_ms": 5014,
           "go_signals": [
             "captcha",
             "robot_detection"
@@ -475,8 +481,8 @@
           ],
           "go_outcome": "passed",
           "python_outcome": "passed",
-          "go_duration_ms": 3394,
-          "python_duration_ms": 3531,
+          "go_duration_ms": 3380,
+          "python_duration_ms": 4527,
           "go_signals": [
             "cloudflare_turnstile",
             "captcha"
@@ -496,8 +502,8 @@
           ],
           "go_outcome": "passed",
           "python_outcome": "passed",
-          "go_duration_ms": 3928,
-          "python_duration_ms": 4655,
+          "go_duration_ms": 3744,
+          "python_duration_ms": 4541,
           "go_signals": [
             "cloudflare_turnstile",
             "captcha",
@@ -520,8 +526,8 @@
           ],
           "go_outcome": "passed",
           "python_outcome": "passed",
-          "go_duration_ms": 5124,
-          "python_duration_ms": 5389,
+          "go_duration_ms": 3906,
+          "python_duration_ms": 4971,
           "go_signals": [],
           "python_signals": []
         },
@@ -534,8 +540,8 @@
           ],
           "go_outcome": "passed",
           "python_outcome": "passed",
-          "go_duration_ms": 3305,
-          "python_duration_ms": 4406,
+          "go_duration_ms": 3340,
+          "python_duration_ms": 3347,
           "go_signals": [],
           "python_signals": []
         },
@@ -549,8 +555,8 @@
           ],
           "go_outcome": "passed",
           "python_outcome": "passed",
-          "go_duration_ms": 4250,
-          "python_duration_ms": 4797,
+          "go_duration_ms": 3632,
+          "python_duration_ms": 4946,
           "go_signals": [
             "robot_detection"
           ],
@@ -568,8 +574,8 @@
           ],
           "go_outcome": "passed",
           "python_outcome": "passed",
-          "go_duration_ms": 3513,
-          "python_duration_ms": 4658,
+          "go_duration_ms": 4252,
+          "python_duration_ms": 4921,
           "go_signals": [
             "robot_detection",
             "akamai"
@@ -587,8 +593,8 @@
           ],
           "go_outcome": "passed",
           "python_outcome": "passed",
-          "go_duration_ms": 3578,
-          "python_duration_ms": 4962,
+          "go_duration_ms": 3350,
+          "python_duration_ms": 4360,
           "go_signals": [],
           "python_signals": []
         },
@@ -601,8 +607,8 @@
           ],
           "go_outcome": "passed",
           "python_outcome": "passed",
-          "go_duration_ms": 3379,
-          "python_duration_ms": 3255,
+          "go_duration_ms": 3397,
+          "python_duration_ms": 3275,
           "go_signals": [
             "robot_detection"
           ],
@@ -619,8 +625,8 @@
           ],
           "go_outcome": "passed",
           "python_outcome": "passed",
-          "go_duration_ms": 3435,
-          "python_duration_ms": 4533,
+          "go_duration_ms": 3958,
+          "python_duration_ms": 3847,
           "go_signals": [
             "captcha",
             "robot_detection",
@@ -642,8 +648,8 @@
           ],
           "go_outcome": "passed",
           "python_outcome": "passed",
-          "go_duration_ms": 3388,
-          "python_duration_ms": 4450,
+          "go_duration_ms": 3395,
+          "python_duration_ms": 4480,
           "go_signals": [],
           "python_signals": []
         },
@@ -656,8 +662,8 @@
           ],
           "go_outcome": "passed",
           "python_outcome": "passed",
-          "go_duration_ms": 3477,
-          "python_duration_ms": 4663,
+          "go_duration_ms": 3771,
+          "python_duration_ms": 4635,
           "go_signals": [
             "robot_detection"
           ],
@@ -674,8 +680,8 @@
           ],
           "go_outcome": "passed",
           "python_outcome": "passed",
-          "go_duration_ms": 3334,
-          "python_duration_ms": 3324,
+          "go_duration_ms": 3316,
+          "python_duration_ms": 3338,
           "go_signals": [
             "robot_detection"
           ],
@@ -692,8 +698,8 @@
           ],
           "go_outcome": "passed",
           "python_outcome": "passed",
-          "go_duration_ms": 3417,
-          "python_duration_ms": 4516,
+          "go_duration_ms": 3405,
+          "python_duration_ms": 4433,
           "go_signals": [
             "robot_detection"
           ],
@@ -711,8 +717,8 @@
           ],
           "go_outcome": "passed",
           "python_outcome": "passed",
-          "go_duration_ms": 3868,
-          "python_duration_ms": 5107,
+          "go_duration_ms": 4054,
+          "python_duration_ms": 5038,
           "go_signals": [
             "captcha"
           ],
@@ -730,8 +736,8 @@
           ],
           "go_outcome": "passed",
           "python_outcome": "passed",
-          "go_duration_ms": 3350,
-          "python_duration_ms": 4420,
+          "go_duration_ms": 3356,
+          "python_duration_ms": 4458,
           "go_signals": [
             "robot_detection"
           ],
@@ -749,8 +755,8 @@
           ],
           "go_outcome": "passed",
           "python_outcome": "passed",
-          "go_duration_ms": 3680,
-          "python_duration_ms": 3665,
+          "go_duration_ms": 4117,
+          "python_duration_ms": 3722,
           "go_signals": [
             "captcha"
           ],
@@ -766,8 +772,8 @@
           ],
           "go_outcome": "passed",
           "python_outcome": "passed",
-          "go_duration_ms": 3273,
-          "python_duration_ms": 4359,
+          "go_duration_ms": 3267,
+          "python_duration_ms": 3297,
           "go_signals": [],
           "python_signals": []
         },
@@ -780,8 +786,8 @@
           ],
           "go_outcome": "passed",
           "python_outcome": "passed",
-          "go_duration_ms": 3318,
-          "python_duration_ms": 4454,
+          "go_duration_ms": 3302,
+          "python_duration_ms": 3294,
           "go_signals": [
             "robot_detection"
           ],
@@ -799,7 +805,7 @@
           ],
           "go_outcome": "passed",
           "python_outcome": "passed",
-          "go_duration_ms": 3569,
+          "go_duration_ms": 3527,
           "python_duration_ms": 4635,
           "go_signals": [
             "robot_detection"
@@ -817,8 +823,8 @@
           ],
           "go_outcome": "passed",
           "python_outcome": "passed",
-          "go_duration_ms": 4352,
-          "python_duration_ms": 4876,
+          "go_duration_ms": 4330,
+          "python_duration_ms": 4712,
           "go_signals": [],
           "python_signals": []
         },
@@ -832,11 +838,13 @@
           ],
           "go_outcome": "blocked",
           "python_outcome": "blocked",
-          "go_duration_ms": 3289,
-          "python_duration_ms": 3326,
+          "go_duration_ms": 3292,
+          "python_duration_ms": 4359,
           "go_signals": [
             "http_403",
-            "robot_detection"
+            "cloudflare_challenge",
+            "captcha",
+            "datadome"
           ],
           "python_signals": [
             "http_403",
@@ -853,8 +861,8 @@
           ],
           "go_outcome": "passed",
           "python_outcome": "passed",
-          "go_duration_ms": 3421,
-          "python_duration_ms": 3453,
+          "go_duration_ms": 3439,
+          "python_duration_ms": 3439,
           "go_signals": [
             "captcha"
           ],
@@ -872,8 +880,8 @@
           ],
           "go_outcome": "passed",
           "python_outcome": "passed",
-          "go_duration_ms": 4419,
-          "python_duration_ms": 4405,
+          "go_duration_ms": 4373,
+          "python_duration_ms": 4562,
           "go_signals": [
             "robot_detection"
           ],
@@ -890,8 +898,8 @@
           ],
           "go_outcome": "passed",
           "python_outcome": "passed",
-          "go_duration_ms": 3601,
-          "python_duration_ms": 3600,
+          "go_duration_ms": 3461,
+          "python_duration_ms": 4502,
           "go_signals": [],
           "python_signals": []
         },
@@ -906,8 +914,8 @@
           ],
           "go_outcome": "passed",
           "python_outcome": "passed",
-          "go_duration_ms": 3512,
-          "python_duration_ms": 4523,
+          "go_duration_ms": 3534,
+          "python_duration_ms": 4574,
           "go_signals": [
             "captcha",
             "robot_detection"
@@ -927,8 +935,8 @@
           ],
           "go_outcome": "passed",
           "python_outcome": "passed",
-          "go_duration_ms": 3619,
-          "python_duration_ms": 4460,
+          "go_duration_ms": 3428,
+          "python_duration_ms": 4493,
           "go_signals": [
             "robot_detection"
           ],
@@ -944,8 +952,8 @@
           ],
           "go_outcome": "passed",
           "python_outcome": "passed",
-          "go_duration_ms": 5330,
-          "python_duration_ms": 4503,
+          "go_duration_ms": 4400,
+          "python_duration_ms": 4482,
           "go_signals": [
             "captcha",
             "robot_detection"
@@ -964,8 +972,8 @@
           ],
           "go_outcome": "passed",
           "python_outcome": "passed",
-          "go_duration_ms": 3338,
-          "python_duration_ms": 4446,
+          "go_duration_ms": 3360,
+          "python_duration_ms": 4466,
           "go_signals": [],
           "python_signals": []
         },
@@ -979,8 +987,8 @@
           ],
           "go_outcome": "blocked",
           "python_outcome": "blocked",
-          "go_duration_ms": 3323,
-          "python_duration_ms": 4344,
+          "go_duration_ms": 3304,
+          "python_duration_ms": 4461,
           "go_signals": [
             "human_verification",
             "captcha",
@@ -1002,8 +1010,8 @@
           ],
           "go_outcome": "passed",
           "python_outcome": "passed",
-          "go_duration_ms": 3682,
-          "python_duration_ms": 4659,
+          "go_duration_ms": 3551,
+          "python_duration_ms": 4692,
           "go_signals": [
             "robot_detection"
           ],
@@ -1020,8 +1028,8 @@
           ],
           "go_outcome": "passed",
           "python_outcome": "passed",
-          "go_duration_ms": 3429,
-          "python_duration_ms": 3393,
+          "go_duration_ms": 5123,
+          "python_duration_ms": 5877,
           "go_signals": [
             "robot_detection"
           ],
@@ -1037,8 +1045,8 @@
           ],
           "go_outcome": "passed",
           "python_outcome": "passed",
-          "go_duration_ms": 4020,
-          "python_duration_ms": 4098,
+          "go_duration_ms": 4014,
+          "python_duration_ms": 5066,
           "go_signals": [
             "captcha",
             "robot_detection",
@@ -1069,8 +1077,8 @@
           ],
           "go_outcome": "passed",
           "python_outcome": "passed",
-          "go_duration_ms": 3352,
-          "python_duration_ms": 3436,
+          "go_duration_ms": 3332,
+          "python_duration_ms": 4330,
           "go_signals": [
             "robot_detection"
           ],
@@ -1088,8 +1096,8 @@
           ],
           "go_outcome": "passed",
           "python_outcome": "passed",
-          "go_duration_ms": 3373,
-          "python_duration_ms": 4549,
+          "go_duration_ms": 3526,
+          "python_duration_ms": 4821,
           "go_signals": [
             "akamai"
           ],
@@ -1106,8 +1114,8 @@
           ],
           "go_outcome": "passed",
           "python_outcome": "passed",
-          "go_duration_ms": 4341,
-          "python_duration_ms": 4350,
+          "go_duration_ms": 4262,
+          "python_duration_ms": 4244,
           "go_signals": [],
           "python_signals": []
         },
@@ -1120,8 +1128,8 @@
           ],
           "go_outcome": "passed",
           "python_outcome": "passed",
-          "go_duration_ms": 4372,
-          "python_duration_ms": 4460,
+          "go_duration_ms": 4407,
+          "python_duration_ms": 4566,
           "go_signals": [
             "robot_detection",
             "akamai"
@@ -1141,8 +1149,8 @@
           ],
           "go_outcome": "passed",
           "python_outcome": "passed",
-          "go_duration_ms": 3508,
-          "python_duration_ms": 4446,
+          "go_duration_ms": 3408,
+          "python_duration_ms": 4674,
           "go_signals": [
             "robot_detection"
           ],
@@ -1159,8 +1167,8 @@
           ],
           "go_outcome": "passed",
           "python_outcome": "passed",
-          "go_duration_ms": 4510,
-          "python_duration_ms": 4373,
+          "go_duration_ms": 4486,
+          "python_duration_ms": 4338,
           "go_signals": [],
           "python_signals": []
         },
@@ -1173,8 +1181,8 @@
           ],
           "go_outcome": "passed",
           "python_outcome": "passed",
-          "go_duration_ms": 3622,
-          "python_duration_ms": 3583,
+          "go_duration_ms": 3648,
+          "python_duration_ms": 4522,
           "go_signals": [
             "akamai"
           ],
@@ -1193,8 +1201,8 @@
           ],
           "go_outcome": "passed",
           "python_outcome": "passed",
-          "go_duration_ms": 3326,
-          "python_duration_ms": 4504,
+          "go_duration_ms": 3747,
+          "python_duration_ms": 4460,
           "go_signals": [
             "captcha",
             "robot_detection"
@@ -1213,8 +1221,8 @@
           ],
           "go_outcome": "passed",
           "python_outcome": "passed",
-          "go_duration_ms": 3366,
-          "python_duration_ms": 4544,
+          "go_duration_ms": 3376,
+          "python_duration_ms": 4581,
           "go_signals": [
             "robot_detection"
           ],
@@ -1232,7 +1240,7 @@
           "go_outcome": "passed",
           "python_outcome": "passed",
           "go_duration_ms": 3932,
-          "python_duration_ms": 4051,
+          "python_duration_ms": 5035,
           "go_signals": [],
           "python_signals": []
         },
@@ -1247,8 +1255,8 @@
           ],
           "go_outcome": "passed",
           "python_outcome": "passed",
-          "go_duration_ms": 3656,
-          "python_duration_ms": 5611,
+          "go_duration_ms": 4092,
+          "python_duration_ms": 3718,
           "go_signals": [
             "robot_detection",
             "akamai"
@@ -1266,8 +1274,8 @@
           ],
           "go_outcome": "passed",
           "python_outcome": "passed",
-          "go_duration_ms": 4386,
-          "python_duration_ms": 4467,
+          "go_duration_ms": 4372,
+          "python_duration_ms": 4473,
           "go_signals": [
             "robot_detection"
           ],
@@ -1284,8 +1292,8 @@
           ],
           "go_outcome": "blocked",
           "python_outcome": "blocked",
-          "go_duration_ms": 4097,
-          "python_duration_ms": 4207,
+          "go_duration_ms": 4166,
+          "python_duration_ms": 4163,
           "go_signals": [
             "cloudflare_challenge",
             "cloudflare_turnstile"
@@ -1304,8 +1312,8 @@
           ],
           "go_outcome": "passed",
           "python_outcome": "passed",
-          "go_duration_ms": 3385,
-          "python_duration_ms": 4411,
+          "go_duration_ms": 3321,
+          "python_duration_ms": 4341,
           "go_signals": [],
           "python_signals": []
         },
@@ -1317,8 +1325,8 @@
           ],
           "go_outcome": "passed",
           "python_outcome": "passed",
-          "go_duration_ms": 3417,
-          "python_duration_ms": 4642,
+          "go_duration_ms": 3381,
+          "python_duration_ms": 4722,
           "go_signals": [
             "captcha",
             "robot_detection",
@@ -1340,8 +1348,8 @@
           ],
           "go_outcome": "passed",
           "python_outcome": "passed",
-          "go_duration_ms": 3646,
-          "python_duration_ms": 3703,
+          "go_duration_ms": 3814,
+          "python_duration_ms": 4723,
           "go_signals": [
             "robot_detection"
           ],
@@ -1359,8 +1367,8 @@
           ],
           "go_outcome": "blocked",
           "python_outcome": "blocked",
-          "go_duration_ms": 3586,
-          "python_duration_ms": 4566,
+          "go_duration_ms": 3359,
+          "python_duration_ms": 3845,
           "go_signals": [
             "http_403"
           ],
@@ -1377,8 +1385,8 @@
           ],
           "go_outcome": "passed",
           "python_outcome": "passed",
-          "go_duration_ms": 4615,
-          "python_duration_ms": 4804,
+          "go_duration_ms": 4493,
+          "python_duration_ms": 5275,
           "go_signals": [
             "captcha",
             "robot_detection"
@@ -1398,8 +1406,8 @@
           ],
           "go_outcome": "blocked",
           "python_outcome": "blocked",
-          "go_duration_ms": 3326,
-          "python_duration_ms": 4448,
+          "go_duration_ms": 3341,
+          "python_duration_ms": 4524,
           "go_signals": [
             "cloudflare_challenge",
             "robot_detection"
@@ -1417,8 +1425,8 @@
           ],
           "go_outcome": "passed",
           "python_outcome": "passed",
-          "go_duration_ms": 4182,
-          "python_duration_ms": 4249,
+          "go_duration_ms": 4230,
+          "python_duration_ms": 4094,
           "go_signals": [
             "captcha",
             "robot_detection",
@@ -1439,8 +1447,8 @@
           ],
           "go_outcome": "passed",
           "python_outcome": "passed",
-          "go_duration_ms": 3395,
-          "python_duration_ms": 4565,
+          "go_duration_ms": 3396,
+          "python_duration_ms": 4452,
           "go_signals": [],
           "python_signals": []
         },
@@ -1453,8 +1461,8 @@
           ],
           "go_outcome": "passed",
           "python_outcome": "passed",
-          "go_duration_ms": 3387,
-          "python_duration_ms": 3303,
+          "go_duration_ms": 3299,
+          "python_duration_ms": 4334,
           "go_signals": [],
           "python_signals": []
         },
@@ -1467,8 +1475,8 @@
           ],
           "go_outcome": "passed",
           "python_outcome": "passed",
-          "go_duration_ms": 3466,
-          "python_duration_ms": 4903,
+          "go_duration_ms": 3511,
+          "python_duration_ms": 4662,
           "go_signals": [],
           "python_signals": []
         },
@@ -1481,8 +1489,8 @@
           ],
           "go_outcome": "passed",
           "python_outcome": "passed",
-          "go_duration_ms": 3347,
-          "python_duration_ms": 4468,
+          "go_duration_ms": 3332,
+          "python_duration_ms": 4475,
           "go_signals": [
             "captcha",
             "robot_detection"
@@ -1501,8 +1509,8 @@
           ],
           "go_outcome": "passed",
           "python_outcome": "passed",
-          "go_duration_ms": 3240,
-          "python_duration_ms": 4325,
+          "go_duration_ms": 3256,
+          "python_duration_ms": 3246,
           "go_signals": [],
           "python_signals": []
         },
@@ -1514,8 +1522,8 @@
           ],
           "go_outcome": "passed",
           "python_outcome": "passed",
-          "go_duration_ms": 3284,
-          "python_duration_ms": 4362,
+          "go_duration_ms": 3294,
+          "python_duration_ms": 4375,
           "go_signals": [],
           "python_signals": []
         },
@@ -1528,8 +1536,8 @@
           ],
           "go_outcome": "passed",
           "python_outcome": "passed",
-          "go_duration_ms": 3431,
-          "python_duration_ms": 3340,
+          "go_duration_ms": 3329,
+          "python_duration_ms": 4623,
           "go_signals": [],
           "python_signals": []
         },
@@ -1542,8 +1550,8 @@
           ],
           "go_outcome": "passed",
           "python_outcome": "passed",
-          "go_duration_ms": 3452,
-          "python_duration_ms": 4458,
+          "go_duration_ms": 3376,
+          "python_duration_ms": 4529,
           "go_signals": [],
           "python_signals": []
         },
@@ -1556,8 +1564,8 @@
           ],
           "go_outcome": "passed",
           "python_outcome": "passed",
-          "go_duration_ms": 3600,
-          "python_duration_ms": 4693,
+          "go_duration_ms": 3513,
+          "python_duration_ms": 4601,
           "go_signals": [
             "robot_detection"
           ],
@@ -1573,15 +1581,15 @@
           ],
           "go_outcome": "passed",
           "python_outcome": "passed",
-          "go_duration_ms": 3366,
-          "python_duration_ms": 4414,
+          "go_duration_ms": 3399,
+          "python_duration_ms": 4362,
           "go_signals": [
-            "robot_detection",
-            "akamai"
+            "captcha",
+            "datadome"
           ],
           "python_signals": [
-            "robot_detection",
-            "akamai"
+            "captcha",
+            "datadome"
           ]
         },
         {
@@ -1592,8 +1600,8 @@
           ],
           "go_outcome": "passed",
           "python_outcome": "passed",
-          "go_duration_ms": 3279,
-          "python_duration_ms": 4363,
+          "go_duration_ms": 3265,
+          "python_duration_ms": 3283,
           "go_signals": [
             "robot_detection"
           ],
@@ -1610,8 +1618,8 @@
           ],
           "go_outcome": "passed",
           "python_outcome": "passed",
-          "go_duration_ms": 4424,
-          "python_duration_ms": 4299,
+          "go_duration_ms": 4385,
+          "python_duration_ms": 4510,
           "go_signals": [],
           "python_signals": []
         },
@@ -1623,8 +1631,8 @@
           ],
           "go_outcome": "passed",
           "python_outcome": "passed",
-          "go_duration_ms": 3360,
-          "python_duration_ms": 4804,
+          "go_duration_ms": 3397,
+          "python_duration_ms": 4362,
           "go_signals": [],
           "python_signals": []
         },
@@ -1636,8 +1644,8 @@
           ],
           "go_outcome": "passed",
           "python_outcome": "passed",
-          "go_duration_ms": 3343,
-          "python_duration_ms": 3361,
+          "go_duration_ms": 3576,
+          "python_duration_ms": 4333,
           "go_signals": [
             "robot_detection"
           ],
@@ -1655,8 +1663,8 @@
           ],
           "go_outcome": "passed",
           "python_outcome": "passed",
-          "go_duration_ms": 3387,
-          "python_duration_ms": 4413,
+          "go_duration_ms": 3352,
+          "python_duration_ms": 4394,
           "go_signals": [],
           "python_signals": []
         },
@@ -1669,8 +1677,8 @@
           ],
           "go_outcome": "passed",
           "python_outcome": "passed",
-          "go_duration_ms": 3451,
-          "python_duration_ms": 4537,
+          "go_duration_ms": 3434,
+          "python_duration_ms": 4687,
           "go_signals": [
             "robot_detection"
           ],
@@ -1687,8 +1695,8 @@
           ],
           "go_outcome": "passed",
           "python_outcome": "passed",
-          "go_duration_ms": 3561,
-          "python_duration_ms": 4693,
+          "go_duration_ms": 3558,
+          "python_duration_ms": 4721,
           "go_signals": [
             "robot_detection"
           ],
@@ -1705,8 +1713,8 @@
           ],
           "go_outcome": "passed",
           "python_outcome": "passed",
-          "go_duration_ms": 4548,
-          "python_duration_ms": 4609,
+          "go_duration_ms": 4364,
+          "python_duration_ms": 4567,
           "go_signals": [
             "robot_detection"
           ],
@@ -1724,8 +1732,8 @@
           ],
           "go_outcome": "passed",
           "python_outcome": "passed",
-          "go_duration_ms": 3512,
-          "python_duration_ms": 4476,
+          "go_duration_ms": 3562,
+          "python_duration_ms": 3775,
           "go_signals": [],
           "python_signals": []
         },
@@ -1740,8 +1748,8 @@
           ],
           "go_outcome": "passed",
           "python_outcome": "passed",
-          "go_duration_ms": 3353,
-          "python_duration_ms": 4760,
+          "go_duration_ms": 3380,
+          "python_duration_ms": 4487,
           "go_signals": [
             "robot_detection"
           ],
@@ -1758,8 +1766,8 @@
           ],
           "go_outcome": "passed",
           "python_outcome": "passed",
-          "go_duration_ms": 3474,
-          "python_duration_ms": 4428,
+          "go_duration_ms": 3402,
+          "python_duration_ms": 4498,
           "go_signals": [],
           "python_signals": []
         },
@@ -1772,8 +1780,8 @@
           ],
           "go_outcome": "passed",
           "python_outcome": "passed",
-          "go_duration_ms": 3511,
-          "python_duration_ms": 4495,
+          "go_duration_ms": 3419,
+          "python_duration_ms": 4649,
           "go_signals": [],
           "python_signals": []
         },
@@ -1787,8 +1795,8 @@
           ],
           "go_outcome": "passed",
           "python_outcome": "passed",
-          "go_duration_ms": 4161,
-          "python_duration_ms": 3937,
+          "go_duration_ms": 4097,
+          "python_duration_ms": 5230,
           "go_signals": [
             "captcha",
             "robot_detection"
@@ -1806,8 +1814,8 @@
           ],
           "go_outcome": "passed",
           "python_outcome": "passed",
-          "go_duration_ms": 4506,
-          "python_duration_ms": 4716,
+          "go_duration_ms": 4523,
+          "python_duration_ms": 4805,
           "go_signals": [],
           "python_signals": []
         },
@@ -1822,8 +1830,8 @@
           ],
           "go_outcome": "passed",
           "python_outcome": "passed",
-          "go_duration_ms": 3682,
-          "python_duration_ms": 4645,
+          "go_duration_ms": 3893,
+          "python_duration_ms": 5219,
           "go_signals": [
             "akamai"
           ],
@@ -1842,8 +1850,8 @@
           ],
           "go_outcome": "passed",
           "python_outcome": "passed",
-          "go_duration_ms": 3465,
-          "python_duration_ms": 5042,
+          "go_duration_ms": 3386,
+          "python_duration_ms": 3505,
           "go_signals": [
             "captcha",
             "robot_detection"
@@ -1862,8 +1870,8 @@
           ],
           "go_outcome": "passed",
           "python_outcome": "passed",
-          "go_duration_ms": 3341,
-          "python_duration_ms": 4403,
+          "go_duration_ms": 3324,
+          "python_duration_ms": 4535,
           "go_signals": [],
           "python_signals": []
         },
@@ -1876,8 +1884,8 @@
           ],
           "go_outcome": "passed",
           "python_outcome": "passed",
-          "go_duration_ms": 3337,
-          "python_duration_ms": 4384,
+          "go_duration_ms": 3757,
+          "python_duration_ms": 3391,
           "go_signals": [],
           "python_signals": []
         },
@@ -1891,8 +1899,8 @@
           ],
           "go_outcome": "passed",
           "python_outcome": "passed",
-          "go_duration_ms": 3414,
-          "python_duration_ms": 4459,
+          "go_duration_ms": 3447,
+          "python_duration_ms": 4561,
           "go_signals": [
             "captcha",
             "robot_detection",
@@ -1915,8 +1923,8 @@
           ],
           "go_outcome": "passed",
           "python_outcome": "passed",
-          "go_duration_ms": 3693,
-          "python_duration_ms": 4845,
+          "go_duration_ms": 3606,
+          "python_duration_ms": 5022,
           "go_signals": [
             "captcha",
             "robot_detection"
@@ -1935,8 +1943,8 @@
           ],
           "go_outcome": "passed",
           "python_outcome": "passed",
-          "go_duration_ms": 3295,
-          "python_duration_ms": 3306,
+          "go_duration_ms": 3307,
+          "python_duration_ms": 4316,
           "go_signals": [
             "robot_detection"
           ],
@@ -1953,8 +1961,8 @@
           ],
           "go_outcome": "passed",
           "python_outcome": "passed",
-          "go_duration_ms": 3762,
-          "python_duration_ms": 4807,
+          "go_duration_ms": 3889,
+          "python_duration_ms": 4957,
           "go_signals": [],
           "python_signals": []
         },
@@ -1967,8 +1975,8 @@
           ],
           "go_outcome": "passed",
           "python_outcome": "passed",
-          "go_duration_ms": 3504,
-          "python_duration_ms": 4581,
+          "go_duration_ms": 3577,
+          "python_duration_ms": 4660,
           "go_signals": [
             "robot_detection"
           ],
@@ -1998,39 +2006,39 @@
       "passed": 95,
       "blocked": 5,
       "failed": 0,
-      "wall_ms": 370799,
-      "target_duration_ms": 367206,
-      "avg_target_ms": 3672,
-      "peak_rss_mib": 4483.44140625,
-      "peak_cpu_percent": 391.09999999999997,
-      "report_json_bytes": 43088,
-      "report_markdown_bytes": 8928,
-      "report_json_estimated_tokens": 10772,
-      "report_markdown_estimated_tokens": 2232,
-      "report_total_estimated_tokens": 13004
+      "wall_ms": 371006,
+      "target_duration_ms": 367886,
+      "avg_target_ms": 3678,
+      "peak_rss_mib": 4141.51953125,
+      "peak_cpu_percent": 532.6,
+      "report_json_bytes": 43042,
+      "report_markdown_bytes": 8934,
+      "report_json_estimated_tokens": 10761,
+      "report_markdown_estimated_tokens": 2234,
+      "report_total_estimated_tokens": 12995
     },
     "python": {
       "total": 100,
       "passed": 95,
       "blocked": 5,
       "failed": 0,
-      "wall_ms": 437249,
-      "target_duration_ms": 436474,
-      "avg_target_ms": 4364,
-      "peak_rss_mib": 4498.59375,
-      "peak_cpu_percent": 448.2,
-      "report_json_bytes": 176841,
-      "report_markdown_bytes": 8921,
-      "report_json_estimated_tokens": 44211,
-      "report_markdown_estimated_tokens": 2231,
-      "report_total_estimated_tokens": 46442
+      "wall_ms": 445513,
+      "target_duration_ms": 444740,
+      "avg_target_ms": 4447,
+      "peak_rss_mib": 5096.984375,
+      "peak_cpu_percent": 455.40000000000003,
+      "report_json_bytes": 264957,
+      "report_markdown_bytes": 8914,
+      "report_json_estimated_tokens": 66240,
+      "report_markdown_estimated_tokens": 2229,
+      "report_total_estimated_tokens": 68469
     },
     "ratios": {
-      "wall_time": 0.8480270966886145,
-      "target_duration": 0.8413009709627607,
-      "peak_rss": 0.9966317599249765,
-      "peak_cpu": 0.8726015171798304,
-      "report_tokens": 0.28000516773610096
+      "wall_time": 0.8327613335637792,
+      "target_duration": 0.8271934163781085,
+      "peak_rss": 0.8125431091300922,
+      "peak_cpu": 1.1695212999560824,
+      "report_tokens": 0.1897939213366633
     },
     "outcome_mismatch_count": 0
   }

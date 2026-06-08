@@ -452,6 +452,27 @@ func TestDefaultDoctorWarnsWhenLinuxDisplayIsMissing(t *testing.T) {
 	}
 }
 
+func TestDefaultDoctorWarnsForUnverifiedOfflineCamoufoxPath(t *testing.T) {
+	restoreInstall := replaceDefaultDoctorEnsureInstalled(t, func(context.Context) error { return nil })
+	defer restoreInstall()
+	restoreEnv := replaceDoctorDisplayEnvironment(t, "darwin", map[string]string{
+		sidecar.EnvCamoufoxPath:                "/browser",
+		sidecar.EnvTrustUnverifiedCamoufoxPath: "1",
+	}, nil)
+	defer restoreEnv()
+
+	report, err := defaultDoctor(context.Background(), DoctorRequest{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.CamoufoxBin.Path != "/browser" || !strings.Contains(report.CamoufoxBin.Warning, sidecar.EnvTrustUnverifiedCamoufoxPath) {
+		t.Fatalf("doctor camoufox bin check = %#v", report.CamoufoxBin)
+	}
+	if report.hasFailure() {
+		t.Fatalf("unverified offline path warning should not make doctor fail: %#v", report)
+	}
+}
+
 func TestDoctorDisplayCheckVariants(t *testing.T) {
 	cases := []struct {
 		name        string

@@ -90,6 +90,14 @@ def should_scan_text(path: Path) -> bool:
     return path.suffix in TEXT_SUFFIXES or path.name in TEXT_FILE_NAMES
 
 
+def should_scan_forbidden_text(path: Path) -> bool:
+    rel = path.as_posix()
+    return rel not in {
+        "internal/sidecar/requirements/camoufox.txt",
+        "internal/sidecar/requirements/pip.txt",
+    }
+
+
 def rel_files(root: Path) -> list[Path]:
     files = []
     for path in root.rglob("*"):
@@ -218,9 +226,10 @@ def check(root: Path) -> list[str]:
         except UnicodeDecodeError as err:
             failures.append(f"invalid UTF-8 public text in {rel.as_posix()}: {err}")
             continue
-        for needle in sorted(FORBIDDEN_TEXT):
-            if needle in text:
-                failures.append(f"forbidden text {needle!r} in {rel.as_posix()}")
+        if should_scan_forbidden_text(rel):
+            for needle in sorted(FORBIDDEN_TEXT):
+                if needle in text:
+                    failures.append(f"forbidden text {needle!r} in {rel.as_posix()}")
         failures.extend(leak_failures(rel, text))
         if "\u2014" in text:
             failures.append(f"em dash found in public text: {rel.as_posix()}")

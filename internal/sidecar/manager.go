@@ -2,6 +2,7 @@ package sidecar
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -14,6 +15,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -42,10 +44,42 @@ type Manager struct {
 	lock     *ProfileLock
 	proxy    *http.Server
 	proxyLn  net.Listener
+	pidfile  string
 }
 
 func New(cfg Config) *Manager {
+	if cfg.Runtime == "" {
+		cfg.Runtime = RuntimePython
+	}
 	return &Manager{cfg: cfg, state: StateIdle, done: make(chan struct{})}
+}
+
+func (m *Manager) launchCommand(ctx context.Context, python, runtimeName string) (*exec.Cmd, error) {
+	switch runtimeName {
+	case RuntimePython:
+		launchJSON, err := launchArgsJSON(m.cfg)
+		if err != nil {
+			return nil, err
+		}
+		launcher, err := writeLauncher(m.cfg.VenvDir)
+		if err != nil {
+			return nil, err
+		}
+		cmd := exec.Command(python, "-u", launcher)
+		cmd.Stdin = bytes.NewReader(launchJSON)
+		return cmd, nil
+	case RuntimeNodeDirect:
+		spec, err := buildNodeDirectSpec(ctx, python, m.cfg)
+		if err != nil {
+			return nil, err
+		}
+		cmd := exec.Command(spec.NodeJS, spec.LaunchScript)
+		cmd.Dir = spec.CWD
+		cmd.Stdin = strings.NewReader(spec.StdinBase64)
+		return cmd, nil
+	default:
+		return nil, fmt.Errorf("%w: unsupported sidecar runtime %q", ErrSidecarStart, runtimeName)
+	}
 }
 
 func (m *Manager) Start(ctx context.Context) (string, error) {
@@ -78,6 +112,14 @@ func (m *Manager) Start(ctx context.Context) (string, error) {
 		m.lock = lock
 		m.mu.Unlock()
 	}
+	runtimeName := m.cfg.Runtime
+	if runtimeName == "" {
+		runtimeName = RuntimePython
+	}
+	if runtimeName != RuntimePython && runtimeName != RuntimeNodeDirect {
+		m.setDead()
+		return "", fmt.Errorf("%w: unsupported sidecar runtime %q", ErrSidecarStart, runtimeName)
+	}
 	python, err := VenvPython(m.cfg.VenvDir)
 	if err != nil {
 		m.setDead()
@@ -94,12 +136,11 @@ func (m *Manager) Start(ctx context.Context) (string, error) {
 			return "", err
 		}
 	}
-	launcher, err := WriteLauncher(m.cfg.VenvDir, m.cfg)
+	cmd, err := m.launchCommand(readyCtx, python, runtimeName)
 	if err != nil {
 		m.setDead()
 		return "", err
 	}
-	cmd := exec.Command(python, "-u", launcher)
 	cmd.Env = append(os.Environ(), m.cfg.ExtraEnv...)
 	setProcessGroup(cmd)
 	stdout, err := sidecarStdoutPipe(cmd)
@@ -124,6 +165,7 @@ func (m *Manager) Start(ctx context.Context) (string, error) {
 	}
 	m.mu.Lock()
 	m.cmd = cmd
+	m.info.Runtime = runtimeName
 	m.info.PID = cmd.Process.Pid
 	m.mu.Unlock()
 	go m.forwardDiagnostics(stderr)
@@ -134,11 +176,15 @@ func (m *Manager) Start(ctx context.Context) (string, error) {
 			go m.wait()
 		}
 	}
-	if err := sidecarWritePidfile(m.cfg.VenvDir, cmd.Process.Pid); err != nil {
+	pidfile, err := sidecarWritePidfile(m.cfg.VenvDir, cmd.Process.Pid)
+	if err != nil {
 		startWait()
 		m.Stop(context.Background())
 		return "", err
 	}
+	m.mu.Lock()
+	m.pidfile = pidfile
+	m.mu.Unlock()
 
 	endpoint, err := ParseEndpoint(readyCtx, stdout, timeout)
 	startWait()
@@ -268,7 +314,8 @@ func (m *Manager) setDead() {
 	proxyLn := m.proxyLn
 	m.proxy = nil
 	m.proxyLn = nil
-	venvDir := m.cfg.VenvDir
+	pidfile := m.pidfile
+	m.pidfile = ""
 	m.mu.Unlock()
 	if proxy != nil {
 		_ = proxy.Close()
@@ -279,7 +326,7 @@ func (m *Manager) setDead() {
 	if lock != nil {
 		_ = lock.Release()
 	}
-	removePidfile(venvDir)
+	removePidfile(pidfile)
 	if !alreadyDead {
 		closeOnce(m.done)
 	}
@@ -345,12 +392,11 @@ func (m *Manager) startFilteringProxy(ctx context.Context) error {
 	return nil
 }
 
-func WriteLauncher(venvDir string, cfg Config) (string, error) {
-	if venvDir == "" {
-		venvDir = DefaultCacheDir()
+func launchArgsJSON(cfg Config) ([]byte, error) {
+	launchArgs := map[string]any{
+		"env":      browserLaunchEnv(cfg),
+		"headless": cfg.Headless != 1,
 	}
-	path := filepath.Join(venvDir, "gomoufox_sidecar_launcher.py")
-	launchArgs := map[string]any{"headless": cfg.Headless != 1}
 	if cfg.Persistent {
 		launchArgs["persistent_context"] = true
 		launchArgs["user_data_dir"] = cfg.UserDataDir
@@ -428,18 +474,65 @@ func WriteLauncher(venvDir string, cfg Config) (string, error) {
 	if cfg.DisableCOOP {
 		launchArgs["disable_coop"] = true
 	}
-	launchJSON, err := json.Marshal(launchArgs)
-	if err != nil {
+	return json.Marshal(launchArgs)
+}
+
+func browserLaunchEnv(cfg Config) map[string]string {
+	env := map[string]string{}
+	for _, pair := range os.Environ() {
+		key, value, ok := strings.Cut(pair, "=")
+		if !ok || strings.TrimSpace(key) == "" || sensitiveBrowserEnvKey(key) {
+			continue
+		}
+		env[key] = value
+	}
+	for _, pair := range cfg.ExtraEnv {
+		key, value, ok := strings.Cut(pair, "=")
+		if !ok || strings.TrimSpace(key) == "" {
+			continue
+		}
+		env[key] = value
+	}
+	return env
+}
+
+func sensitiveBrowserEnvKey(key string) bool {
+	upper := strings.ToUpper(key)
+	for _, prefix := range []string{"ANTHROPIC_", "AWS_", "CLAUDE_", "CODEX_", "GITHUB_", "HASP_", "HOLMES_", "OPENAI_"} {
+		if strings.HasPrefix(upper, prefix) {
+			return true
+		}
+	}
+	for _, needle := range []string{"API_KEY", "AUTH", "COOKIE", "CREDENTIAL", "PASSWORD", "SECRET", "TOKEN"} {
+		if strings.Contains(upper, needle) {
+			return true
+		}
+	}
+	return false
+}
+
+func WriteLauncher(venvDir string, cfg Config) (string, error) {
+	if _, err := launchArgsJSON(cfg); err != nil {
 		return "", err
 	}
-	content := []byte(fmt.Sprintf(`import base64
+	return writeLauncher(venvDir)
+}
+
+func writeLauncher(venvDir string) (string, error) {
+	if venvDir == "" {
+		venvDir = DefaultCacheDir()
+	}
+	path := filepath.Join(venvDir, "gomoufox_sidecar_launcher.py")
+	content := []byte(`import base64
+import contextlib
 from pathlib import Path
 import subprocess
+import sys
 import orjson
 from browserforge.fingerprints import Screen
 from camoufox.server import LAUNCH_SCRIPT, get_nodejs, launch_options, to_camel_case_dict
 
-launch_kwargs = orjson.loads(%q)
+launch_kwargs = orjson.loads(sys.stdin.buffer.read())
 persistent_user_data_dir = None
 if launch_kwargs.pop("persistent_context", False):
     persistent_user_data_dir = launch_kwargs.pop("user_data_dir", None)
@@ -454,7 +547,8 @@ if isinstance(window_value, dict):
 webgl_value = launch_kwargs.get("webgl_config")
 if isinstance(webgl_value, dict):
     launch_kwargs["webgl_config"] = (webgl_value.get("vendor"), webgl_value.get("renderer"))
-config = launch_options(**launch_kwargs)
+with contextlib.redirect_stdout(sys.stderr):
+    config = launch_options(**launch_kwargs)
 if config.get("proxy") is None:
     config.pop("proxy", None)
 nodejs = get_nodejs()
@@ -468,7 +562,7 @@ if process.stdin:
     process.stdin.write(base64.b64encode(data).decode())
     process.stdin.close()
 raise SystemExit(process.wait())
-`, string(launchJSON)))
+`)
 	if err := safefile.WriteFile0600(path, content, true); err != nil {
 		return "", err
 	}

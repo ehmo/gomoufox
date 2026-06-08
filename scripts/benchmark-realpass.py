@@ -31,9 +31,17 @@ def main() -> int:
     parser.add_argument("--load-state-timeout", type=float, default=0.0, help="extra load-state wait after settle; 0 disables")
     parser.add_argument("--content-max-bytes", type=int, default=250000, help="maximum HTML bytes fetched for classification; 0 fetches full content")
     parser.add_argument("--sample-interval", type=float, default=0.5)
+    parser.add_argument(
+        "--run-order",
+        choices=("alternate", "go-first", "python-first"),
+        default="alternate",
+        help="runtime execution order for each loop; alternate swaps order on even loops",
+    )
     parser.add_argument("--python", default="")
     parser.add_argument("--gomoufox-realpass", default="", help="prebuilt gomoufox-realpass binary; default builds one under --out")
     parser.add_argument("--go-report-style", choices=("compact", "full"), default="compact")
+    parser.add_argument("--go-sidecar-runtime", choices=("python", "node-direct"), default="python")
+    parser.add_argument("--go-venv-dir", default="", help="custom gomoufox venv for the Go runner; default uses gomoufox cache")
     parser.add_argument("--reuse-browser", dest="reuse_browser", action="store_true", default=True, help="reuse one browser per runtime loop; each target still gets a fresh page context")
     parser.add_argument("--no-reuse-browser", dest="reuse_browser", action="store_false")
     parser.add_argument("--screenshots", action="store_true")
@@ -95,11 +103,15 @@ def main() -> int:
             f"{args.sample_interval:g}s",
             "--report-style",
             args.go_report_style,
+            "--sidecar-runtime",
+            args.go_sidecar_runtime,
             f"--screenshots={str(args.screenshots).lower()}",
             "--unsafe-direct-network",
             "--generated-persona",
             "--max-failed=-1",
         ]
+        if args.go_venv_dir:
+            go_cmd += ["--venv-dir", args.go_venv_dir]
         if args.reuse_browser:
             go_cmd.append("--reuse-browser")
         for target in target_args:
@@ -128,11 +140,18 @@ def main() -> int:
             python_cmd.append("--reuse-browser")
         for target in target_args:
             python_cmd += ["--target", target]
-        commands.extend([go_cmd, python_cmd])
+        run_order = runtime_order(args.run_order, loop)
+        for runtime in run_order:
+            commands.append(go_cmd if runtime == "go" else python_cmd)
         if args.dry_run:
             continue
-        go_wall_ms = run_timed(go_cmd)
-        python_wall_ms = run_timed(python_cmd)
+        go_wall_ms = None
+        python_wall_ms = None
+        for runtime in run_order:
+            if runtime == "go":
+                go_wall_ms = run_timed(go_cmd)
+            else:
+                python_wall_ms = run_timed(python_cmd)
         runs.append(
             build_run_from_reports(
                 loop,
@@ -140,6 +159,7 @@ def main() -> int:
                 python_out / "report.json",
                 go_wall_ms=go_wall_ms,
                 python_wall_ms=python_wall_ms,
+                run_order=run_order,
             )
         )
 
@@ -288,7 +308,15 @@ def run_timed(command):
     return int((time.monotonic() - started) * 1000)
 
 
-def build_run_from_reports(loop, go_path, python_path, go_wall_ms=None, python_wall_ms=None, target_metadata=None):
+def runtime_order(order, loop):
+    if order == "python-first":
+        return ["python", "go"]
+    if order == "alternate" and loop % 2 == 0:
+        return ["python", "go"]
+    return ["go", "python"]
+
+
+def build_run_from_reports(loop, go_path, python_path, go_wall_ms=None, python_wall_ms=None, target_metadata=None, run_order=None):
     go_report = read_json(go_path)
     python_report = read_json(python_path)
     target_metadata = target_metadata or {}
@@ -297,6 +325,7 @@ def build_run_from_reports(loop, go_path, python_path, go_wall_ms=None, python_w
     outcomes = target_outcomes(go_report, python_report, target_metadata)
     return {
         "loop": loop,
+        "run_order": run_order or ["go", "python"],
         "go_report": str(go_path),
         "python_report": str(python_path),
         "options": options_from_reports(go_report, python_report),
@@ -494,7 +523,10 @@ def benchmark_options(args, runs):
         "load_state_timeout_seconds": args.load_state_timeout,
         "content_max_bytes": args.content_max_bytes,
         "sample_interval_seconds": args.sample_interval,
+        "run_order": args.run_order,
         "go_runner": "existing_report" if args.go_report else ("prebuilt_binary" if args.gomoufox_realpass else "built_binary"),
+        "go_sidecar_runtime": args.go_sidecar_runtime,
+        "go_custom_venv": bool(args.go_venv_dir),
         "screenshots": args.screenshots,
         "max_targets": args.max_targets,
     }
@@ -550,6 +582,10 @@ def options_from_reports(go_report, python_report):
         out["content_max_bytes"] = int(go_content_max)
     if go_options.get("report_style"):
         out["go_report_style"] = go_options.get("report_style")
+    if go_options.get("sidecar_runtime"):
+        out["go_sidecar_runtime"] = go_options.get("sidecar_runtime")
+    if go_options.get("custom_venv"):
+        out["go_custom_venv"] = True
     return out
 
 
@@ -652,7 +688,10 @@ def markdown_report(benchmark):
         f"- Load-state timeout: {benchmark['options'].get('load_state_timeout_seconds', 0):g}s",
         f"- Content max bytes: {fmt_int(benchmark['options'].get('content_max_bytes', 0))}",
         f"- Sample interval: {benchmark['options']['sample_interval_seconds']:g}s",
+        f"- Run order: {benchmark['options'].get('run_order', 'existing-reports')}",
         f"- Go runner: {go_runner_label(benchmark['options'].get('go_runner', 'built_binary'))}",
+        f"- Go sidecar runtime: {benchmark['options'].get('go_sidecar_runtime', 'python')}",
+        f"- Go custom venv: {yes_no(benchmark['options'].get('go_custom_venv'))}",
         f"- Reuse browser: {yes_no(benchmark['options'].get('reuse_browser'))}",
         f"- Go report style: {benchmark['options'].get('go_report_style', 'compact')}",
         "",
@@ -682,17 +721,35 @@ def markdown_report(benchmark):
         "scripts/benchmark-realpass.py --mode extended --go-report-style compact --out dist/benchmarks/extended",
         "```",
         "",
+        "Run the local fingerprint audit when changing Camoufox pins, launch options,",
+        "Firefox prefs, node-direct, WebGL, locale, timezone, screen, fonts, or canvas",
+        "handling:",
+        "",
+        "```bash",
+        "scripts/fingerprint-audit.py",
+        "```",
+        "",
+        "The audit serves one local page and records Python Camoufox, gomoufox with the",
+        "Python sidecar, and gomoufox with node-direct. Release gating compares the two",
+        "gomoufox runtimes and fails on any unallowed drift in JS-visible fields such as",
+        "UA, platform, languages, screen, timezone, WebGL, WebRTC, fonts, and canvas. The",
+        "Python Camoufox row is context, not the fail-closed comparator, because its",
+        "generated persona can differ on a single local run.",
+        "",
         "## Pass/Fail Rules",
         "",
         "- Go-only blocked, failed, or missing targets block release.",
+        "- Go-only JS-visible fingerprint drift between gomoufox Python sidecar and gomoufox node-direct blocks release unless the changed field is explicitly allowlisted with evidence.",
         "- Go/Python outcome mismatches that reproduce on retry block release.",
         "- Shared Go+Python blocked or failed targets are reported as site or upstream Camoufox behavior, not a gomoufox-only failure.",
         "- Known recurring shared blocks should stay in the explicit release-gate allowlist.",
-        "- In release mode, a new shared block or failure gets one focused retry; that retry must confirm Go/Python outcome parity and stay under absolute RSS and CPU caps.",
-        "- The full run still must pass required-target, resource-ratio, timing-ratio, and report-token budgets after the retry confirms parity.",
+        "- In release mode, a new shared block, failure, or performance outlier gets one focused retry.",
+        "- The retry must confirm Go/Python outcome parity and stay under absolute RSS and CPU caps.",
+        "- The gate merges focused retry measurements back into the full report and reruns the strict required-target, resource-ratio, timing-ratio, and report-token checks against that merged evidence.",
         f"- Release gate defaults block peak RSS above {fmt_int(6000)} MiB, peak CPU above 900%, Go RSS above Python * 1.50, and Go CPU above Python * 1.50.",
         "- Full and release gates block Go wall time above Python * 1.05, Go target duration above Python * 1.05, and Go report tokens above Python * 0.50.",
         "- Smoke mode is a functional parity check; its wall time is startup dominated.",
+        "- Use `--loops 2 --run-order alternate` when investigating timing changes so neither runtime always runs second.",
         "",
         "## Summary",
         "",

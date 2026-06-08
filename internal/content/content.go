@@ -6,7 +6,6 @@ import (
 	"net/url"
 	"strings"
 
-	readability "github.com/go-shiori/go-readability"
 	"golang.org/x/net/html"
 )
 
@@ -50,16 +49,27 @@ func Extract(rawHTML, bodyText, pageURL string, format Format, maxBytes int) (Re
 }
 
 func markdownFromHTML(rawHTML, bodyText, pageURL string) (string, string) {
-	parsedURL, _ := url.Parse(pageURL)
-	article, err := readability.FromReader(strings.NewReader(rawHTML), parsedURL)
-	if err == nil && len(strings.TrimSpace(article.TextContent)) >= 100 {
-		return renderMarkdown(article.Content), "readability"
+	doc, err := html.Parse(strings.NewReader(rawHTML))
+	if err == nil {
+		baseURL, _ := url.Parse(pageURL)
+		if article := findArticleNode(doc); article != nil {
+			markdown := renderMarkdownNode(article, baseURL)
+			if markdown != "" {
+				return markdown, "article"
+			}
+		}
 	}
 	return strings.TrimSpace(bodyText), "fallback"
 }
 
 func renderMarkdown(fragment string) string {
 	return renderMarkdownFromReader(fragment, strings.NewReader("<html><body>"+fragment+"</body></html>"))
+}
+
+func renderMarkdownNode(node *html.Node, baseURL *url.URL) string {
+	var b strings.Builder
+	renderNodeWithBase(&b, node, 0, baseURL)
+	return normalizeBlankLines(b.String())
 }
 
 func renderMarkdownFromReader(fallback string, r io.Reader) string {
@@ -71,13 +81,17 @@ func renderMarkdownFromReader(fallback string, r io.Reader) string {
 }
 
 func renderMarkdownDocument(doc *html.Node, fallback string) string {
+	return renderMarkdownDocumentWithBase(doc, fallback, nil)
+}
+
+func renderMarkdownDocumentWithBase(doc *html.Node, fallback string, baseURL *url.URL) string {
 	var b strings.Builder
 	body := findElement(doc, "body")
 	if body == nil {
 		return strings.TrimSpace(fallback)
 	}
 	for node := body.FirstChild; node != nil; node = node.NextSibling {
-		renderNode(&b, node, 0)
+		renderNodeWithBase(&b, node, 0, baseURL)
 	}
 	return normalizeBlankLines(b.String())
 }
@@ -94,7 +108,82 @@ func findElement(n *html.Node, name string) *html.Node {
 	return nil
 }
 
+func findArticleNode(doc *html.Node) *html.Node {
+	var best *html.Node
+	bestScore := 0
+	var walk func(*html.Node)
+	walk = func(n *html.Node) {
+		if n == nil || ignoredElement(n) {
+			return
+		}
+		if n.Type == html.ElementNode {
+			score := articleScore(n)
+			if score > 0 {
+				textLen := readableTextLen(n)
+				if textLen >= 100 && score+textLen > bestScore {
+					best = n
+					bestScore = score + textLen
+				}
+			}
+		}
+		for c := n.FirstChild; c != nil; c = c.NextSibling {
+			walk(c)
+		}
+	}
+	walk(doc)
+	return best
+}
+
+func articleScore(n *html.Node) int {
+	switch n.Data {
+	case "article":
+		return 1000
+	case "main":
+		return 900
+	}
+	if attr(n, "role") == "main" {
+		return 850
+	}
+	idClass := strings.ToLower(attr(n, "id") + " " + attr(n, "class"))
+	for _, marker := range []string{"article", "content", "post", "entry", "story"} {
+		if strings.Contains(idClass, marker) {
+			return 500
+		}
+	}
+	return 0
+}
+
+func readableTextLen(n *html.Node) int {
+	if n == nil || ignoredElement(n) {
+		return 0
+	}
+	if n.Type == html.TextNode {
+		return len(strings.Join(strings.Fields(n.Data), " "))
+	}
+	total := 0
+	for c := n.FirstChild; c != nil; c = c.NextSibling {
+		total += readableTextLen(c)
+	}
+	return total
+}
+
+func ignoredElement(n *html.Node) bool {
+	if n.Type != html.ElementNode {
+		return false
+	}
+	switch n.Data {
+	case "script", "style", "noscript", "template", "nav", "header", "footer", "aside", "form":
+		return true
+	default:
+		return false
+	}
+}
+
 func renderNode(b *strings.Builder, n *html.Node, depth int) {
+	renderNodeWithBase(b, n, depth, nil)
+}
+
+func renderNodeWithBase(b *strings.Builder, n *html.Node, depth int, baseURL *url.URL) {
 	if n.Type == html.TextNode {
 		text := strings.Join(strings.Fields(n.Data), " ")
 		if text != "" {
@@ -105,8 +194,11 @@ func renderNode(b *strings.Builder, n *html.Node, depth int) {
 	}
 	if n.Type != html.ElementNode {
 		for c := n.FirstChild; c != nil; c = c.NextSibling {
-			renderNode(b, c, depth)
+			renderNodeWithBase(b, c, depth, baseURL)
 		}
+		return
+	}
+	if ignoredElement(n) {
 		return
 	}
 	switch n.Data {
@@ -115,24 +207,24 @@ func renderNode(b *strings.Builder, n *html.Node, depth int) {
 		b.WriteString("\n\n")
 		b.WriteString(strings.Repeat("#", level))
 		b.WriteByte(' ')
-		renderChildren(b, n, depth)
+		renderChildrenWithBase(b, n, depth, baseURL)
 		b.WriteString("\n\n")
 	case "p", "div", "section", "article":
 		b.WriteString("\n\n")
-		renderChildren(b, n, depth)
+		renderChildrenWithBase(b, n, depth, baseURL)
 		b.WriteString("\n\n")
 	case "br":
 		b.WriteByte('\n')
 	case "ul", "ol":
 		b.WriteString("\n")
-		renderChildren(b, n, depth+1)
+		renderChildrenWithBase(b, n, depth+1, baseURL)
 		b.WriteString("\n")
 	case "li":
 		b.WriteString("\n- ")
-		renderChildren(b, n, depth)
+		renderChildrenWithBase(b, n, depth, baseURL)
 	case "a":
 		text := childText(n)
-		href := attr(n, "href")
+		href := resolvedHref(n, baseURL)
 		if text != "" && href != "" {
 			b.WriteString("[")
 			b.WriteString(text)
@@ -141,7 +233,7 @@ func renderNode(b *strings.Builder, n *html.Node, depth int) {
 			b.WriteString(") ")
 			return
 		}
-		renderChildren(b, n, depth)
+		renderChildrenWithBase(b, n, depth, baseURL)
 	case "strong", "b":
 		b.WriteString("**")
 		b.WriteString(childText(n))
@@ -151,13 +243,17 @@ func renderNode(b *strings.Builder, n *html.Node, depth int) {
 		b.WriteString(childText(n))
 		b.WriteString("_ ")
 	default:
-		renderChildren(b, n, depth)
+		renderChildrenWithBase(b, n, depth, baseURL)
 	}
 }
 
 func renderChildren(b *strings.Builder, n *html.Node, depth int) {
+	renderChildrenWithBase(b, n, depth, nil)
+}
+
+func renderChildrenWithBase(b *strings.Builder, n *html.Node, depth int, baseURL *url.URL) {
 	for c := n.FirstChild; c != nil; c = c.NextSibling {
-		renderNode(b, c, depth)
+		renderNodeWithBase(b, c, depth, baseURL)
 	}
 }
 
@@ -184,6 +280,18 @@ func attr(n *html.Node, name string) string {
 		}
 	}
 	return ""
+}
+
+func resolvedHref(n *html.Node, baseURL *url.URL) string {
+	href := strings.TrimSpace(attr(n, "href"))
+	if href == "" || baseURL == nil {
+		return href
+	}
+	parsed, err := url.Parse(href)
+	if err != nil {
+		return href
+	}
+	return baseURL.ResolveReference(parsed).String()
 }
 
 func normalizeBlankLines(s string) string {

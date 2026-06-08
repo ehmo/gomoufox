@@ -1256,8 +1256,19 @@ func defaultDoctor(ctx context.Context, req DoctorRequest) (DoctorReport, error)
 	}
 	report.CamoufoxPkg = Check{OK: true, Version: sidecar.RequiredCamoufox}
 	report.Playwright = Check{OK: true, PkgVersion: sidecar.RequiredPlaywright, DriverVersion: sidecar.RequiredPlaywright, Match: &match}
-	report.CamoufoxBin = Check{OK: true}
+	report.CamoufoxBin = doctorCamoufoxBinCheck()
 	return report, nil
+}
+
+func doctorCamoufoxBinCheck() Check {
+	check := Check{OK: true}
+	if path, ok := doctorLookupEnv(sidecar.EnvCamoufoxPath); ok && strings.TrimSpace(path) != "" {
+		check.Path = path
+	}
+	if trust, ok := doctorLookupEnv(sidecar.EnvTrustUnverifiedCamoufoxPath); ok && trust == "1" && check.Path != "" {
+		check.Warning = "using unverified offline Camoufox path; manifest verification is disabled by " + sidecar.EnvTrustUnverifiedCamoufoxPath + "=1"
+	}
+	return check
 }
 
 func doctorDisplayCheck() Check {

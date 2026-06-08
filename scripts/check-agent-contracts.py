@@ -80,6 +80,9 @@ POSITIONING_OVERCLAIMS = {
     "passes cloudflare": "Use measured Go/Python Camoufox parity language, not Cloudflare pass guarantees",
     "passed a cloudflare": "Use measured Go/Python Camoufox parity language, not Cloudflare pass guarantees",
     "bypass cloudflare": "Use measured Go/Python Camoufox parity language, not Cloudflare bypass guarantees",
+    "python-free": "Python remains required until the Camoufox launch-options dependency is replaced and parity-gated",
+    "without python": "Python remains required until the Camoufox launch-options dependency is replaced and parity-gated",
+    "python is optional": "Python remains required until the Camoufox launch-options dependency is replaced and parity-gated",
 }
 
 

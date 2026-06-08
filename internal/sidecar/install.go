@@ -62,9 +62,14 @@ func EnsureCamoufox(ctx context.Context, venvDir string, opts InstallOptions) er
 		return err
 	}
 	if opts.ForceReinstall || !compatibleInstalled(ctx, venvDir) {
-		cmd := exec.CommandContext(ctx, pip, "install", "camoufox[geoip]=="+requiredCamoufox, "playwright=="+RequiredPlaywright)
+		lockFile, cleanup, err := materializePythonRequirementsLock(camoufoxRequirementsLock)
+		if err != nil {
+			return fmt.Errorf("load locked camoufox/playwright requirements: %w", err)
+		}
+		defer cleanup()
+		cmd := exec.CommandContext(ctx, pip, hashLockedPipInstallArgs(lockFile, false)...)
 		if out, err := runInstallCommand(cmd, opts.Verbose); err != nil {
-			return fmt.Errorf("pip install pinned camoufox/playwright: %w: %s", err, string(out))
+			return fmt.Errorf("pip install locked camoufox/playwright: %w: %s", err, string(out))
 		}
 	}
 	return nil
@@ -125,7 +130,12 @@ func EnsureVenv(ctx context.Context, pythonBin, venvDir string) error {
 	if err != nil {
 		return err
 	}
-	cmd = exec.CommandContext(ctx, pip, "install", "--upgrade", "pip=="+RequiredPip)
+	lockFile, cleanup, err := materializePythonRequirementsLock(pipRequirementsLock)
+	if err != nil {
+		return fmt.Errorf("load locked pip requirements: %w", err)
+	}
+	defer cleanup()
+	cmd = exec.CommandContext(ctx, pip, hashLockedPipInstallArgs(lockFile, true)...)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("upgrade pip: %w: %s", err, string(out))
 	}

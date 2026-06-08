@@ -4,6 +4,21 @@
 
 - Nothing yet.
 
+## v0.1.1
+
+- Replace the `go-readability` dependency chain with gomoufox's built-in
+  article/main Markdown extractor.
+- Lower the Linux `gomoufox` release binary from 11,038,846 bytes to 9,732,222
+  bytes in the omarchy release gate.
+- Refresh the checked 100-target Go/Python Camoufox benchmark from the June 8,
+  2026 omarchy release gate: 95 passed, 5 shared blocked, 0 failed, and zero
+  outcome mismatches.
+- Keep benchmark docs tied to the generated benchmark report and preserve the
+  fingerprint-audit release guidance during benchmark refreshes.
+- Generate and stage the Homebrew formula during public repo publication so new
+  release tags do not require a manual formula edit before the public release
+  workflow runs.
+
 ## v0.1.0
 
 - Ship the first Go wrapper for the pinned Camoufox stack.

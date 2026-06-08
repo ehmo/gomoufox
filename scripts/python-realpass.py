@@ -15,6 +15,74 @@ from camoufox.sync_api import Camoufox
 
 CATALOG_PATH = pathlib.Path(__file__).with_name("realpass-targets.json")
 
+FINGERPRINT_DETECTOR_EXPRESSION = r"""() => {
+const canvas = document.createElement("canvas");
+canvas.width = 240;
+canvas.height = 60;
+const ctx = canvas.getContext("2d");
+if (ctx) {
+  ctx.textBaseline = "top";
+  ctx.font = "16px Arial";
+  ctx.fillStyle = "#f60";
+  ctx.fillRect(0, 0, 120, 40);
+  ctx.fillStyle = "#069";
+  ctx.fillText("gomoufox fingerprint audit", 4, 8);
+}
+const glCanvas = document.createElement("canvas");
+const gl = glCanvas.getContext("webgl") || glCanvas.getContext("experimental-webgl");
+let webgl = {supported: false};
+if (gl) {
+  const debug = gl.getExtension("WEBGL_debug_renderer_info");
+  webgl = {
+    supported: true,
+    vendor: gl.getParameter(gl.VENDOR),
+    renderer: gl.getParameter(gl.RENDERER),
+    unmaskedVendor: debug ? gl.getParameter(debug.UNMASKED_VENDOR_WEBGL) : null,
+    unmaskedRenderer: debug ? gl.getParameter(debug.UNMASKED_RENDERER_WEBGL) : null
+  };
+}
+const fontNames = ["Arial", "Times New Roman", "Courier New", "Helvetica", "Segoe UI", "Noto Sans"];
+const fonts = {};
+if (document.fonts && document.fonts.check) {
+  for (const name of fontNames) {
+    fonts[name] = document.fonts.check("12px \"" + name + "\"");
+  }
+}
+const dataURL = canvas.toDataURL();
+return {
+  webdriver: navigator.webdriver,
+  userAgent: navigator.userAgent,
+  appVersion: navigator.appVersion,
+  platform: navigator.platform,
+  vendor: navigator.vendor,
+  productSub: navigator.productSub,
+  languages: navigator.languages,
+  hardwareConcurrency: navigator.hardwareConcurrency,
+  deviceMemory: navigator.deviceMemory || null,
+  maxTouchPoints: navigator.maxTouchPoints,
+  cookieEnabled: navigator.cookieEnabled,
+  doNotTrack: navigator.doNotTrack || null,
+  pdfViewerEnabled: navigator.pdfViewerEnabled,
+  plugins: navigator.plugins ? navigator.plugins.length : null,
+  outerWidth: window.outerWidth,
+  outerHeight: window.outerHeight,
+  innerWidth: window.innerWidth,
+  innerHeight: window.innerHeight,
+  screenWidth: screen.width,
+  screenHeight: screen.height,
+  screenAvailWidth: screen.availWidth,
+  screenAvailHeight: screen.availHeight,
+  colorDepth: screen.colorDepth,
+  pixelDepth: screen.pixelDepth,
+  devicePixelRatio: window.devicePixelRatio,
+  timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+  webgl,
+  webrtc: {supported: typeof RTCPeerConnection !== "undefined"},
+  fonts,
+  canvas: {dataURLPrefix: dataURL.slice(0, 96), dataURLLength: dataURL.length}
+};
+}"""
+
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Run the pinned Python Camoufox package over gomoufox realpass targets.")
@@ -171,22 +239,9 @@ return {
   title: document.title || "",
   content: html.slice(0, limit),
   content_bytes: html.length,
-  detector: {
-    webdriver: navigator.webdriver,
-    userAgent: navigator.userAgent,
-    platform: navigator.platform,
-    languages: navigator.languages,
-    hardwareConcurrency: navigator.hardwareConcurrency,
-    deviceMemory: navigator.deviceMemory || null,
-    plugins: navigator.plugins ? navigator.plugins.length : null,
-    outerWidth: window.outerWidth,
-    outerHeight: window.outerHeight,
-    innerWidth: window.innerWidth,
-    innerHeight: window.innerHeight,
-    screenWidth: screen.width,
-    screenHeight: screen.height,
-    timezone: Intl.DateTimeFormat().resolvedOptions().timeZone
-  }
+  detector: ("""
+        + FINGERPRINT_DETECTOR_EXPRESSION
+        + """)()
 };
 }""",
         max_bytes,
@@ -215,24 +270,8 @@ return {content: html.slice(0, max), bytes: html.length};
 
 
 def detector_snapshot(page):
-    expression = """() => ({
-webdriver: navigator.webdriver,
-userAgent: navigator.userAgent,
-platform: navigator.platform,
-languages: navigator.languages,
-hardwareConcurrency: navigator.hardwareConcurrency,
-deviceMemory: navigator.deviceMemory || null,
-plugins: navigator.plugins ? navigator.plugins.length : null,
-outerWidth: window.outerWidth,
-outerHeight: window.outerHeight,
-innerWidth: window.innerWidth,
-innerHeight: window.innerHeight,
-screenWidth: screen.width,
-screenHeight: screen.height,
-timezone: Intl.DateTimeFormat().resolvedOptions().timeZone
-})"""
     try:
-        return page.evaluate(expression)
+        return page.evaluate(FINGERPRINT_DETECTOR_EXPRESSION)
     except Exception as exc:
         return {"error": str(exc)}
 

@@ -28,6 +28,12 @@ var (
 	userCacheDir                        = os.UserCacheDir
 )
 
+const (
+	EnvCamoufoxPath                    = "GOMOUFOX_CAMOUFOX_PATH"
+	EnvTrustUnverifiedCamoufoxPath     = "GOMOUFOX_TRUST_UNVERIFIED_CAMOUFOX_PATH"
+	trustUnverifiedCamoufoxPathEnabled = "1"
+)
+
 type camoufoxPlatform struct {
 	GOOS   string
 	GOARCH string
@@ -39,9 +45,15 @@ var camoufoxSupportedPlatforms = []camoufoxPlatform{
 }
 
 func EnsureBinary(ctx context.Context, venvPython string, opts InstallOptions) error {
-	if offlinePath := firstNonEmpty(opts.CamoufoxPath, os.Getenv("GOMOUFOX_CAMOUFOX_PATH")); offlinePath != "" {
+	if offlinePath := firstNonEmpty(opts.CamoufoxPath, os.Getenv(EnvCamoufoxPath)); offlinePath != "" {
 		if err := validateCamoufoxBrowserDir(offlinePath); err != nil {
 			return fmt.Errorf("%w: invalid offline Camoufox browser path %s: %v", ErrNotInstalled, offlinePath, err)
+		}
+		if trustUnverifiedCamoufoxPath() {
+			return nil
+		}
+		if err := verifyCamoufoxManifest(offlinePath); err != nil {
+			return fmt.Errorf("%w: offline Camoufox browser path %s failed manifest verification: %v; set %s=1 only for trusted local builds", ErrVersionMismatch, offlinePath, err, EnvTrustUnverifiedCamoufoxPath)
 		}
 		return nil
 	}
@@ -82,6 +94,10 @@ func EnsureBinary(ctx context.Context, venvPython string, opts InstallOptions) e
 		return fmt.Errorf("%w: camoufox fetch produced unusable browser directory %s: %v", ErrNotInstalled, discovered, err)
 	}
 	return verifyCamoufoxManifest(discovered)
+}
+
+func trustUnverifiedCamoufoxPath() bool {
+	return os.Getenv(EnvTrustUnverifiedCamoufoxPath) == trustUnverifiedCamoufoxPathEnabled
 }
 
 func discoverCamoufoxBrowserDir(ctx context.Context, venvPython string) (string, error) {

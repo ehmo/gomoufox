@@ -3,24 +3,34 @@ package content
 import (
 	"errors"
 	"io"
+	"net/url"
 	"strings"
 	"testing"
 
 	"golang.org/x/net/html"
 )
 
-func TestExtractMarkdownReadabilityAndFallback(t *testing.T) {
+func TestExtractMarkdownArticleAndFallback(t *testing.T) {
 	long := strings.Repeat("This is a substantial article sentence with enough words to pass extraction. ", 4)
 	html := `<html><head><title>T</title></head><body><article><h1>Title</h1><p>` + long + `</p></article></body></html>`
 	got, err := Extract(html, "fallback body", "https://example.com/post", FormatMarkdown, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.MarkdownQuality != "readability" {
+	if got.MarkdownQuality != "article" {
 		t.Fatalf("quality = %q content=%q", got.MarkdownQuality, got.Content)
 	}
 	if !strings.Contains(got.Content, "# Title") {
 		t.Fatalf("markdown = %q", got.Content)
+	}
+
+	mainHTML := `<html><body><nav>skip this</nav><main><p>` + long + `</p><a href="/next">Next</a></main></body></html>`
+	got, err = Extract(mainHTML, "fallback body", "https://example.com/post", FormatMarkdown, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.MarkdownQuality != "article" || strings.Contains(got.Content, "skip this") || !strings.Contains(got.Content, "[Next](https://example.com/next)") {
+		t.Fatalf("main extraction = %#v", got)
 	}
 
 	got, err = Extract("<html><body><p>tiny</p></body></html>", "body text", "https://example.com", FormatMarkdown, 0)
@@ -89,6 +99,38 @@ func TestRenderMarkdownAdditionalElementsAndFallbacks(t *testing.T) {
 	if !strings.Contains(b.String(), "document text") {
 		t.Fatalf("non-element render = %q", b.String())
 	}
+
+	var children strings.Builder
+	renderChildren(&children, parent, 0)
+	if !strings.Contains(children.String(), "document text") {
+		t.Fatalf("renderChildren = %q", children.String())
+	}
+}
+
+func TestArticleScoringAndLinkEdges(t *testing.T) {
+	long := strings.Repeat("enough words for extraction ", 8)
+	got, err := Extract(`<html><body><div role="main"><p>`+long+`</p></div></body></html>`, "fallback", "https://example.com", FormatMarkdown, 0)
+	if err != nil || got.MarkdownQuality != "article" {
+		t.Fatalf("role main extraction = %#v err=%v", got, err)
+	}
+	got, err = Extract(`<html><body><div class="post-content"><p>`+long+`</p></div></body></html>`, "fallback", "https://example.com", FormatMarkdown, 0)
+	if err != nil || got.MarkdownQuality != "article" {
+		t.Fatalf("class content extraction = %#v err=%v", got, err)
+	}
+
+	doc, err := html.Parse(strings.NewReader(`<html><body><aside>hidden</aside><p>visible</p><a href="://bad">bad</a></body></html>`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := articleScore(doc); got != 0 {
+		t.Fatalf("document score = %d", got)
+	}
+	if got := readableTextLen(nil); got != 0 {
+		t.Fatalf("nil text len = %d", got)
+	}
+	if got := renderMarkdownDocumentWithBase(doc, "", mustURL("https://example.com/root")); strings.Contains(got, "hidden") || !strings.Contains(got, "[bad](://bad)") {
+		t.Fatalf("ignored/link render = %q", got)
+	}
 }
 
 func TestAttrAndReadLineEdges(t *testing.T) {
@@ -124,4 +166,12 @@ type errorReader struct{}
 
 func (errorReader) Read([]byte) (int, error) {
 	return 0, errors.New("read failed")
+}
+
+func mustURL(raw string) *url.URL {
+	parsed, err := url.Parse(raw)
+	if err != nil {
+		panic(err)
+	}
+	return parsed
 }

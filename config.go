@@ -41,6 +41,7 @@ type launchConfig struct {
 	enableCache     bool
 	disableCOOP     bool
 	extraEnv        []string
+	sidecarRuntime  SidecarRuntime
 
 	connector pwbridge.Connector
 	sidecar   func(launchConfig) (sidecarHandle, error)
@@ -52,6 +53,7 @@ func defaultLaunchConfig() launchConfig {
 		headless:       camoufoxcfg.HeadlessTrue,
 		autoInstall:    true,
 		connectTimeout: 30 * time.Second,
+		sidecarRuntime: SidecarRuntimePython,
 		policy:         policy.DefaultConfig(),
 		connector:      pwbridge.RealConnector{},
 		sidecar:        newSidecarManager,
