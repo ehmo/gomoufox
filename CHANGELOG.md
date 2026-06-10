@@ -6,8 +6,8 @@
 
 ## v0.1.8
 
-- Make the default node-direct install path fully Python-free for public
-  consumers, including CLI, MCP, skills, and doctor flows.
+- Remove Python from the default node-direct install path for public consumers,
+  including CLI, MCP, skills, and doctor flows.
 - Route node-direct Playwright use through one managed runtime driver cache and
   reject stale managed launch-server scripts.
 - Fix the managed launch server payload decoding path and hostile-page viewport
