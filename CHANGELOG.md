@@ -12,8 +12,8 @@
   reject stale managed launch-server scripts.
 - Fix the managed launch server payload decoding path and hostile-page viewport
   metrics fallback.
-- Validate the v0.1.8 release gate, no-Python release archive canary on
-  omarchy, and local Homebrew formula install path on studio.
+- Validate the v0.1.8 release gate, no-Python release archive canary, and
+  Homebrew formula install path.
 - Update release coverage and binary-size floors to match the validated
   node-direct baseline.
 
@@ -80,10 +80,10 @@
 - Replace the `go-readability` dependency chain with gomoufox's built-in
   article/main Markdown extractor.
 - Lower the Linux `gomoufox` release binary from 11,038,846 bytes to 9,732,222
-  bytes in the omarchy release gate.
+  bytes in the release gate.
 - Refresh the checked 100-target Go/Python Camoufox benchmark from the June 8,
-  2026 omarchy release gate: 95 passed, 5 shared blocked, 0 failed, and zero
-  outcome mismatches.
+  2026 release gate: 95 passed, 5 shared blocked, 0 failed, and zero outcome
+  mismatches.
 - Keep benchmark docs tied to the generated benchmark report and preserve the
   fingerprint-audit release guidance during benchmark refreshes.
 - Generate and stage the Homebrew formula during public repo publication so new
