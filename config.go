@@ -53,7 +53,7 @@ func defaultLaunchConfig() launchConfig {
 		headless:       camoufoxcfg.HeadlessTrue,
 		autoInstall:    true,
 		connectTimeout: 30 * time.Second,
-		sidecarRuntime: SidecarRuntimePython,
+		sidecarRuntime: SidecarRuntimeNodeDirect,
 		policy:         policy.DefaultConfig(),
 		connector:      pwbridge.RealConnector{},
 		sidecar:        newSidecarManager,

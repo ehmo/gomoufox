@@ -1415,6 +1415,17 @@ func TestGomoufoxAdaptersAndLauncherSeams(t *testing.T) {
 		launchOptionCount = len(opts)
 		return &gomoufox.Browser{}, nil
 	}
+	if got, err := (realGomoufoxLauncher{}).Launch(ctx, sessionOptions{}, false); err != nil || got == nil {
+		t.Fatalf("default launch = %#v err=%v", got, err)
+	}
+	if launchOptionCount != 1 {
+		t.Fatalf("default launch option count = %d, want only main-world eval so gomoufox keeps its node-direct runtime default", launchOptionCount)
+	}
+	launchOptionCount = 0
+	newGomoufoxForMCP = func(_ context.Context, opts ...gomoufox.Option) (*gomoufox.Browser, error) {
+		launchOptionCount = len(opts)
+		return &gomoufox.Browser{}, nil
+	}
 	launcher := realGomoufoxLauncher{policy: policy.Config{AllowedOrigins: []string{"https://example.com"}, AllowedHosts: []string{"example.com"}}}
 	if got, err := launcher.Launch(ctx, sessionOptions{os: "linux", locale: "en-US", proxy: "http://proxy.example:8080", profilePath: t.TempDir()}, true); err != nil || got == nil {
 		t.Fatalf("launch success = %#v err=%v", got, err)
@@ -2123,9 +2134,6 @@ type fakeMCPLocator struct {
 	scrollCalls     int
 	scrollOptCount  int
 	scrollErr       error
-	selectValues    []string
-	selectLabels    []string
-	selectIndexes   []int
 	selectOptCount  int
 	selectResult    []string
 	selectErr       error

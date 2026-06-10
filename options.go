@@ -136,9 +136,8 @@ func WithExtraEnv(pairs ...string) Option {
 
 // WithSidecarRuntime selects the long-lived sidecar process model.
 //
-// SidecarRuntimePython is the compatibility default. SidecarRuntimeNodeDirect
-// still uses Python during startup to compute Camoufox's launch options, but the
-// long-lived sidecar process is Playwright's Node server instead of Python.
+// SidecarRuntimeNodeDirect is the default Go-managed runtime path.
+// SidecarRuntimePython remains available as an explicit compatibility mode.
 func WithSidecarRuntime(runtime SidecarRuntime) Option {
 	return func(c *launchConfig) { c.sidecarRuntime = runtime }
 }

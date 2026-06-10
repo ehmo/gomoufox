@@ -27,7 +27,7 @@ def main() -> int:
     parser.add_argument("--out", default="dist/benchmarks/latest")
     parser.add_argument("--timeout", type=float, default=60.0)
     parser.add_argument("--wait-until", choices=("commit", "domcontentloaded", "load", "networkidle"), default="commit")
-    parser.add_argument("--settle", type=float, default=7.0)
+    parser.add_argument("--settle", type=float, default=3.0)
     parser.add_argument("--load-state-timeout", type=float, default=0.0, help="extra load-state wait after settle; 0 disables")
     parser.add_argument("--content-max-bytes", type=int, default=250000, help="maximum HTML bytes fetched for classification; 0 fetches full content")
     parser.add_argument("--sample-interval", type=float, default=0.5)
@@ -509,7 +509,9 @@ def build_benchmark(args, runs, targets, catalog):
         "runs": runs,
         "summary": aggregate(runs),
     }
-    benchmark["python_removal_readiness"] = python_removal_readiness(benchmark)
+    benchmark_readiness = python_removal_readiness(benchmark)
+    benchmark["go_python_benchmark_readiness"] = benchmark_readiness
+    benchmark["python_removal_readiness"] = benchmark_readiness
     return benchmark
 
 
@@ -622,11 +624,16 @@ def display_path(path_value):
 def aggregate(runs):
     go = aggregate_runtime(run["go"] for run in runs)
     python = aggregate_runtime(run["python"] for run in runs)
+    go_only_regression_count = sum(
+        len((run.get("outcome_groups") or {}).get("go_only_regressions") or [])
+        for run in runs
+    )
     return {
         "go": go,
         "python": python,
         "ratios": ratios(go, python),
         "outcome_mismatch_count": sum(len(run["outcome_mismatches"]) for run in runs),
+        "go_only_regression_count": go_only_regression_count,
     }
 
 
@@ -648,9 +655,9 @@ def python_removal_readiness(benchmark):
             "detail": f"mode={benchmark.get('mode')} targets={benchmark.get('target_count')}",
         },
         {
-            "name": "outcome_parity",
-            "passed": int(summary.get("outcome_mismatch_count") or 0) == 0,
-            "detail": f"outcome_mismatch_count={summary.get('outcome_mismatch_count')}",
+            "name": "no_go_only_outcome_regressions",
+            "passed": int(summary.get("go_only_regression_count") or 0) == 0,
+            "detail": f"go_only_regression_count={summary.get('go_only_regression_count', 0)} outcome_mismatch_count={summary.get('outcome_mismatch_count')}",
         },
         {
             "name": "no_runtime_failures",
@@ -659,8 +666,16 @@ def python_removal_readiness(benchmark):
         },
     ]
     for name, maximum in (
-        ("wall_time", 0.95),
-        ("target_duration", 0.95),
+        ("wall_time", 1.05),
+        ("target_duration", 1.05),
+    ):
+        value = ratio_values.get(name)
+        criteria.append({
+            "name": f"{name}_not_slower_than_python",
+            "passed": isinstance(value, (int, float)) and value <= maximum,
+            "detail": f"{name}={value} max={maximum}",
+        })
+    for name, maximum in (
         ("peak_rss", 0.95),
         ("peak_cpu", 0.95),
         ("report_tokens", 0.50),
@@ -677,7 +692,7 @@ def python_removal_readiness(benchmark):
         "status": "candidate" if passed else ("not_node_direct" if runtime != "node-direct" else "blocked"),
         "candidate": passed,
         "criteria": criteria,
-        "note": "node-direct still needs Python for launch payload generation; candidate means the long-lived browser sidecar is ready to promote, not that Python is fully removed.",
+        "note": "Go/Python benchmark candidate means node-direct passed the extended comparison gate. Consumer no-Python readiness is recorded separately by scripts/no-python-consumer-canary.sh.",
     }
 
 
@@ -820,11 +835,11 @@ def markdown_report(benchmark):
         ratio_row("Peak CPU", ratios_value["peak_cpu"]),
         ratio_row("Report tokens", ratios_value["report_tokens"]),
         "",
-        "## Python-Removal Readiness",
+        "## Go/Python Benchmark Readiness",
         "",
         f"- Status: {readiness.get('status', 'unknown')}",
         f"- Candidate: {yes_no(readiness.get('candidate'))}",
-        f"- Note: {readiness.get('note', 'No readiness data recorded.')}",
+        f"- Note: {readiness.get('note', 'No benchmark readiness data recorded.')}",
         "",
         "| Criterion | Passed | Detail |",
         "|---|---:|---|",

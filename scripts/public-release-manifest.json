@@ -21,7 +21,8 @@
     "docs/agent-contracts/mcp-skills-list.json",
     "docs/agent-contracts/mcp-tools-list.json",
     "docs/benchmarks/2026-06-03-full.json",
-    "docs/benchmarks/2026-06-08-release-gate.json"
+    "docs/benchmarks/2026-06-08-release-gate.json",
+    "docs/benchmarks/2026-06-09-node-direct-readiness.json"
   ],
   "scripts": [
     "audit-public-release.py",
@@ -32,10 +33,12 @@
     "fingerprint-audit.py",
     "format-doc-numbers.py",
     "package-release.py",
+    "public-consumer-canary.sh",
     "public-release-manifest.json",
+    "python-tooling-policy.json",
+    "no-python-consumer-canary.sh",
     "python-realpass.py",
-    "realpass-targets.json",
-    "update-python-locks.py"
+    "realpass-targets.json"
   ],
   "formula_files": [
     "Formula/gomoufox.rb"
@@ -57,6 +60,7 @@
   ],
   "generated_files": [
     ".github/workflows/benchmark.yml",
+    ".github/workflows/consumer-canary.yml",
     ".github/workflows/ci.yml",
     ".gitignore"
   ],
@@ -73,6 +77,16 @@
     "internal/mcp/scripts/selector_metrics.js",
     "internal/mcp/scripts/snapshot.js",
     "internal/mcp/scripts/viewport_metrics.js",
+    "internal/sidecar/personadata/apify/browser-helper-file.json",
+    "internal/sidecar/personadata/apify/fingerprint-network-definition.json",
+    "internal/sidecar/personadata/apify/header-network-definition.json",
+    "internal/sidecar/personadata/apify/headers-order.json",
+    "internal/sidecar/personadata/apify/input-network-definition.json",
+    "internal/sidecar/personadata/camoufox/browserforge.yml",
+    "internal/sidecar/personadata/camoufox/fonts.json",
+    "internal/sidecar/personadata/camoufox/webgl-data.json",
+    "internal/sidecar/personadata/licenses/apify-fingerprint-datapoints-LICENSE.md",
+    "internal/sidecar/personadata/licenses/browserforge-LICENSE.txt",
     "internal/sidecar/requirements/camoufox-input.txt",
     "internal/sidecar/requirements/camoufox.txt",
     "internal/sidecar/requirements/pip-input.txt",

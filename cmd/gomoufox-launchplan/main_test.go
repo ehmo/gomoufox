@@ -129,7 +129,7 @@ func TestRunCandidateDriftFailsClosed(t *testing.T) {
 		t.Fatalf("drift code=%d stdout=%q stderr=%q", code, stdout.String(), stderr.String())
 	}
 	var rep report
-	if err := json.Unmarshal([]byte(stdout.String()), &rep); err == nil {
+	if err := json.Unmarshal(stdout.Bytes(), &rep); err == nil {
 		t.Fatalf("stdout should not contain implicit json when --json is unset: %#v", rep)
 	}
 

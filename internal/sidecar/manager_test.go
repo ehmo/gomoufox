@@ -6,7 +6,6 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"log/slog"
 	"net"
@@ -783,7 +782,7 @@ esac
 echo "Websocket endpoint: ws://127.0.0.1:4321/token"
 while true; do sleep 1; done
 `)
-	manager := New(Config{VenvDir: venv, ConnectTimeout: time.Second})
+	manager := New(Config{VenvDir: venv, Runtime: RuntimePython, ConnectTimeout: time.Second})
 	endpoint, err := manager.Start(context.Background())
 	if err != nil {
 		t.Fatal(err)
@@ -845,13 +844,13 @@ func TestConcurrentManagersShareVenvWithoutReapingEachOther(t *testing.T) {
 echo "Websocket endpoint: ws://127.0.0.1:4321/token"
 while true; do sleep 1; done
 `)
-	first := New(Config{VenvDir: venv, ConnectTimeout: time.Second})
+	first := New(Config{VenvDir: venv, Runtime: RuntimePython, ConnectTimeout: time.Second})
 	if _, err := first.Start(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	defer first.Stop(context.Background())
 
-	second := New(Config{VenvDir: venv, ConnectTimeout: time.Second})
+	second := New(Config{VenvDir: venv, Runtime: RuntimePython, ConnectTimeout: time.Second})
 	if _, err := second.Start(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -875,27 +874,7 @@ while true; do sleep 1; done
 }
 
 func TestManagerStartStopWithFakeNodeDirectPayload(t *testing.T) {
-	launchScript := filepath.Join(t.TempDir(), "launchServer.js")
-	if err := os.WriteFile(launchScript, []byte("// fake"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	node := fakeExecutable(t, `#!/bin/sh
-test "$1" = "`+launchScript+`" || exit 42
-payload="$(cat)"
-test "$payload" = "e30=" || exit 43
-echo "Websocket endpoint: ws://127.0.0.1:4321/token"
-while true; do sleep 1; done
-`)
-	cwd := t.TempDir()
-	venv := fakeVenv(t, fmt.Sprintf(`#!/bin/sh
-test "$1" = "-c" || exit 44
-input="$(cat)"
-case "$input" in
-  *'"headless":true'*) ;;
-  *) exit 45 ;;
-esac
-printf '{"nodejs":%q,"launch_script":%q,"cwd":%q,"stdin_base64":"e30="}\n'
-`, node, launchScript, cwd))
+	venv := fakeNodeDirectRuntimeWithPython(t)
 	manager := New(Config{VenvDir: venv, Runtime: "node-direct", ConnectTimeout: time.Second})
 	endpoint, err := manager.Start(context.Background())
 	if err != nil {
@@ -950,35 +929,17 @@ func TestNodeDirectSpecValidationAndBuildErrors(t *testing.T) {
 		})
 	}
 
-	badConfig := Config{Fingerprint: map[string]any{"bad": func() {}}}
-	if _, err := buildNodeDirectSpec(context.Background(), fakePython(t, "#!/bin/sh\nexit 0\n"), badConfig); err == nil {
-		t.Fatal("unmarshalable launch args succeeded")
-	}
-	failingPython := fakePython(t, `#!/bin/sh
-printf '%s\n' '`+diagnosticSecretFixture+`' >&2
-exit 7
-`)
-	if _, err := buildNodeDirectSpec(context.Background(), failingPython, Config{}); !errors.Is(err, ErrSidecarStart) || strings.Contains(err.Error(), "sid=secret") {
-		t.Fatalf("failing python err = %v", err)
-	}
-	malformedPython := fakePython(t, `#!/bin/sh
-printf 'not-json'
-`)
-	if _, err := buildNodeDirectSpec(context.Background(), malformedPython, Config{}); !errors.Is(err, ErrSidecarStart) || !strings.Contains(err.Error(), "decode node-direct") {
-		t.Fatalf("malformed payload err = %v", err)
-	}
-	invalidSpecPython := fakePython(t, `#!/bin/sh
-printf '{"nodejs":"","launch_script":"x","cwd":"x","stdin_base64":"x"}'
-`)
-	if _, err := buildNodeDirectSpec(context.Background(), invalidSpecPython, Config{}); !errors.Is(err, ErrSidecarStart) || !strings.Contains(err.Error(), "missing nodejs") {
-		t.Fatalf("invalid spec err = %v", err)
+	pythonOnlyConfig := Config{GeoIP: true}
+	if _, err := buildNodeDirectSpec(context.Background(), filepath.Join(t.TempDir(), "missing-python"), pythonOnlyConfig); !errors.Is(err, errGoLaunchPlanUnsupported) || !strings.Contains(err.Error(), "dynamic locale/geo/humanize") {
+		t.Fatalf("unsupported Go plan err = %v", err)
 	}
 
 	manager := New(Config{VenvDir: t.TempDir()})
 	if _, err := manager.launchCommand(context.Background(), "python", "bogus"); !errors.Is(err, ErrSidecarStart) {
 		t.Fatalf("bad runtime err = %v", err)
 	}
-	if _, err := manager.launchCommand(context.Background(), failingPython, RuntimeNodeDirect); !errors.Is(err, ErrSidecarStart) {
+	manager.cfg.GeoIP = true
+	if _, err := manager.launchCommand(context.Background(), filepath.Join(t.TempDir(), "missing-python"), RuntimeNodeDirect); !errors.Is(err, errGoLaunchPlanUnsupported) {
 		t.Fatalf("node-direct build err = %v", err)
 	}
 }
@@ -1027,13 +988,13 @@ func decodeNodeDirectPayloadForTest(t *testing.T, raw string) map[string]any {
 }
 
 func TestManagerStartRuntimeDefaultAndInvalidRuntime(t *testing.T) {
-	venv := fakeVenv(t, `#!/bin/sh
-echo "Websocket endpoint: ws://127.0.0.1:4321/token"
-while true; do sleep 1; done
-`)
+	venv := fakeNodeDirectRuntimeWithPython(t)
 	manager := &Manager{cfg: Config{VenvDir: venv, ConnectTimeout: time.Second}, state: StateIdle, done: make(chan struct{})}
 	if endpoint, err := manager.Start(context.Background()); err != nil || endpoint == "" {
 		t.Fatalf("manual default runtime start endpoint=%q err=%v", endpoint, err)
+	}
+	if manager.Info().Runtime != RuntimeNodeDirect {
+		t.Fatalf("default runtime = %q, want %q", manager.Info().Runtime, RuntimeNodeDirect)
 	}
 	manager.Stop(context.Background())
 
@@ -1060,10 +1021,10 @@ func TestManagerStopCleanupAndDiagnosticsEdges(t *testing.T) {
 	oldLogger := slog.Default()
 	slog.SetDefault(slog.New(slog.NewTextHandler(&diagnostics, &slog.HandlerOptions{Level: slog.LevelDebug})))
 	t.Cleanup(func() { slog.SetDefault(oldLogger) })
-	manager.forwardDiagnostics(strings.NewReader(diagnosticSecretFixture + "\n"))
+	manager.forwardDiagnostics(strings.NewReader(diagnosticSecretFixture+"\n"), nil)
 	assertNoDiagnosticSecrets(t, diagnostics.String())
 	diagnostics.Reset()
-	manager.forwardDiagnostics(failingDiagnosticReader{})
+	manager.forwardDiagnostics(failingDiagnosticReader{}, nil)
 	assertNoDiagnosticSecrets(t, diagnostics.String())
 	manager.setDead()
 	if err := lock.Release(); err != nil {
@@ -1119,7 +1080,7 @@ func TestManagerFailsClosedForUnsupportedOperatorProxy(t *testing.T) {
 	venv := fakeVenv(t, `#!/bin/sh
 echo "should not start"
 `)
-	manager := New(Config{VenvDir: venv, ConnectTimeout: time.Second, Proxy: &ProxyConfig{Server: "socks5://proxy.example:1080"}})
+	manager := New(Config{VenvDir: venv, Runtime: RuntimePython, ConnectTimeout: time.Second, Proxy: &ProxyConfig{Server: "socks5://proxy.example:1080"}})
 	if _, err := manager.Start(context.Background()); !errors.Is(err, ErrSidecarStart) {
 		t.Fatalf("Start err = %v", err)
 	}
@@ -1149,7 +1110,7 @@ grep -q '\\"proxy\\":' "$2" && exit 44
 printf 'Websocket endpoint:\033[93m ws://127.0.0.1:1234/direct \033[0m\n'
 sleep 5
 `)
-	manager := New(Config{VenvDir: venv, ConnectTimeout: time.Second, DirectNetwork: true})
+	manager := New(Config{VenvDir: venv, Runtime: RuntimePython, ConnectTimeout: time.Second, DirectNetwork: true})
 	endpoint, err := manager.Start(context.Background())
 	if err != nil {
 		t.Fatal(err)
@@ -1168,6 +1129,7 @@ sleep 5
 `)
 	manager = New(Config{
 		VenvDir:        venv,
+		Runtime:        RuntimePython,
 		ConnectTimeout: time.Second,
 		DirectNetwork:  true,
 		Proxy:          &ProxyConfig{Server: "http://proxy.example:8080", Username: "user", Password: "pass"},
@@ -1213,7 +1175,7 @@ func TestManagerStartsWithHTTPOperatorProxy(t *testing.T) {
 echo "Websocket endpoint: ws://127.0.0.1:4321/token"
 while true; do sleep 1; done
 `)
-	manager := New(Config{VenvDir: venv, ConnectTimeout: time.Second, Proxy: &ProxyConfig{Server: "http://proxy.example:8080", Username: "user", Password: "pass"}})
+	manager := New(Config{VenvDir: venv, Runtime: RuntimePython, ConnectTimeout: time.Second, Proxy: &ProxyConfig{Server: "http://proxy.example:8080", Username: "user", Password: "pass"}})
 	if _, err := manager.Start(context.Background()); err != nil {
 		t.Fatalf("Start err = %v", err)
 	}
@@ -1229,7 +1191,7 @@ trap '' TERM
 echo "Websocket endpoint: ws://127.0.0.1:4321/token"
 while true; do sleep 1; done
 `)
-	manager := New(Config{VenvDir: venv, ConnectTimeout: time.Second})
+	manager := New(Config{VenvDir: venv, Runtime: RuntimePython, ConnectTimeout: time.Second})
 	if _, err := manager.Start(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -1256,7 +1218,7 @@ trap '' TERM
 echo "Websocket endpoint: ws://127.0.0.1:4321/token"
 while true; do sleep 1; done
 `)
-	manager := New(Config{VenvDir: venv, ConnectTimeout: time.Second})
+	manager := New(Config{VenvDir: venv, Runtime: RuntimePython, ConnectTimeout: time.Second})
 	if _, err := manager.Start(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -1295,7 +1257,7 @@ grep -q 'user_data_dir' "$2" || exit 45
 echo "Websocket endpoint: ws://127.0.0.1:4321/token"
 while true; do sleep 1; done
 `)
-	manager := New(Config{VenvDir: venv, ConnectTimeout: time.Second, Persistent: true, UserDataDir: profile})
+	manager := New(Config{VenvDir: venv, Runtime: RuntimePython, ConnectTimeout: time.Second, Persistent: true, UserDataDir: profile})
 	endpoint, err := manager.Start(context.Background())
 	if err != nil {
 		t.Fatal(err)
@@ -1329,7 +1291,7 @@ func TestManagerPersistentProfileLockFailures(t *testing.T) {
 	venv := fakeVenv(t, `#!/bin/sh
 exit 0
 `)
-	manager = New(Config{VenvDir: venv, ConnectTimeout: time.Millisecond, Persistent: true, UserDataDir: profile})
+	manager = New(Config{VenvDir: venv, Runtime: RuntimePython, ConnectTimeout: time.Millisecond, Persistent: true, UserDataDir: profile})
 	if _, err := manager.Start(context.Background()); err == nil {
 		t.Fatal("persistent start without endpoint succeeded")
 	}
@@ -1343,7 +1305,7 @@ exit 0
 }
 
 func TestManagerStartFailureEdges(t *testing.T) {
-	manager := New(Config{VenvDir: t.TempDir(), ConnectTimeout: time.Millisecond})
+	manager := New(Config{VenvDir: t.TempDir(), Runtime: RuntimePython, ConnectTimeout: time.Millisecond})
 	if manager.PID() != 0 {
 		t.Fatalf("idle pid = %d", manager.PID())
 	}
@@ -1368,7 +1330,7 @@ func TestManagerStartFailureEdges(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(bin, "python"), []byte("#!/bin/sh\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	manager = New(Config{VenvDir: venv, ConnectTimeout: time.Second})
+	manager = New(Config{VenvDir: venv, Runtime: RuntimePython, ConnectTimeout: time.Second})
 	if _, err := manager.Start(context.Background()); err == nil {
 		t.Fatal("start with non-executable python succeeded")
 	}
@@ -1376,9 +1338,33 @@ func TestManagerStartFailureEdges(t *testing.T) {
 	venv = fakeVenv(t, `#!/bin/sh
 exit 0
 `)
-	manager = New(Config{VenvDir: venv, ConnectTimeout: time.Second})
+	manager = New(Config{VenvDir: venv, Runtime: RuntimePython, ConnectTimeout: time.Second})
 	if _, err := manager.Start(context.Background()); err == nil {
 		t.Fatal("start without endpoint succeeded")
+	}
+}
+
+func TestManagerStartFailureIncludesRedactedEarlyStderr(t *testing.T) {
+	venv := fakeVenv(t, `#!/bin/sh
+printf 'node-direct launch failed before websocket\n' >&2
+printf '`+diagnosticSecretFixture+`\n' >&2
+python3 - <<'PY' >&2
+print("x" * 20000)
+PY
+exit 17
+`)
+	manager := New(Config{VenvDir: venv, Runtime: RuntimePython, ConnectTimeout: time.Second})
+	_, err := manager.Start(context.Background())
+	if !errors.Is(err, ErrSidecarStart) {
+		t.Fatalf("Start err = %v", err)
+	}
+	text := err.Error()
+	if !strings.Contains(text, "sidecar stderr:") || !strings.Contains(text, "node-direct launch failed before websocket") {
+		t.Fatalf("stderr excerpt missing from err = %v", err)
+	}
+	assertNoDiagnosticSecrets(t, text)
+	if strings.Count(text, "x") > 9000 {
+		t.Fatalf("stderr excerpt was not bounded: %d x bytes", strings.Count(text, "x"))
 	}
 }
 
@@ -1387,7 +1373,7 @@ func TestManagerStartCleanupErrorBranches(t *testing.T) {
 	if err := os.WriteFile(blocker, []byte("x"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	manager := New(Config{VenvDir: blocker, ConnectTimeout: time.Second})
+	manager := New(Config{VenvDir: blocker, Runtime: RuntimePython, ConnectTimeout: time.Second})
 	if _, err := manager.Start(context.Background()); err == nil {
 		t.Fatal("start with unreadable pidfile path succeeded")
 	}
@@ -1398,7 +1384,7 @@ func TestManagerStartCleanupErrorBranches(t *testing.T) {
 	venv := fakeVenv(t, `#!/bin/sh
 echo "should not start"
 `)
-	manager = New(Config{VenvDir: venv, ConnectTimeout: time.Second, Fingerprint: map[string]any{"bad": func() {}}})
+	manager = New(Config{VenvDir: venv, Runtime: RuntimePython, ConnectTimeout: time.Second, Fingerprint: map[string]any{"bad": func() {}}})
 	if _, err := manager.Start(context.Background()); err == nil {
 		t.Fatal("start with unmarshalable launcher config succeeded")
 	}
@@ -1414,7 +1400,7 @@ echo "should not start"
 echo "Websocket endpoint: ws://127.0.0.1:4321/token"
 while true; do sleep 1; done
 `)
-	manager = New(Config{VenvDir: venv, ConnectTimeout: time.Second})
+	manager = New(Config{VenvDir: venv, Runtime: RuntimePython, ConnectTimeout: time.Second})
 	if _, err := manager.Start(context.Background()); err == nil || !strings.Contains(err.Error(), "stdout failed") {
 		t.Fatalf("stdout pipe err = %v", err)
 	}
@@ -1428,7 +1414,7 @@ while true; do sleep 1; done
 echo "Websocket endpoint: ws://127.0.0.1:4321/token"
 while true; do sleep 1; done
 `)
-	manager = New(Config{VenvDir: venv, ConnectTimeout: time.Second})
+	manager = New(Config{VenvDir: venv, Runtime: RuntimePython, ConnectTimeout: time.Second})
 	if _, err := manager.Start(context.Background()); !errors.Is(err, stderrErr) {
 		t.Fatalf("stderr pipe err = %v", err)
 	}
@@ -1442,7 +1428,7 @@ while true; do sleep 1; done
 echo "Websocket endpoint: ws://127.0.0.1:4321/token"
 while true; do sleep 1; done
 `)
-	manager = New(Config{VenvDir: venv, ConnectTimeout: time.Second})
+	manager = New(Config{VenvDir: venv, Runtime: RuntimePython, ConnectTimeout: time.Second})
 	if _, err := manager.Start(context.Background()); !errors.Is(err, ErrSidecarStart) || !strings.Contains(err.Error(), "assign failed") {
 		t.Fatalf("assign boundary err = %v", err)
 	}
@@ -1456,7 +1442,7 @@ while true; do sleep 1; done
 echo "Websocket endpoint: ws://127.0.0.1:4321/token"
 while true; do sleep 1; done
 `)
-	manager = New(Config{VenvDir: venv, ConnectTimeout: time.Second})
+	manager = New(Config{VenvDir: venv, Runtime: RuntimePython, ConnectTimeout: time.Second})
 	if _, err := manager.Start(context.Background()); !errors.Is(err, writeErr) {
 		t.Fatalf("pidfile hook err = %v", err)
 	}
@@ -1469,7 +1455,7 @@ while true; do sleep 1; done
 	if err := os.Mkdir(filepath.Join(venv, "gomoufox_sidecar.pid"), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	manager = New(Config{VenvDir: venv, ConnectTimeout: time.Second})
+	manager = New(Config{VenvDir: venv, Runtime: RuntimePython, ConnectTimeout: time.Second})
 	if _, err := manager.Start(context.Background()); err == nil {
 		t.Fatal("start with blocked pidfile write succeeded")
 	}
@@ -1496,6 +1482,20 @@ func fakeVenv(t *testing.T, script string) string {
 		t.Fatal(err)
 	}
 	return venv
+}
+
+func fakeNodeDirectRuntimeWithPython(t *testing.T) string {
+	t.Helper()
+	rootDir := fakeVenv(t, "#!/bin/sh\nexit 99\n")
+	root := RuntimeAssetCacheRoot(rootDir, sidecarGOOS, sidecarGOARCH)
+	writeFakeRuntimeRoot(t, root, `#!/bin/sh
+test "$1" = "`+root.LaunchServerJS+`" || exit 42
+payload="$(cat)"
+test -n "$payload" || exit 43
+echo "Websocket endpoint: ws://127.0.0.1:4321/token"
+while true; do sleep 1; done
+`)
+	return rootDir
 }
 
 func fakeExecutable(t *testing.T, script string) string {

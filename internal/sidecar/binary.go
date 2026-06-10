@@ -18,9 +18,14 @@ import (
 var (
 	binarySizeWarningOnce   sync.Once
 	binarySizeWarningWriter io.Writer = os.Stderr
-	camoufoxManifestSHA256            = map[string]string{
-		"v135.0.1-beta.24/darwin/arm64": "11b8ffa50607f52123abc3426ea404079880b58881f53ce28aac9782780f3f16",
-		"v135.0.1-beta.24/linux/amd64":  "8c8f41172f86e265badaacb1a192e0f37ba55976b293b26b3d0642c5428e2dc3",
+	camoufoxManifestSHA256            = map[string][]string{
+		"v135.0.1-beta.24/darwin/arm64": {
+			"11b8ffa50607f52123abc3426ea404079880b58881f53ce28aac9782780f3f16",
+			"bd9fac6728f62a12ce4fdc587013978aa0a63e574f026c0f6facfc1c9df64d87",
+		},
+		"v135.0.1-beta.24/linux/amd64": {
+			"41dbd88d7bf89ec667586b77bf4ea33518233bca4e4824c61d89d1cc052de4c7",
+		},
 	}
 	camoufoxManifestRel                 = filepath.Rel
 	camoufoxManifestInfo                = func(d fs.DirEntry) (fs.FileInfo, error) { return d.Info() }
@@ -287,17 +292,19 @@ func isExecutableFile(path string) bool {
 func verifyCamoufoxManifest(root string) error {
 	key := camoufoxManifestKey(CamoufoxBinaryVersion, sidecarGOOS, sidecarGOARCH)
 	expected := camoufoxManifestSHA256[key]
-	if expected == "" {
+	if len(expected) == 0 {
 		return fmt.Errorf("%w: no Camoufox binary manifest checksum recorded for %s", ErrVersionMismatch, key)
 	}
 	got, err := camoufoxBrowserManifestSHA256(root)
 	if err != nil {
 		return err
 	}
-	if got != expected {
-		return fmt.Errorf("%w: Camoufox binary manifest checksum mismatch for %s: got %s, expected %s", ErrVersionMismatch, key, got, expected)
+	for _, allowed := range expected {
+		if got == allowed {
+			return nil
+		}
 	}
-	return nil
+	return fmt.Errorf("%w: Camoufox binary manifest checksum mismatch for %s: got %s, expected one of %s", ErrVersionMismatch, key, got, strings.Join(expected, ","))
 }
 
 func camoufoxBrowserManifestSHA256(root string) (string, error) {

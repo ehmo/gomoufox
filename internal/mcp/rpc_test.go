@@ -35,6 +35,10 @@ func TestJSONRPCInitializeListAndCallTool(t *testing.T) {
 	if !ok || len(tools) != len(Tools()) {
 		t.Fatalf("tools/list result = %#v", result)
 	}
+	meta := result["_meta"].(map[string]any)
+	if meta["gomoufox/toolset"] != ToolsetFull || int(meta["gomoufox/tool_count"].(float64)) != len(tools) || !strings.Contains(meta["gomoufox/core_command"].(string), "--toolset core") {
+		t.Fatalf("tools/list meta = %#v", meta)
+	}
 	coreServer, err := New(Config{SessionDir: t.TempDir(), Toolset: ToolsetCore})
 	if err != nil {
 		t.Fatal(err)
@@ -42,6 +46,10 @@ func TestJSONRPCInitializeListAndCallTool(t *testing.T) {
 	coreResp := callRPC(t, coreServer, `{"jsonrpc":"2.0","id":"core-tools","method":"tools/list","params":{}}`)
 	coreResult := rpcResult(t, coreResp)
 	coreTools := coreResult["tools"].([]any)
+	coreMeta := coreResult["_meta"].(map[string]any)
+	if coreMeta["gomoufox/toolset"] != ToolsetCore || int(coreMeta["gomoufox/tool_count"].(float64)) != len(coreTools) {
+		t.Fatalf("core tools/list meta = %#v", coreMeta)
+	}
 	if len(coreTools) >= len(tools) {
 		t.Fatalf("core tools/list did not shrink full list: core=%d full=%d", len(coreTools), len(tools))
 	}
@@ -132,6 +140,27 @@ func TestJSONRPCInitializeListAndCallTool(t *testing.T) {
 	content = result["content"].([]any)
 	if !strings.Contains(content[0].(map[string]any)["text"].(string), "gomoufox core") {
 		t.Fatalf("skills_get content = %#v", content)
+	}
+}
+
+func TestToolsListMetadataIsCompactAndActionable(t *testing.T) {
+	server := newTestServer(t, defaultTestConfig(t))
+	result := toolsListResult(server)
+	meta, ok := result["_meta"].(map[string]any)
+	if !ok {
+		t.Fatalf("tools/list result missing _meta: %#v", result)
+	}
+	for _, key := range []string{"gomoufox/toolset", "gomoufox/tool_count", "gomoufox/core_command", "gomoufox/agent_hint"} {
+		if meta[key] == nil {
+			t.Fatalf("tools/list _meta missing %s: %#v", key, meta)
+		}
+	}
+	data, err := json.Marshal(result)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(data) > 30000 {
+		t.Fatalf("tools/list result is over compact budget: %d bytes", len(data))
 	}
 }
 

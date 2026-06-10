@@ -93,6 +93,7 @@ type Info struct {
 type InstallOptions struct {
 	PythonBin       string
 	VenvDir         string
+	Runtime         string
 	CamoufoxVersion string
 	SkipBinaryFetch bool
 	CamoufoxPath    string

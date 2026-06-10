@@ -12,6 +12,7 @@ import (
 type InstallOptions struct {
 	PythonBin       string
 	VenvDir         string
+	Runtime         SidecarRuntime
 	CamoufoxVersion string
 	SkipBinaryFetch bool
 	CamoufoxPath    string
@@ -32,6 +33,7 @@ func EnsureInstalled(ctx context.Context, opts ...func(*InstallOptions)) error {
 	if err := sidecarEnsureInstalled(ctx, sidecar.InstallOptions{
 		PythonBin:       cfg.PythonBin,
 		VenvDir:         cfg.VenvDir,
+		Runtime:         string(cfg.Runtime),
 		CamoufoxVersion: cfg.CamoufoxVersion,
 		SkipBinaryFetch: cfg.SkipBinaryFetch,
 		CamoufoxPath:    cfg.CamoufoxPath,
@@ -40,10 +42,24 @@ func EnsureInstalled(ctx context.Context, opts ...func(*InstallOptions)) error {
 	}); err != nil {
 		return mapSidecarError(err)
 	}
+	if installRuntime(cfg.Runtime) == SidecarRuntimeNodeDirect {
+		return nil
+	}
 	if err := pwbridgeEnsureDriver(""); err != nil {
 		return fmt.Errorf("%w: playwright driver install failed: %v", ErrNotInstalled, err)
 	}
 	return nil
+}
+
+func installRuntime(runtime SidecarRuntime) SidecarRuntime {
+	if runtime == "" {
+		return SidecarRuntimeNodeDirect
+	}
+	return runtime
+}
+
+func nodeDirectPlaywrightDriverDir(venvDir string) string {
+	return sidecar.RuntimeAssetCacheRoot(venvDir, "", "").PlaywrightDriverDir
 }
 
 func mapSidecarError(err error) error {

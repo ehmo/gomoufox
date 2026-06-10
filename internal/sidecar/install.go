@@ -12,10 +12,16 @@ import (
 )
 
 var (
-	venvPythonAfterInstall  = VenvPython
-	venvPipForCamoufox      = VenvPip
-	venvPipAfterCreate      = VenvPip
-	installDiagnosticWriter = io.Writer(os.Stderr)
+	venvPythonAfterInstall        = VenvPython
+	venvPipForCamoufox            = VenvPip
+	venvPipAfterCreate            = VenvPip
+	installDiagnosticWriter       = io.Writer(os.Stderr)
+	findPythonForInstall          = FindPython
+	ensureVenvForInstall          = EnsureVenv
+	ensureCamoufoxForInstall      = EnsureCamoufox
+	ensureBinaryForInstall        = EnsureBinary
+	checkCompatibilityForInstall  = CheckCompatibility
+	ensureRuntimeAssetsForInstall = EnsureRuntimeAssets
 )
 
 func EnsureInstalled(ctx context.Context, opts InstallOptions) error {
@@ -29,24 +35,33 @@ func EnsureInstalled(ctx context.Context, opts InstallOptions) error {
 	}
 	defer func() { _ = lock.Release() }()
 
-	python, err := FindPython(opts.PythonBin)
+	runtimeName := opts.Runtime
+	if runtimeName == "" {
+		runtimeName = RuntimeNodeDirect
+	}
+	if runtimeName == RuntimeNodeDirect {
+		_, err := ensureRuntimeAssetsForInstall(ctx, opts)
+		return err
+	}
+
+	python, err := findPythonForInstall(opts.PythonBin)
 	if err != nil {
 		return err
 	}
-	if err := EnsureVenv(ctx, python, venvDir); err != nil {
+	if err := ensureVenvForInstall(ctx, python, venvDir); err != nil {
 		return err
 	}
-	if err := EnsureCamoufox(ctx, venvDir, opts); err != nil {
+	if err := ensureCamoufoxForInstall(ctx, venvDir, opts); err != nil {
 		return err
 	}
 	venvPython, err := venvPythonAfterInstall(venvDir)
 	if err != nil {
 		return err
 	}
-	if err := EnsureBinary(ctx, venvPython, opts); err != nil {
+	if err := ensureBinaryForInstall(ctx, venvPython, opts); err != nil {
 		return err
 	}
-	return CheckCompatibility(ctx, venvPython)
+	return checkCompatibilityForInstall(ctx, venvPython)
 }
 
 func EnsureCamoufox(ctx context.Context, venvDir string, opts InstallOptions) error {

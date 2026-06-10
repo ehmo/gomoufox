@@ -67,9 +67,10 @@ type Runner struct {
 }
 
 type InstallRequest struct {
-	Dir    string
-	Python string
-	Force  bool
+	Dir     string
+	Python  string
+	Runtime string
+	Force   bool
 }
 
 type DoctorRequest struct {
@@ -128,12 +129,13 @@ type LocalCommandResponse struct {
 }
 
 type DoctorReport struct {
-	Python      Check `json:"python"`
-	Venv        Check `json:"venv"`
-	CamoufoxPkg Check `json:"camoufox_pkg"`
-	Playwright  Check `json:"playwright"`
-	CamoufoxBin Check `json:"camoufox_bin"`
-	Display     Check `json:"display"`
+	RuntimeAssets Check `json:"runtime_assets"`
+	Python        Check `json:"python,omitempty"`
+	Venv          Check `json:"venv,omitempty"`
+	CamoufoxPkg   Check `json:"camoufox_pkg"`
+	Playwright    Check `json:"playwright"`
+	CamoufoxBin   Check `json:"camoufox_bin"`
+	Display       Check `json:"display"`
 }
 
 type Check struct {
@@ -538,14 +540,14 @@ func commandHelps() []commandHelp {
 		{
 			Name:     "doctor",
 			Usage:    "gomoufox doctor [--json]",
-			Summary:  "check local Python, venv, Camoufox, Playwright, binary, and display readiness",
+			Summary:  "check local node-direct runtime assets, Playwright, Camoufox binary, and display readiness",
 			Examples: []string{"gomoufox --json doctor"},
 		},
 		{
 			Name:    "install",
-			Usage:   "gomoufox install [--dir <venv>] [--python <path>] [--force]",
-			Summary: "provision the pinned Camoufox Python environment and browser binary",
-			Flags:   []string{"--dir", "--python", "--force"},
+			Usage:   "gomoufox install [--dir <cache>] [--runtime node-direct|python] [--python <path>] [--force]",
+			Summary: "provision the pinned Go-managed node-direct runtime assets",
+			Flags:   []string{"--dir", "--runtime", "--python", "--force"},
 		},
 		{
 			Name:     "open",
@@ -1236,7 +1238,15 @@ func (r Runner) runInstall(ctx context.Context, args []string, streams Streams) 
 		_, _ = fmt.Fprintln(streams.Stderr, "usage: gomoufox install [flags]")
 		return ExitUsage
 	}
-	req := InstallRequest{Dir: parsed.value("dir"), Python: parsed.value("python"), Force: parsed.bool("force")}
+	req := InstallRequest{Dir: parsed.value("dir"), Python: parsed.value("python"), Runtime: parsed.value("runtime"), Force: parsed.bool("force")}
+	if req.Runtime != "" && req.Runtime != string(gomoufox.SidecarRuntimeNodeDirect) && req.Runtime != string(gomoufox.SidecarRuntimePython) {
+		writeDiagnosticLine(streams.Stderr, fmt.Errorf("--runtime must be %s or %s", gomoufox.SidecarRuntimeNodeDirect, gomoufox.SidecarRuntimePython))
+		return ExitUsage
+	}
+	if req.Python != "" && req.Runtime != string(gomoufox.SidecarRuntimePython) {
+		writeDiagnosticLine(streams.Stderr, errors.New("--python requires --runtime python"))
+		return ExitUsage
+	}
 	install := r.Hooks.Install
 	if install == nil {
 		install = defaultInstallEnsureInstalled
@@ -1253,6 +1263,7 @@ var defaultInstallEnsureInstalled = func(ctx context.Context, req InstallRequest
 	return ensureInstalledForCLI(ctx, func(o *gomoufox.InstallOptions) {
 		o.VenvDir = req.Dir
 		o.PythonBin = req.Python
+		o.Runtime = gomoufox.SidecarRuntime(req.Runtime)
 		o.ForceReinstall = req.Force
 	})
 }
@@ -1297,13 +1308,12 @@ var doctorLookPath = exec.LookPath
 func defaultDoctor(ctx context.Context, req DoctorRequest) (DoctorReport, error) {
 	match := true
 	report := DoctorReport{
-		Python:  Check{OK: true},
-		Venv:    Check{OK: true},
-		Display: doctorDisplayCheck(),
+		RuntimeAssets: Check{OK: true, Version: sidecar.CamoufoxBinaryVersion, Platform: doctorGOOS},
+		Display:       doctorDisplayCheck(),
 	}
 	err := defaultDoctorEnsureInstalled(ctx)
 	if err != nil {
-		report.CamoufoxPkg = Check{OK: false, Error: policy.Redact(err.Error())}
+		report.RuntimeAssets = Check{OK: false, Error: policy.Redact(err.Error())}
 		return report, err
 	}
 	report.CamoufoxPkg = Check{OK: true, Version: sidecar.RequiredCamoufox}
@@ -1340,8 +1350,13 @@ func doctorDisplayCheck() Check {
 }
 
 func printDoctor(w io.Writer, report DoctorReport) {
-	printCheck(w, "python3", report.Python)
-	printCheck(w, "venv", report.Venv)
+	printCheck(w, "runtime-assets", report.RuntimeAssets)
+	if checkSet(report.Python) {
+		printCheck(w, "python3", report.Python)
+	}
+	if checkSet(report.Venv) {
+		printCheck(w, "venv", report.Venv)
+	}
 	printCheck(w, "camoufox", report.CamoufoxPkg)
 	printCheck(w, "playwright", report.Playwright)
 	printCheck(w, "camoufox-bin", report.CamoufoxBin)
@@ -1362,6 +1377,7 @@ func printCheck(w io.Writer, name string, check Check) {
 }
 
 func redactDoctorReport(report DoctorReport) DoctorReport {
+	report.RuntimeAssets = redactCheck(report.RuntimeAssets)
 	report.Python = redactCheck(report.Python)
 	report.Venv = redactCheck(report.Venv)
 	report.CamoufoxPkg = redactCheck(report.CamoufoxPkg)
@@ -1408,7 +1424,10 @@ func (c Check) message() string {
 }
 
 func (r DoctorReport) hasFailure() bool {
-	for _, check := range []Check{r.Python, r.Venv, r.CamoufoxPkg, r.Playwright, r.CamoufoxBin, r.Display} {
+	for _, check := range []Check{r.RuntimeAssets, r.Python, r.Venv, r.CamoufoxPkg, r.Playwright, r.CamoufoxBin, r.Display} {
+		if !checkSet(check) {
+			continue
+		}
 		if check.Warning != "" {
 			continue
 		}
@@ -1417,6 +1436,18 @@ func (r DoctorReport) hasFailure() bool {
 		}
 	}
 	return false
+}
+
+func checkSet(check Check) bool {
+	return check.OK ||
+		check.Version != "" ||
+		check.PkgVersion != "" ||
+		check.DriverVersion != "" ||
+		check.Match != nil ||
+		check.Path != "" ||
+		check.Platform != "" ||
+		check.Warning != "" ||
+		check.Error != ""
 }
 
 type commandKind int
@@ -1438,9 +1469,10 @@ func helpFlagSpecs() map[string]flagSpec {
 
 func installFlagSpecs() map[string]flagSpec {
 	return map[string]flagSpec{
-		"dir":    {Kind: flagValue},
-		"force":  {Kind: flagBool},
-		"python": {Kind: flagValue},
+		"dir":     {Kind: flagValue},
+		"force":   {Kind: flagBool},
+		"python":  {Kind: flagValue},
+		"runtime": {Kind: flagValue},
 	}
 }
 

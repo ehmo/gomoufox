@@ -40,7 +40,7 @@ type SidecarRuntime string
 const (
 	// SidecarRuntimePython uses Camoufox's Python server wrapper.
 	SidecarRuntimePython SidecarRuntime = "python"
-	// SidecarRuntimeNodeDirect asks Python to generate Camoufox launch options,
-	// then runs the Playwright Node server directly as the long-lived sidecar.
+	// SidecarRuntimeNodeDirect uses Go-managed runtime assets and runs the
+	// Playwright Node server directly as the long-lived sidecar.
 	SidecarRuntimeNodeDirect SidecarRuntime = "node-direct"
 )

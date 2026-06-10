@@ -354,12 +354,12 @@ func TestInstallHookAndExitMapping(t *testing.T) {
 	called := false
 	runner := Runner{Hooks: Hooks{Install: func(ctx context.Context, req InstallRequest) error {
 		called = true
-		if req.Dir != "/tmp/g" || req.Python != "python3.12" || !req.Force {
+		if req.Dir != "/tmp/g" || req.Python != "python3.12" || req.Runtime != string(gomoufox.SidecarRuntimePython) || !req.Force {
 			t.Fatalf("request = %#v", req)
 		}
 		return nil
 	}}}
-	code := runner.Run(context.Background(), []string{"install", "--dir", "/tmp/g", "--python=python3.12", "--force"}, Streams{Stdout: &stdout, Stderr: &stderr})
+	code := runner.Run(context.Background(), []string{"install", "--dir", "/tmp/g", "--runtime", "python", "--python=python3.12", "--force"}, Streams{Stdout: &stdout, Stderr: &stderr})
 	if code != ExitOK || !called {
 		t.Fatalf("code=%d called=%v stderr=%q", code, called, stderr.String())
 	}
@@ -371,17 +371,27 @@ func TestInstallHookAndExitMapping(t *testing.T) {
 	stderr.Reset()
 	restore := replaceDefaultInstallEnsureInstalled(t, func(ctx context.Context, req InstallRequest) error {
 		called = true
-		if req.Dir != "/tmp/default" || req.Python != "python3.13" || !req.Force {
+		if req.Dir != "/tmp/default" || req.Python != "" || req.Runtime != string(gomoufox.SidecarRuntimeNodeDirect) || !req.Force {
 			t.Fatalf("default request = %#v", req)
 		}
 		return nil
 	})
 	called = false
-	code = (Runner{}).Run(context.Background(), []string{"install", "--dir", "/tmp/default", "--python", "python3.13", "--force"}, Streams{Stdout: &stdout, Stderr: &stderr})
+	code = (Runner{}).Run(context.Background(), []string{"install", "--dir", "/tmp/default", "--runtime", "node-direct", "--force"}, Streams{Stdout: &stdout, Stderr: &stderr})
 	if code != ExitOK || !called || stdout.String() != ">> gomoufox install complete\n" {
 		t.Fatalf("default code=%d called=%v stdout=%q stderr=%q", code, called, stdout.String(), stderr.String())
 	}
 	restore()
+
+	stderr.Reset()
+	if code = runner.Run(context.Background(), []string{"install", "--python", "python3.13"}, Streams{Stderr: &stderr}); code != ExitUsage || !strings.Contains(stderr.String(), "--python requires --runtime python") {
+		t.Fatalf("python without runtime code=%d stderr=%q", code, stderr.String())
+	}
+
+	stderr.Reset()
+	if code = runner.Run(context.Background(), []string{"install", "--runtime", "bad"}, Streams{Stderr: &stderr}); code != ExitUsage || !strings.Contains(stderr.String(), "--runtime must be") {
+		t.Fatalf("bad runtime code=%d stderr=%q", code, stderr.String())
+	}
 
 	runner.Hooks.Install = func(context.Context, InstallRequest) error { return gomoufox.ErrURLBlocked }
 	code = runner.Run(context.Background(), []string{"install"}, Streams{Stderr: &stderr})
@@ -414,8 +424,11 @@ func TestDefaultDoctorUsesInstallHook(t *testing.T) {
 	if err != nil || !called {
 		t.Fatalf("defaultDoctor success err=%v called=%v", err, called)
 	}
-	if !report.CamoufoxPkg.OK || !report.Playwright.OK || report.Playwright.Match == nil || !*report.Playwright.Match || !report.CamoufoxBin.OK {
+	if !report.RuntimeAssets.OK || !report.CamoufoxPkg.OK || !report.Playwright.OK || report.Playwright.Match == nil || !*report.Playwright.Match || !report.CamoufoxBin.OK {
 		t.Fatalf("success report = %#v", report)
+	}
+	if report.Python.OK || report.Venv.OK {
+		t.Fatalf("default doctor should not report Python readiness: %#v", report)
 	}
 	if report.CamoufoxPkg.Version != sidecar.RequiredCamoufox ||
 		report.Playwright.PkgVersion != sidecar.RequiredPlaywright ||
@@ -428,7 +441,7 @@ func TestDefaultDoctorUsesInstallHook(t *testing.T) {
 		return gomoufox.ErrNotInstalled
 	})
 	report, err = defaultDoctor(context.Background(), DoctorRequest{})
-	if !errors.Is(err, gomoufox.ErrNotInstalled) || report.CamoufoxPkg.OK || !strings.Contains(report.CamoufoxPkg.Error, "not installed") {
+	if !errors.Is(err, gomoufox.ErrNotInstalled) || report.RuntimeAssets.OK || !strings.Contains(report.RuntimeAssets.Error, "not installed") {
 		t.Fatalf("failure report=%#v err=%v", report, err)
 	}
 	restore()
@@ -3168,7 +3181,7 @@ func TestRunnerGlobalAndInstallEdges(t *testing.T) {
 	if msg := (Check{OK: true, PkgVersion: "1.57.0", DriverVersion: "1.58.0", Match: &mismatch}).message(); !strings.Contains(msg, "MISMATCH") {
 		t.Fatalf("mismatch message = %q", msg)
 	}
-	if !(DoctorReport{Python: Check{OK: false}, Display: Check{Warning: "DISPLAY not set"}}).hasFailure() {
+	if !(DoctorReport{Python: Check{OK: false, Error: "missing"}, Display: Check{Warning: "DISPLAY not set"}}).hasFailure() {
 		t.Fatal("doctor failure was not detected")
 	}
 }
@@ -3424,11 +3437,11 @@ func TestDefaultEnsureInstalledHooksUseRequests(t *testing.T) {
 		}
 		switch calls {
 		case 1:
-			if cfg.VenvDir != "/venv" || cfg.PythonBin != "/python" || !cfg.ForceReinstall || cfg.SkipBinaryFetch {
+			if cfg.VenvDir != "/venv" || cfg.PythonBin != "/python" || cfg.Runtime != gomoufox.SidecarRuntimePython || !cfg.ForceReinstall || cfg.SkipBinaryFetch {
 				t.Fatalf("install cfg = %#v", cfg)
 			}
 		case 2:
-			if !cfg.SkipBinaryFetch || cfg.ForceReinstall || cfg.VenvDir != "" || cfg.PythonBin != "" {
+			if !cfg.SkipBinaryFetch || cfg.ForceReinstall || cfg.VenvDir != "" || cfg.PythonBin != "" || cfg.Runtime != "" {
 				t.Fatalf("doctor cfg = %#v", cfg)
 			}
 		default:
@@ -3436,7 +3449,7 @@ func TestDefaultEnsureInstalledHooksUseRequests(t *testing.T) {
 		}
 		return nil
 	}
-	if err := defaultInstallEnsureInstalled(context.Background(), InstallRequest{Dir: "/venv", Python: "/python", Force: true}); err != nil {
+	if err := defaultInstallEnsureInstalled(context.Background(), InstallRequest{Dir: "/venv", Python: "/python", Runtime: string(gomoufox.SidecarRuntimePython), Force: true}); err != nil {
 		t.Fatal(err)
 	}
 	if err := defaultDoctorEnsureInstalled(context.Background()); err != nil {
@@ -4456,12 +4469,13 @@ func canonicalJSONForTest(t *testing.T, raw []byte) []byte {
 func allDoctorOK() DoctorReport {
 	match := true
 	return DoctorReport{
-		Python:      Check{OK: true, Version: "3.12.4"},
-		Venv:        Check{OK: true, Path: "/tmp/venv"},
-		CamoufoxPkg: Check{OK: true, Version: "0.4.11"},
-		Playwright:  Check{OK: true, PkgVersion: "1.57.0", DriverVersion: "1.57.0", Match: &match},
-		CamoufoxBin: Check{OK: true, Version: "v135.0.1-beta.24", Platform: "linux/x64"},
-		Display:     Check{OK: true},
+		RuntimeAssets: Check{OK: true, Version: "v135.0.1-beta.24", Platform: "linux/x64"},
+		Python:        Check{OK: true, Version: "3.12.4"},
+		Venv:          Check{OK: true, Path: "/tmp/venv"},
+		CamoufoxPkg:   Check{OK: true, Version: "0.4.11"},
+		Playwright:    Check{OK: true, PkgVersion: "1.57.0", DriverVersion: "1.57.0", Match: &match},
+		CamoufoxBin:   Check{OK: true, Version: "v135.0.1-beta.24", Platform: "linux/x64"},
+		Display:       Check{OK: true},
 	}
 }
 

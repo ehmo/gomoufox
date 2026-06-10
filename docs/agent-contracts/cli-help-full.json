@@ -5,18 +5,19 @@
         "gomoufox --json doctor"
       ],
       "name": "doctor",
-      "summary": "check local Python, venv, Camoufox, Playwright, binary, and display readiness",
+      "summary": "check local node-direct runtime assets, Playwright, Camoufox binary, and display readiness",
       "usage": "gomoufox doctor [--json]"
     },
     {
       "flags": [
         "--dir",
+        "--runtime",
         "--python",
         "--force"
       ],
       "name": "install",
-      "summary": "provision the pinned Camoufox Python environment and browser binary",
-      "usage": "gomoufox install [--dir <venv>] [--python <path>] [--force]"
+      "summary": "provision the pinned Go-managed node-direct runtime assets",
+      "usage": "gomoufox install [--dir <cache>] [--runtime node-direct|python] [--python <path>] [--force]"
     },
     {
       "examples": [

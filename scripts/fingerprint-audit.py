@@ -82,7 +82,7 @@ def main() -> int:
     )
     parser.add_argument("--out", default="dist/fingerprint-audit/latest")
     parser.add_argument("--gomoufox-realpass", default="", help="prebuilt gomoufox-realpass binary; default builds one under --out")
-    parser.add_argument("--python", default="", help="Python executable with camoufox installed; default uses the gomoufox managed venv")
+    parser.add_argument("--python", default="", help="Python executable with Camoufox installed for the explicit comparison baseline")
     parser.add_argument("--timeout", type=float, default=30.0)
     parser.add_argument("--wait-until", choices=("commit", "domcontentloaded", "load", "networkidle"), default="load")
     parser.add_argument("--settle", type=float, default=0.5)

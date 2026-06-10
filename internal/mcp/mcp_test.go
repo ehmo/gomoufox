@@ -121,7 +121,8 @@ func TestCoreToolsetTrimsAgentDiscoverySurface(t *testing.T) {
 }
 
 func TestToolsListGoldenContract(t *testing.T) {
-	actual := canonicalJSONForTest(t, map[string]any{"tools": Tools()})
+	server := newTestServer(t, defaultTestConfig(t))
+	actual := canonicalJSONForTest(t, toolsListResult(server))
 	expected, err := os.ReadFile(filepath.Join("..", "..", "docs", "agent-contracts", "mcp-tools-list.json"))
 	if err != nil {
 		t.Fatal(err)
@@ -129,7 +130,7 @@ func TestToolsListGoldenContract(t *testing.T) {
 	if !bytes.Equal(actual, expected) {
 		t.Fatal("mcp-tools-list.json drifted; run python3 scripts/check-agent-contracts.py --update")
 	}
-	wire, err := json.Marshal(map[string]any{"tools": Tools()})
+	wire, err := json.Marshal(toolsListResult(server))
 	if err != nil {
 		t.Fatal(err)
 	}

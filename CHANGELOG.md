@@ -4,6 +4,19 @@
 
 - No changes yet.
 
+## v0.1.8
+
+- Make the default node-direct install path fully Python-free for public
+  consumers, including CLI, MCP, skills, and doctor flows.
+- Route node-direct Playwright use through one managed runtime driver cache and
+  reject stale managed launch-server scripts.
+- Fix the managed launch server payload decoding path and hostile-page viewport
+  metrics fallback.
+- Validate the v0.1.8 release gate, no-Python release archive canary on
+  omarchy, and local Homebrew formula install path on studio.
+- Update release coverage and binary-size floors to match the validated
+  node-direct baseline.
+
 ## v0.1.7
 
 - Clear checked-out release files before the public publish job runs

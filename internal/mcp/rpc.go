@@ -57,7 +57,7 @@ func HandleJSONRPC(ctx context.Context, server *Server, data []byte) ([]byte, bo
 	case "ping":
 		return marshalRPC(rpcResponse{JSONRPC: "2.0", ID: id, Result: map[string]any{}}), true
 	case "tools/list":
-		return marshalRPC(rpcResponse{JSONRPC: "2.0", ID: id, Result: map[string]any{"tools": server.Tools()}}), true
+		return marshalRPC(rpcResponse{JSONRPC: "2.0", ID: id, Result: toolsListResult(server)}), true
 	case "tools/call":
 		result, err := callTool(ctx, server, raw["params"])
 		if err != nil {
@@ -66,6 +66,19 @@ func HandleJSONRPC(ctx context.Context, server *Server, data []byte) ([]byte, bo
 		return marshalRPC(rpcResponse{JSONRPC: "2.0", ID: id, Result: result}), true
 	default:
 		return marshalRPC(rpcResponse{JSONRPC: "2.0", ID: id, Error: &rpcError{Code: -32601, Message: "method not found"}}), true
+	}
+}
+
+func toolsListResult(server *Server) map[string]any {
+	tools := server.Tools()
+	return map[string]any{
+		"tools": tools,
+		"_meta": map[string]any{
+			"gomoufox/toolset":      server.toolset,
+			"gomoufox/tool_count":   len(tools),
+			"gomoufox/core_command": "gomoufox mcp --toolset core",
+			"gomoufox/agent_hint":   "use core for lower-token browser control; use full for diagnostics or gated tools",
+		},
 	}
 }
 

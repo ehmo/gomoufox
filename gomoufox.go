@@ -18,17 +18,37 @@ func New(ctx context.Context, opts ...Option) (*Browser, error) {
 	for _, opt := range opts {
 		opt(&cfg)
 	}
+	configureConnectorForRuntime(&cfg)
 	if cfg.autoInstall {
 		if err := EnsureInstalled(ctx,
 			func(o *InstallOptions) {
 				o.PythonBin = cfg.pythonBin
 				o.VenvDir = cfg.venvDir
+				o.Runtime = cfg.sidecarRuntime
 			},
 		); err != nil {
 			return nil, err
 		}
 	}
 	return newBrowser(ctx, cfg)
+}
+
+func configureConnectorForRuntime(cfg *launchConfig) {
+	if installRuntime(cfg.sidecarRuntime) != SidecarRuntimeNodeDirect {
+		return
+	}
+	driverDir := nodeDirectPlaywrightDriverDir(cfg.venvDir)
+	switch connector := cfg.connector.(type) {
+	case pwbridge.RealConnector:
+		if connector.DriverDirectory == "" {
+			connector.DriverDirectory = driverDir
+			cfg.connector = connector
+		}
+	case *pwbridge.RealConnector:
+		if connector != nil && connector.DriverDirectory == "" {
+			connector.DriverDirectory = driverDir
+		}
+	}
 }
 
 func newBrowser(ctx context.Context, cfg launchConfig) (*Browser, error) {

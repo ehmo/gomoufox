@@ -6,7 +6,7 @@
     },
     {
       "name": "install",
-      "usage": "gomoufox install [--dir <venv>] [--python <path>] [--force]"
+      "usage": "gomoufox install [--dir <cache>] [--runtime node-direct|python] [--python <path>] [--force]"
     },
     {
       "name": "open",

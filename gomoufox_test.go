@@ -76,19 +76,15 @@ func TestNewAutoInstallAndConnectErrorStopsSidecar(t *testing.T) {
 	origDriver := pwbridgeEnsureDriver
 	defer func() { pwbridgeEnsureDriver = origDriver }()
 	installed := false
-	driverInstalled := false
 	sidecarEnsureInstalled = func(ctx context.Context, opts sidecarpkg.InstallOptions) error {
 		installed = true
-		if opts.PythonBin != "python3.12" || opts.VenvDir != "/venv" {
+		if opts.PythonBin != "python3.12" || opts.VenvDir != "/venv" || opts.Runtime != string(SidecarRuntimeNodeDirect) {
 			t.Fatalf("install opts = %#v", opts)
 		}
 		return nil
 	}
 	pwbridgeEnsureDriver = func(driverDirectory string) error {
-		driverInstalled = true
-		if driverDirectory != "" {
-			t.Fatalf("driver directory = %q", driverDirectory)
-		}
+		t.Fatalf("node-direct auto install should use the managed runtime driver, not install %q separately", driverDirectory)
 		return nil
 	}
 	sidecar := &fakeSidecar{endpoint: "wss://localhost:1234/rawtoken"}
@@ -100,9 +96,6 @@ func TestNewAutoInstallAndConnectErrorStopsSidecar(t *testing.T) {
 	)
 	if !installed {
 		t.Fatalf("auto install not called")
-	}
-	if !driverInstalled {
-		t.Fatalf("driver install not called")
 	}
 	if !errors.Is(err, ErrConnect) || !strings.Contains(err.Error(), "connect failed") {
 		t.Fatalf("connect err = %v", err)
@@ -713,7 +706,7 @@ func TestEnsureInstalledMapsOptionsAndErrors(t *testing.T) {
 	sidecarEnsureInstalled = func(ctx context.Context, opts sidecarpkg.InstallOptions) error {
 		called = true
 		if opts.PythonBin != "python3.12" || opts.VenvDir != "/venv" || opts.CamoufoxVersion != "0.4.11" ||
-			!opts.SkipBinaryFetch || opts.CamoufoxPath != "/camoufox" || !opts.Verbose || !opts.ForceReinstall {
+			opts.Runtime != string(SidecarRuntimePython) || !opts.SkipBinaryFetch || opts.CamoufoxPath != "/camoufox" || !opts.Verbose || !opts.ForceReinstall {
 			t.Fatalf("opts = %#v", opts)
 		}
 		return fmt.Errorf("wrapped: %w", sidecarpkg.ErrVersionMismatch)
@@ -721,6 +714,7 @@ func TestEnsureInstalledMapsOptionsAndErrors(t *testing.T) {
 	err := EnsureInstalled(context.Background(), func(o *InstallOptions) {
 		o.PythonBin = "python3.12"
 		o.VenvDir = "/venv"
+		o.Runtime = SidecarRuntimePython
 		o.CamoufoxVersion = "0.4.11"
 		o.SkipBinaryFetch = true
 		o.CamoufoxPath = "/camoufox"
@@ -735,7 +729,80 @@ func TestEnsureInstalledMapsOptionsAndErrors(t *testing.T) {
 	}
 }
 
-func TestEnsureInstalledInstallsPlaywrightDriver(t *testing.T) {
+func TestEnsureInstalledDefaultsToNodeDirectRuntime(t *testing.T) {
+	orig := sidecarEnsureInstalled
+	origDriver := pwbridgeEnsureDriver
+	defer func() {
+		sidecarEnsureInstalled = orig
+		pwbridgeEnsureDriver = origDriver
+	}()
+	pwbridgeEnsureDriver = func(driverDirectory string) error {
+		t.Fatalf("node-direct default install should not repeat driver install for %q", driverDirectory)
+		return nil
+	}
+	sidecarEnsureInstalled = func(_ context.Context, opts sidecarpkg.InstallOptions) error {
+		if opts.Runtime != "" {
+			t.Fatalf("default install should leave runtime empty for sidecar default, got %#v", opts)
+		}
+		return nil
+	}
+	if err := EnsureInstalled(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestNewAutoInstallPassesConfiguredRuntime(t *testing.T) {
+	orig := sidecarEnsureInstalled
+	origDriver := pwbridgeEnsureDriver
+	defer func() {
+		sidecarEnsureInstalled = orig
+		pwbridgeEnsureDriver = origDriver
+	}()
+	pwbridgeEnsureDriver = func(string) error { return nil }
+	sidecarEnsureInstalled = func(_ context.Context, opts sidecarpkg.InstallOptions) error {
+		if opts.Runtime != string(SidecarRuntimePython) {
+			t.Fatalf("auto-install runtime = %q", opts.Runtime)
+		}
+		return nil
+	}
+	_, err := New(context.Background(),
+		WithSidecarRuntime(SidecarRuntimePython),
+		withSidecarFactory(fakeSidecarFactory(&fakeSidecar{endpoint: "ws://127.0.0.1:1234"})),
+		withConnector(&fakeConnector{session: &fakeSession{browser: &fakeBrowser{connected: true}}}),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestConfigureConnectorForNodeDirectRuntimeUsesManagedDriver(t *testing.T) {
+	cfg := defaultLaunchConfig()
+	cfg.venvDir = filepath.Join(t.TempDir(), "cache")
+	configureConnectorForRuntime(&cfg)
+	real, ok := cfg.connector.(pwbridge.RealConnector)
+	if !ok {
+		t.Fatalf("connector = %T, want pwbridge.RealConnector", cfg.connector)
+	}
+	if real.DriverDirectory != nodeDirectPlaywrightDriverDir(cfg.venvDir) {
+		t.Fatalf("driver directory = %q, want %q", real.DriverDirectory, nodeDirectPlaywrightDriverDir(cfg.venvDir))
+	}
+
+	custom := pwbridge.RealConnector{DriverDirectory: "/custom-driver"}
+	cfg.connector = custom
+	configureConnectorForRuntime(&cfg)
+	if got := cfg.connector.(pwbridge.RealConnector).DriverDirectory; got != custom.DriverDirectory {
+		t.Fatalf("custom driver directory = %q, want %q", got, custom.DriverDirectory)
+	}
+
+	cfg.connector = pwbridge.RealConnector{}
+	cfg.sidecarRuntime = SidecarRuntimePython
+	configureConnectorForRuntime(&cfg)
+	if got := cfg.connector.(pwbridge.RealConnector).DriverDirectory; got != "" {
+		t.Fatalf("python runtime driver directory = %q, want default", got)
+	}
+}
+
+func TestEnsureInstalledInstallsPlaywrightDriverForLegacyPython(t *testing.T) {
 	orig := sidecarEnsureInstalled
 	origDriver := pwbridgeEnsureDriver
 	defer func() {
@@ -755,7 +822,7 @@ func TestEnsureInstalledInstallsPlaywrightDriver(t *testing.T) {
 		}
 		return nil
 	}
-	if err := EnsureInstalled(context.Background()); err != nil {
+	if err := EnsureInstalled(context.Background(), func(o *InstallOptions) { o.Runtime = SidecarRuntimePython }); err != nil {
 		t.Fatal(err)
 	}
 	if !sidecarCalled || !driverCalled {
@@ -764,7 +831,7 @@ func TestEnsureInstalledInstallsPlaywrightDriver(t *testing.T) {
 
 	driverErr := errors.New("driver failed")
 	pwbridgeEnsureDriver = func(string) error { return driverErr }
-	if err := EnsureInstalled(context.Background()); !errors.Is(err, ErrNotInstalled) || !strings.Contains(err.Error(), "playwright driver install failed") {
+	if err := EnsureInstalled(context.Background(), func(o *InstallOptions) { o.Runtime = SidecarRuntimePython }); !errors.Is(err, ErrNotInstalled) || !strings.Contains(err.Error(), "playwright driver install failed") {
 		t.Fatalf("driver install err = %v", err)
 	}
 }

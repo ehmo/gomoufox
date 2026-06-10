@@ -1,0 +1,74 @@
+name: consumer-canary
+
+on:
+  schedule:
+    - cron: "37 10 1 * *"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Release tag to test
+        required: false
+        default: latest
+        type: string
+      verify_attestations:
+        description: Verify GitHub artifact attestations
+        required: false
+        default: "false"
+        type: choice
+        options:
+          - "false"
+          - "true"
+      go_install:
+        description: Also test go install
+        required: false
+        default: "false"
+        type: choice
+        options:
+          - "false"
+          - "true"
+      brew_mode:
+        description: Homebrew formula mode
+        required: false
+        default: inspect
+        type: choice
+        options:
+          - off
+          - inspect
+          - install
+
+permissions:
+  contents: read
+  attestations: read
+
+concurrency:
+  group: consumer-canary-${{ github.repository }}-${{ github.event_name }}
+  cancel-in-progress: false
+
+jobs:
+  consumer-canary:
+    if: github.repository == 'ehmo/gomoufox'
+    runs-on: ubicloud-standard-2
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6
+        if: github.event_name == 'workflow_dispatch' && inputs.go_install == 'true'
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Public release consumer canary
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CANARY_VERSION: ${{ inputs.version || 'latest' }}
+          VERIFY_ATTESTATIONS: ${{ inputs.verify_attestations || 'false' }}
+          GO_INSTALL: ${{ inputs.go_install || 'false' }}
+          BREW_MODE: ${{ inputs.brew_mode || 'inspect' }}
+        run: |
+          args=(--version "$CANARY_VERSION" --repo ehmo/gomoufox --brew-mode "$BREW_MODE")
+          if [ "$VERIFY_ATTESTATIONS" = "true" ]; then
+            args+=(--verify-attestations)
+          fi
+          if [ "$GO_INSTALL" = "true" ]; then
+            args+=(--go-install)
+          fi
+          bash scripts/public-consumer-canary.sh "${args[@]}"

@@ -570,6 +570,7 @@ exit 65
 	if err := EnsureInstalled(context.Background(), InstallOptions{
 		VenvDir:      venv,
 		PythonBin:    python,
+		Runtime:      RuntimePython,
 		CamoufoxPath: fakeVerifiedBrowserTree(t),
 	}); err != nil {
 		t.Fatal(err)
@@ -591,7 +592,7 @@ func TestEnsureInstalledPropagatesLocalFailureBranches(t *testing.T) {
 
 	t.Setenv("PATH", t.TempDir())
 	t.Setenv("GOMOUFOX_PYTHON", "")
-	if err := EnsureInstalled(context.Background(), InstallOptions{VenvDir: t.TempDir(), PythonBin: "missing-python"}); err == nil || !strings.Contains(err.Error(), "Python 3.9") {
+	if err := EnsureInstalled(context.Background(), InstallOptions{VenvDir: t.TempDir(), PythonBin: "missing-python", Runtime: RuntimePython}); err == nil || !strings.Contains(err.Error(), "Python 3.9") {
 		t.Fatalf("python discovery err = %v", err)
 	}
 
@@ -605,7 +606,7 @@ if [ "$1" = "-m" ] && [ "$2" = "venv" ]; then
 fi
 exit 42
 `)
-	if err := EnsureInstalled(context.Background(), InstallOptions{VenvDir: filepath.Join(t.TempDir(), "venv"), PythonBin: pythonCreatesBrokenVenv}); err == nil || !strings.Contains(err.Error(), "create venv") {
+	if err := EnsureInstalled(context.Background(), InstallOptions{VenvDir: filepath.Join(t.TempDir(), "venv"), PythonBin: pythonCreatesBrokenVenv, Runtime: RuntimePython}); err == nil || !strings.Contains(err.Error(), "create venv") {
 		t.Fatalf("ensure venv err = %v", err)
 	}
 
@@ -615,11 +616,11 @@ exit 42
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := EnsureInstalled(context.Background(), InstallOptions{VenvDir: venv, PythonBin: python, CamoufoxVersion: "0.0.0"}); !errors.Is(err, ErrVersionMismatch) {
+	if err := EnsureInstalled(context.Background(), InstallOptions{VenvDir: venv, PythonBin: python, Runtime: RuntimePython, CamoufoxVersion: "0.0.0"}); !errors.Is(err, ErrVersionMismatch) {
 		t.Fatalf("unsupported camoufox pin err = %v", err)
 	}
 
-	if err := EnsureInstalled(context.Background(), InstallOptions{VenvDir: venv, PythonBin: python, CamoufoxPath: t.TempDir()}); !errors.Is(err, ErrNotInstalled) {
+	if err := EnsureInstalled(context.Background(), InstallOptions{VenvDir: venv, PythonBin: python, Runtime: RuntimePython, CamoufoxPath: t.TempDir()}); !errors.Is(err, ErrNotInstalled) {
 		t.Fatalf("binary validation err = %v", err)
 	}
 
@@ -631,7 +632,7 @@ exit 0
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := EnsureInstalled(context.Background(), InstallOptions{VenvDir: mismatchedVenv, PythonBin: mismatchedPython, CamoufoxPath: fakeVerifiedBrowserTree(t)}); !errors.Is(err, ErrVersionMismatch) {
+	if err := EnsureInstalled(context.Background(), InstallOptions{VenvDir: mismatchedVenv, PythonBin: mismatchedPython, Runtime: RuntimePython, CamoufoxPath: fakeVerifiedBrowserTree(t)}); !errors.Is(err, ErrVersionMismatch) {
 		t.Fatalf("final compatibility err = %v", err)
 	}
 
@@ -643,7 +644,7 @@ exit 0
 	writeFakePip(t, forcedVenv, `#!/bin/sh
 exit 0
 `)
-	if err := EnsureInstalled(context.Background(), InstallOptions{VenvDir: forcedVenv, PythonBin: forcedPython, CamoufoxPath: fakeVerifiedBrowserTree(t), ForceReinstall: true}); err != nil {
+	if err := EnsureInstalled(context.Background(), InstallOptions{VenvDir: forcedVenv, PythonBin: forcedPython, Runtime: RuntimePython, CamoufoxPath: fakeVerifiedBrowserTree(t), ForceReinstall: true}); err != nil {
 		t.Fatalf("forced reinstall err = %v", err)
 	}
 
@@ -651,7 +652,7 @@ exit 0
 	venvPythonErr := errors.New("venv python failed")
 	venvPythonAfterInstall = func(string) (string, error) { return "", venvPythonErr }
 	t.Cleanup(func() { venvPythonAfterInstall = oldVenvPythonAfterInstall })
-	if err := EnsureInstalled(context.Background(), InstallOptions{VenvDir: forcedVenv, PythonBin: forcedPython, CamoufoxPath: fakeVerifiedBrowserTree(t)}); !errors.Is(err, venvPythonErr) {
+	if err := EnsureInstalled(context.Background(), InstallOptions{VenvDir: forcedVenv, PythonBin: forcedPython, Runtime: RuntimePython, CamoufoxPath: fakeVerifiedBrowserTree(t)}); !errors.Is(err, venvPythonErr) {
 		t.Fatalf("post-install venv python err = %v", err)
 	}
 	venvPythonAfterInstall = oldVenvPythonAfterInstall
@@ -665,7 +666,7 @@ func TestInstallLifecycleAdditionalLocalBranchEdges(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("PATH", t.TempDir())
 	t.Setenv("GOMOUFOX_PYTHON", "")
-	if err := EnsureInstalled(context.Background(), InstallOptions{}); err == nil || !strings.Contains(err.Error(), "Python 3.9") {
+	if err := EnsureInstalled(context.Background(), InstallOptions{Runtime: RuntimePython}); err == nil || !strings.Contains(err.Error(), "Python 3.9") {
 		t.Fatalf("default venv install err = %v", err)
 	}
 
@@ -734,7 +735,7 @@ PIP
 fi
 exit 42
 `)
-	if err := EnsureInstalled(context.Background(), InstallOptions{VenvDir: filepath.Join(t.TempDir(), "venv"), PythonBin: pythonRemovedAfterPip, CamoufoxPath: t.TempDir()}); !errors.Is(err, ErrNotInstalled) {
+	if err := EnsureInstalled(context.Background(), InstallOptions{VenvDir: filepath.Join(t.TempDir(), "venv"), PythonBin: pythonRemovedAfterPip, Runtime: RuntimePython, CamoufoxPath: t.TempDir()}); !errors.Is(err, ErrNotInstalled) {
 		t.Fatalf("created venv binary validation err = %v", err)
 	}
 }
@@ -1223,12 +1224,17 @@ func TestCamoufoxManifestSupportMatrixHasChecksums(t *testing.T) {
 		if !ok {
 			t.Fatalf("supported platform missing manifest checksum: %s", key)
 		}
-		if !isLowerHexSHA256(got) {
-			t.Fatalf("manifest checksum for %s is not a lowercase sha256: %q", key, got)
+		if len(got) == 0 {
+			t.Fatalf("manifest checksums for %s are empty", key)
+		}
+		for _, checksum := range got {
+			if !isLowerHexSHA256(checksum) {
+				t.Fatalf("manifest checksum for %s is not a lowercase sha256: %q", key, checksum)
+			}
 		}
 	}
-	for key, checksum := range camoufoxManifestSHA256 {
-		if checksum == "" {
+	for key, checksums := range camoufoxManifestSHA256 {
+		if len(checksums) == 0 {
 			t.Fatalf("manifest checksum is empty for %s", key)
 		}
 		if !supported[key] {
@@ -1515,13 +1521,13 @@ func setSidecarRuntime(t *testing.T, goos, goarch string) func() {
 func replaceManifestChecksum(t *testing.T, expected string) func() {
 	t.Helper()
 	original := camoufoxManifestSHA256
-	copyMap := make(map[string]string, len(original))
+	copyMap := make(map[string][]string, len(original))
 	for key, value := range original {
-		copyMap[key] = value
+		copyMap[key] = append([]string(nil), value...)
 	}
 	key := camoufoxManifestKey(CamoufoxBinaryVersion, sidecarGOOS, sidecarGOARCH)
 	camoufoxManifestSHA256 = copyMap
-	camoufoxManifestSHA256[key] = expected
+	camoufoxManifestSHA256[key] = []string{expected}
 	return func() {
 		camoufoxManifestSHA256 = original
 	}

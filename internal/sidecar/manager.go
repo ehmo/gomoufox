@@ -33,6 +33,8 @@ var (
 	sidecarStopKillTimeout       = 5 * time.Second
 )
 
+const sidecarStartupStderrLimit = 8 * 1024
+
 type Manager struct {
 	cfg      Config
 	mu       sync.Mutex
@@ -48,10 +50,15 @@ type Manager struct {
 }
 
 func New(cfg Config) *Manager {
-	if cfg.Runtime == "" {
-		cfg.Runtime = RuntimePython
-	}
+	cfg.Runtime = normalizeRuntime(cfg.Runtime)
 	return &Manager{cfg: cfg, state: StateIdle, done: make(chan struct{})}
+}
+
+func normalizeRuntime(runtimeName string) string {
+	if runtimeName == "" {
+		return RuntimeNodeDirect
+	}
+	return runtimeName
 }
 
 func (m *Manager) launchCommand(ctx context.Context, python, runtimeName string) (*exec.Cmd, error) {
@@ -112,18 +119,19 @@ func (m *Manager) Start(ctx context.Context) (string, error) {
 		m.lock = lock
 		m.mu.Unlock()
 	}
-	runtimeName := m.cfg.Runtime
-	if runtimeName == "" {
-		runtimeName = RuntimePython
-	}
+	runtimeName := normalizeRuntime(m.cfg.Runtime)
 	if runtimeName != RuntimePython && runtimeName != RuntimeNodeDirect {
 		m.setDead()
 		return "", fmt.Errorf("%w: unsupported sidecar runtime %q", ErrSidecarStart, runtimeName)
 	}
-	python, err := VenvPython(m.cfg.VenvDir)
-	if err != nil {
-		m.setDead()
-		return "", err
+	var python string
+	if runtimeName == RuntimePython {
+		var err error
+		python, err = VenvPython(m.cfg.VenvDir)
+		if err != nil {
+			m.setDead()
+			return "", err
+		}
 	}
 	if m.cfg.DirectNetwork {
 		if m.cfg.Proxy != nil {
@@ -168,7 +176,12 @@ func (m *Manager) Start(ctx context.Context) (string, error) {
 	m.info.Runtime = runtimeName
 	m.info.PID = cmd.Process.Pid
 	m.mu.Unlock()
-	go m.forwardDiagnostics(stderr)
+	diagnostics := newStartupDiagnostics(sidecarStartupStderrLimit)
+	diagnosticsDone := make(chan struct{})
+	go func() {
+		defer close(diagnosticsDone)
+		m.forwardDiagnostics(stderr, diagnostics)
+	}()
 	waitStarted := false
 	startWait := func() {
 		if !waitStarted {
@@ -190,7 +203,7 @@ func (m *Manager) Start(ctx context.Context) (string, error) {
 	startWait()
 	if err != nil {
 		m.Stop(context.Background())
-		return "", err
+		return "", startupErrorWithDiagnostics(err, diagnostics, diagnosticsDone)
 	}
 	m.mu.Lock()
 	m.endpoint = endpoint
@@ -332,15 +345,81 @@ func (m *Manager) setDead() {
 	}
 }
 
-func (m *Manager) forwardDiagnostics(r io.Reader) {
+func (m *Manager) forwardDiagnostics(r io.Reader, capture *startupDiagnostics) {
 	scanner := bufio.NewScanner(r)
 	scanner.Buffer(make([]byte, 0, 8192), 1024*1024)
 	for scanner.Scan() {
-		slog.Debug("gomoufox sidecar", "stderr", policy.Redact(scanner.Text()))
+		line := scanner.Text()
+		if capture != nil {
+			capture.WriteString(line + "\n")
+		}
+		slog.Debug("gomoufox sidecar", "stderr", policy.Redact(line))
 	}
 	if err := scanner.Err(); err != nil {
-		slog.Debug("gomoufox sidecar", "stderr", policy.Redact(err.Error()))
+		text := err.Error()
+		if capture != nil {
+			capture.WriteString(text + "\n")
+		}
+		slog.Debug("gomoufox sidecar", "stderr", policy.Redact(text))
 	}
+}
+
+type startupDiagnostics struct {
+	mu        sync.Mutex
+	limit     int
+	buf       []byte
+	truncated bool
+}
+
+func newStartupDiagnostics(limit int) *startupDiagnostics {
+	return &startupDiagnostics{limit: limit}
+}
+
+func (d *startupDiagnostics) WriteString(text string) {
+	if d == nil || d.limit <= 0 || text == "" {
+		return
+	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	remaining := d.limit - len(d.buf)
+	if remaining <= 0 {
+		d.truncated = true
+		return
+	}
+	if len(text) > remaining {
+		text = text[:remaining]
+		d.truncated = true
+	}
+	d.buf = append(d.buf, text...)
+}
+
+func (d *startupDiagnostics) Excerpt() string {
+	if d == nil {
+		return ""
+	}
+	d.mu.Lock()
+	text := string(d.buf)
+	truncated := d.truncated
+	d.mu.Unlock()
+	text = strings.TrimSpace(policy.Redact(text))
+	if text == "" {
+		return ""
+	}
+	if truncated {
+		text += "\n... <truncated>"
+	}
+	return text
+}
+
+func startupErrorWithDiagnostics(err error, diagnostics *startupDiagnostics, done <-chan struct{}) error {
+	select {
+	case <-done:
+	case <-time.After(100 * time.Millisecond):
+	}
+	if excerpt := diagnostics.Excerpt(); excerpt != "" {
+		return fmt.Errorf("%w: sidecar stderr: %s", err, excerpt)
+	}
+	return err
 }
 
 func (m *Manager) startFilteringProxy(ctx context.Context) error {

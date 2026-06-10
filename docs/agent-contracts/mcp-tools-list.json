@@ -1,4 +1,10 @@
 {
+  "_meta": {
+    "gomoufox/agent_hint": "use core for lower-token browser control; use full for diagnostics or gated tools",
+    "gomoufox/core_command": "gomoufox mcp --toolset core",
+    "gomoufox/tool_count": 28,
+    "gomoufox/toolset": "full"
+  },
   "tools": [
     {
       "_meta": {

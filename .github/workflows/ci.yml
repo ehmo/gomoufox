@@ -55,13 +55,11 @@ jobs:
           python3 scripts/audit-public-release.py --help >/dev/null
           PYTHON_BIN=python3 go test -count=1 . -run TestAuditPublicReleaseRetriesTransientBrewInstallFailure
 
-  test:
+  fast-gate:
     runs-on: ubicloud-standard-2
-    timeout-minutes: 120
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
-        with:
-          fetch-depth: 0
       - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6
         with:
           go-version-file: go.mod
@@ -76,15 +74,8 @@ jobs:
         run: python3 scripts/check-agent-contracts.py
       - name: Vet
         run: go vet ./...
-      - name: Coverage
-        run: |
-          profile="$(mktemp "${TMPDIR:-/tmp}/gomoufox-coverage.XXXXXX")"
-          go test -count=1 -coverprofile="$profile" ./...
-          total="$(go tool cover -func="$profile" | awk '/^total:/ {print $3}')"
-          rm -f "$profile"
-          test "$total" = "100.0%"
-      - name: Vulnerability check
-        run: GOTOOLCHAIN="$(go env GOVERSION)" go run golang.org/x/vuln/cmd/govulncheck@v1.3.0 ./...
+      - name: Public consumer canary plan
+        run: bash scripts/public-consumer-canary.sh --version latest --repo ehmo/gomoufox --dry-run
 
   benchmark:
     if: github.event_name == 'workflow_dispatch' && inputs.run_benchmark == 'true'

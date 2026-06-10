@@ -3,7 +3,7 @@
 <p align="center">
   <img alt="Go 1.26.4" src="https://img.shields.io/badge/Go-1.26.4-00ADD8?logo=go&logoColor=white">
   <img alt="MIT license" src="https://img.shields.io/badge/license-MIT-2ea44f">
-  <img alt="coverage 100%" src="https://img.shields.io/badge/coverage-100%25-2ea44f">
+  <img alt="coverage 97%+" src="https://img.shields.io/badge/coverage-97%25%2B-2ea44f">
   <img alt="MCP ready" src="https://img.shields.io/badge/MCP-ready-7c3aed">
   <img alt="agent skills" src="https://img.shields.io/badge/agent%20skills-included-f97316">
 </p>
@@ -86,18 +86,24 @@ The Homebrew formula installs only on platforms where the pinned Camoufox
 browser has a supported upstream binary: macOS Apple Silicon and Linux amd64.
 The release still publishes all Go archives for library and CLI users.
 
-`gomoufox install` creates a managed Python environment, installs hash-locked
-Python packages, and fetches the pinned browser binary. Go callers still use the
-Go API and CLI. The Python environment is runtime plumbing for Camoufox.
+`gomoufox install` provisions the default Go-managed node-direct runtime:
+Playwright's Node driver/package, gomoufox's launch server, and the pinned
+Camoufox browser archive. Normal Go, CLI, and MCP use does not require Python.
+Use `gomoufox install --runtime python` only for the explicit legacy
+Python-sidecar path.
 
-Python remains required because Camoufox owns launch-option generation,
-BrowserForge fingerprint generation, geoip handling, and browser payload
-validation. gomoufox keeps that boundary explicit: launcher arguments are passed
-over stdin, the launcher file does not persist proxy credentials, and browser
-processes inherit the operating-system environment with secret-like and
-agent-control variables removed. Values you pass with `WithExtraEnv` are added
-explicitly. Generated launch payloads are not cached because they include fresh
-fingerprint state.
+The prebuilt CLI, MCP discovery, skills commands, release checksum checks, and
+archive smoke path do not need that managed runtime. They can be verified from a
+fresh public checkout with the no-Python consumer canary shown in the release
+verification section.
+
+The explicit legacy Python-sidecar path still owns BrowserForge fingerprint
+generation, geoip handling, and browser payload validation. gomoufox keeps that
+boundary explicit: launcher arguments are passed over stdin, the launcher file
+does not persist proxy credentials, and browser processes inherit the
+operating-system environment with secret-like and agent-control variables
+removed. Values you pass with `WithExtraEnv` are added explicitly. Generated
+launch payloads are not cached because they include fresh fingerprint state.
 
 Use `GOMOUFOX_CAMOUFOX_PATH` when you already have a compatible Camoufox browser
 directory and want gomoufox to use it instead of the managed one. gomoufox
@@ -106,14 +112,11 @@ Camoufox builds that do not match the release manifest, set
 `GOMOUFOX_TRUST_UNVERIFIED_CAMOUFOX_PATH=1`; `gomoufox doctor` reports that as a
 warning.
 
-Python packages are installed from embedded lock files with `--require-hashes`
-and `--only-binary=:all:`. A missing wheel or hash mismatch fails the install
-instead of falling back to an unpinned source build. Regenerate the locks only
-when changing the version matrix:
-
-```bash
-python3 scripts/update-python-locks.py
-```
+Legacy Python-sidecar packages are installed from embedded lock files with
+`--require-hashes` and `--only-binary=:all:`. A missing wheel or hash mismatch
+fails that explicit legacy install instead of falling back to an unpinned source
+build. Maintainers regenerate those locks only when changing the legacy version
+matrix; that private helper is not part of the public consumer export.
 
 ## Go library
 
@@ -299,21 +302,23 @@ Latest checked baseline: see [docs/BENCHMARKS.md](docs/BENCHMARKS.md).
 
 | Runtime | Passed | Blocked | Failed | Wall ms | Peak RSS MiB | Peak CPU % | Report tokens |
 |---|---:|---:|---:|---:|---:|---:|---:|
-| gomoufox | 95 | 5 | 0 | 366,338 | 2,765.3 | 569.9 | 13,059 |
-| Python Camoufox | 95 | 5 | 0 | 363,961 | 3,083.2 | 483.1 | 68,307 |
+| gomoufox | 96 | 4 | 0 | 359,088 | 3,041.3 | 399.0 | 12,824 |
+| Python Camoufox | 95 | 5 | 0 | 357,093 | 3,256.4 | 482.1 | 81,801 |
 
-Latest extended validation: 100 targets, 45s timeout, `commit` wait, 3s settle,
+Latest extended validation: 100 targets, 60s timeout, `commit` wait, 3s settle,
 no screenshots, built gomoufox realpass binary, reused browser, compact Go
 report, 0s extra load-state wait, and 250,000-byte classification cap.
-Both runtimes passed 95, blocked 5, failed 0, with zero outcome mismatches. See
-[docs/benchmarks/2026-06-08-release-gate.json](docs/benchmarks/2026-06-08-release-gate.json).
+gomoufox passed 96, blocked 4, failed 0. Python Camoufox passed 95, blocked 5,
+failed 0. The run had 0 Go-only regressions and 1 Python-only outcome
+difference. See
+[docs/benchmarks/2026-06-09-node-direct-readiness.json](docs/benchmarks/2026-06-09-node-direct-readiness.json).
 
 | Ratio | Go / Python |
 |---|---:|
-| Wall time | 1.007 |
-| Peak RSS | 0.897 |
-| Peak CPU | 1.180 |
-| Report tokens | 0.191 |
+| Wall time | 1.006 |
+| Peak RSS | 0.934 |
+| Peak CPU | 0.828 |
+| Report tokens | 0.157 |
 
 Serial wall time varies because Firefox dominates the run. The checked wins are
 lower RSS and a smaller agent report. Go wall time was effectively parity but
@@ -353,17 +358,30 @@ In release mode, a new shared block, failure, or performance outlier gets one
 focused retry. The gate merges that focused retry back into the full report, then
 reruns the strict resource, timing, required-target, and token checks.
 
-Python-removal work has its own promotion check. A node-direct run must use the
-extended target matrix, match Python outcomes with zero runtime failures, and
-beat Python on wall time, target duration, RSS, CPU, and report-token ratios
-before it can replace the Python sidecar:
+Go/Python benchmark promotion and consumer no-Python readiness are separate
+checks. A node-direct benchmark run must use the extended target matrix, have no
+Go-only outcome regressions, have zero runtime failures, stay within the
+Go/Python wall-time and target-duration caps, and beat Python on RSS, CPU, and
+report-token ratios before it is benchmark-ready:
 
 ```bash
 scripts/benchmark-realpass.py --mode extended --go-sidecar-runtime node-direct
-python3 scripts/check-python-removal-readiness.py --artifact docs/benchmarks/<run>.json
 ```
 
-Until that check reports `candidate`, node-direct stays experimental.
+Consumer readiness comes from the default-flow canary, which runs install,
+doctor, CLI discovery, MCP core handshake, and skills with failing
+`python`/`python3` PATH shims:
+
+```bash
+scripts/no-python-consumer-canary.sh --gomoufox ./gomoufox --json-out dist/node-direct-consumer-readiness.json
+python3 scripts/check-python-removal-readiness.py --artifact dist/node-direct-consumer-readiness.json
+```
+
+Both checks must stay green for release promotion. The node-direct launch
+payload is built in Go, including generated personas and WebGL sampling.
+Unsupported dynamic options such as geoip, humanize, locale, and persistent
+contexts fail closed instead of falling back to Python and silently changing
+browser identity.
 
 ## Release verification
 
@@ -378,6 +396,19 @@ shasum -a 256 -c checksums.txt
 gh attestation verify gomoufox_X.Y.Z_darwin_arm64.tar.gz -R ehmo/gomoufox
 ```
 
+Run the public consumer canary when you want one command that checks the release
+asset layout, checksums, host archive extraction, CLI help, MCP core handshake,
+skills listing, and skills install dry-run:
+
+```bash
+bash scripts/public-consumer-canary.sh --version vX.Y.Z --repo ehmo/gomoufox --brew-mode inspect
+```
+
+Add `--verify-attestations`, `--go-install`, or `--brew-mode install` when you
+need those slower paths. The default canary avoids browser launch work. Add
+`--browser-smoke-url https://example.com/` when you also want to prove the
+managed runtime is installed and usable on that machine.
+
 Maintainers also run the bundled public audit after publication:
 
 ```bash
@@ -390,31 +421,26 @@ python3 scripts/audit-public-release.py \
 
 ## Common questions
 
-### Do I still need Python?
+### Where is Python still used?
 
-Yes, for the managed Camoufox runtime. `gomoufox install` creates the venv and
-pins the Camoufox package. `node-direct` changes the long-lived sidecar process,
-not the launch-options source of truth. Your application code can stay in Go.
+No for normal Go, CLI, MCP, install, and doctor flows. The default runtime is
+Go-managed node-direct and the no-Python consumer canary verifies install,
+doctor, CLI discovery, MCP core handshake, and skills with failing
+`python`/`python3` shims.
 
-### Can gomoufox remove the Python dependency?
+It is removed from default install/runtime paths. Python remains for explicit
+legacy Python-sidecar mode, upstream Python Camoufox comparison benchmarks, and
+maintainer release/dev scripts listed in `scripts/python-tooling-policy.json`.
 
-Not safely yet. Camoufox's Python `launch_options` path generates BrowserForge
-fingerprints, geoip and locale settings, WebGL/font/canvas values, Firefox
-preferences, and the final browser payload. That payload changes between
-launches. gomoufox does not cache it because stale fingerprints are a detection
-risk. A replacement needs either an upstream stable launch-plan contract or a
-parity-gated Go implementation against the pinned Camoufox package.
-
-The removal track starts with a launch-plan audit:
+The audit path still exists for upstream parity work:
 
 ```bash
 go run ./cmd/gomoufox-launchplan --scenario all --out dist/launch-plan/latest
 ```
 
 That command dumps gomoufox's Go launch input beside the Python Camoufox launch
-payload. It can also compare an optional future pure-Go candidate payload with
-`--candidate <json>` and fails on drift. Until that candidate exists and passes
-real-site plus fingerprint gates, Python stays required.
+payload. It can also compare an optional candidate payload with
+`--candidate <json>` and fails on drift.
 
 ### Why use gomoufox instead of Python Camoufox directly?
 
@@ -464,7 +490,7 @@ runtime. Offline browser paths are manifest-verified unless
 
 gomoufox pins the browser stack. Upgrade these pieces together.
 
-| gomoufox | playwright-go | Playwright in venv | Camoufox package | Camoufox browser |
+| gomoufox | playwright-go | Playwright package | Camoufox package | Camoufox browser |
 |---|---|---|---|---|
 | v0.1.x | v0.5700.1 | 1.57.0 | 0.4.11 | v135.0.1-beta.24 |
 
@@ -475,15 +501,21 @@ Headful Linux runs need an existing display or `GOMOUFOX_AUTO_DISPLAY=1`.
 
 ## Development
 
+These Python commands are development tooling, not runtime prerequisites:
+
 ```bash
 go test -count=1 ./...
 go test -race -count=1 ./...
 go vet ./...
 python3 scripts/check-agent-contracts.py
 python3 scripts/format-doc-numbers.py
-python3 scripts/update-python-locks.py --check --skip-pip-validate
 go run golang.org/x/vuln/cmd/govulncheck@v1.3.0 ./...
 ```
+
+Normal CI keeps to cheap deterministic checks: public export consistency,
+docs-number formatting, unit tests, agent contracts, `go vet`, and the public
+consumer canary in dry-run mode. Public tag releases run the heavier coverage,
+vulnerability, package, attestation, and post-release audit checks.
 
 Agent-facing CLI and MCP discovery snapshots live in `docs/agent-contracts/`.
 When CLI help or MCP tool schemas change, run

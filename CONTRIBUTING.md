@@ -2,7 +2,8 @@
 
 Thanks for working on gomoufox.
 
-Start with the standard checks:
+Start with the standard checks. The Python commands here are development and
+release-validation tooling, not gomoufox runtime prerequisites:
 
 ```bash
 go test -count=1 ./...
@@ -12,8 +13,8 @@ python3 scripts/check-agent-contracts.py
 go run golang.org/x/vuln/cmd/govulncheck@v1.3.0 ./...
 ```
 
-Run the Go/Python benchmark before significant browser, sidecar, MCP, CLI, or
-resource-related changes:
+Run the explicit Go/Python benchmark before significant browser, sidecar, MCP,
+CLI, or resource-related changes:
 
 ```bash
 scripts/benchmark-realpass.py --mode smoke
@@ -22,8 +23,9 @@ scripts/benchmark-realpass.py --mode smoke
 Use `--mode extended` for the 100-target matrix before release candidates or major
 runtime changes. Use `--max-targets <n>` for a bounded investigation run.
 
-For baseline changes, run full mode with `--update-doc docs/BENCHMARKS.md` and
-commit the JSON written under `docs/benchmarks/`.
+For upstream-baseline changes, run full mode with
+`--update-doc docs/BENCHMARKS.md` and commit the JSON written under
+`docs/benchmarks/`.
 
 Keep changes small. Add tests for behavior, not private helpers. If you touch
 CLI output or MCP schemas, update `docs/agent-contracts/` with

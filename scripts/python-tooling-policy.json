@@ -1,0 +1,90 @@
+{
+  "python_min": "3.9",
+  "owner": "maintainers",
+  "scripts": {
+    "audit-public-release.py": {
+      "decision": "keep",
+      "scope": "public-release-audit",
+      "public_exposed": true,
+      "justification": "Audits GitHub release assets, Homebrew behavior, attestations, and public consumer release metadata."
+    },
+    "benchmark-realpass.py": {
+      "decision": "keep",
+      "scope": "go-python-benchmark",
+      "public_exposed": true,
+      "justification": "Runs explicit Go-vs-Python upstream comparison benchmarks; not part of default consumer readiness."
+    },
+    "check-agent-contracts.py": {
+      "decision": "keep",
+      "scope": "agent-contract-validation",
+      "public_exposed": true,
+      "justification": "Validates generated CLI/MCP/skills contracts used by public CI and release workflows."
+    },
+    "check-public-release-contract.py": {
+      "decision": "keep",
+      "scope": "public-release-validation",
+      "public_exposed": true,
+      "justification": "Validates public repository shape, manifest allowlist, formula metadata, and leak checks."
+    },
+    "check-python-removal-readiness.py": {
+      "decision": "keep",
+      "scope": "consumer-readiness-validation",
+      "public_exposed": true,
+      "justification": "Validates node-direct consumer readiness artifacts emitted by the no-Python canary."
+    },
+    "check-release-benchmark-evidence.py": {
+      "decision": "keep-private",
+      "scope": "private-release-gate",
+      "public_exposed": false,
+      "justification": "Private tag gate validates committed benchmark evidence freshness before public release."
+    },
+    "export-public-gomoufox.py": {
+      "decision": "keep-private",
+      "scope": "private-publication",
+      "public_exposed": false,
+      "justification": "Private mirror exporter; public repositories should not run private export logic."
+    },
+    "fingerprint-audit.py": {
+      "decision": "keep",
+      "scope": "go-python-fingerprint-audit",
+      "public_exposed": true,
+      "justification": "Explicit release/benchmark audit comparing Python Camoufox, Python sidecar, and node-direct fingerprints."
+    },
+    "format-doc-numbers.py": {
+      "decision": "keep",
+      "scope": "docs-validation",
+      "public_exposed": true,
+      "justification": "Small deterministic doc formatter used in public CI and release workflows."
+    },
+    "package-release.py": {
+      "decision": "keep",
+      "scope": "release-packaging",
+      "public_exposed": true,
+      "justification": "Builds deterministic public release archives, checksums, formula, provenance, and SBOM."
+    },
+    "python-realpass.py": {
+      "decision": "keep",
+      "scope": "upstream-python-baseline",
+      "public_exposed": true,
+      "justification": "Explicit upstream Python Camoufox baseline for benchmark and fingerprint comparisons only."
+    },
+    "realpass-merge-retry-reports.py": {
+      "decision": "keep-private",
+      "scope": "private-release-gate",
+      "public_exposed": false,
+      "justification": "Private realpass release gate helper for focused retry evidence merging."
+    },
+    "realpass-retry-targets.py": {
+      "decision": "keep-private",
+      "scope": "private-release-gate",
+      "public_exposed": false,
+      "justification": "Private realpass release gate helper for selecting retry targets."
+    },
+    "update-python-locks.py": {
+      "decision": "keep-private",
+      "scope": "maintainer-lock-regeneration",
+      "public_exposed": false,
+      "justification": "Maintainer-only Python lock regeneration for legacy Python-sidecar mode; consumers do not need it."
+    }
+  }
+}
