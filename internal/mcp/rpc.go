@@ -141,6 +141,7 @@ func callTool(ctx context.Context, server *Server, params json.RawMessage) (map[
 	var in struct {
 		Name      string          `json:"name"`
 		Arguments json.RawMessage `json:"arguments"`
+		Meta      json.RawMessage `json:"_meta"` // reserved by the MCP spec on all request params; accepted and ignored
 	}
 	if err := decode(params, &in); err != nil || in.Name == "" {
 		return nil, ErrInvalidCall

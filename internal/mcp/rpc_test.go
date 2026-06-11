@@ -123,6 +123,16 @@ func TestJSONRPCInitializeListAndCallTool(t *testing.T) {
 		t.Fatalf("session_list missing structuredContent = %#v", result)
 	}
 
+	// The MCP spec reserves params._meta on every request (Claude Code sends
+	// _meta.progressToken on each tools/call); it must not be rejected as an
+	// unknown field by strict params decoding.
+	resp = callRPC(t, server, `{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"session_list","arguments":{},"_meta":{"progressToken":2}}}`)
+	result = rpcResult(t, resp)
+	structured = result["structuredContent"].(map[string]any)
+	if structured["sessions"] == nil {
+		t.Fatalf("tools/call with params._meta failed = %#v", result)
+	}
+
 	resp = callRPC(t, server, `{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"skills_list","arguments":{}}}`)
 	result = rpcResult(t, resp)
 	structured = result["structuredContent"].(map[string]any)
