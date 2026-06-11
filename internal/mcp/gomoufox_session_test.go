@@ -271,12 +271,17 @@ func TestGomoufoxSessionBrowserOperations(t *testing.T) {
 	for _, condition := range []waitCondition{
 		{Kind: "selector", Value: "#ready", Timeout: time.Second},
 		{Kind: "text", Value: "Done", Timeout: time.Second},
-		{Kind: "url_contains", Value: "/done", Timeout: time.Second},
+		// Substring of an absolute URL spanning "://" and "/" — the old
+		// "**<value>**" glob could never match this and always timed out.
+		{Kind: "url_contains", Value: "example.com/start", Timeout: time.Second},
 		{Kind: "load_state", Value: "networkidle", Timeout: time.Second},
 	} {
 		if err := session.WaitFor(context.Background(), condition); err != nil {
 			t.Fatalf("wait %#v: %v", condition, err)
 		}
+	}
+	if err := session.WaitFor(context.Background(), waitCondition{Kind: "url_contains", Value: "not-in-url", Timeout: 150 * time.Millisecond}); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("non-matching url_contains err = %v", err)
 	}
 	if err := session.WaitFor(context.Background(), waitCondition{Kind: "bad"}); !errors.Is(err, ErrInvalidCall) {
 		t.Fatalf("bad wait err = %v", err)

@@ -141,6 +141,7 @@ func callTool(ctx context.Context, server *Server, params json.RawMessage) (map[
 	var in struct {
 		Name      string          `json:"name"`
 		Arguments json.RawMessage `json:"arguments"`
+		Meta      json.RawMessage `json:"_meta"` // reserved by the MCP spec on all request params; accepted and ignored
 	}
 	if err := decode(params, &in); err != nil || in.Name == "" {
 		return nil, ErrInvalidCall
@@ -251,6 +252,15 @@ func structuredContent(payload map[string]any) (map[string]any, error) {
 	if len(payload) == 0 {
 		return nil, nil
 	}
+	// When the primary payload is a text-only field, emit no structuredContent
+	// at all: clients that prefer structuredContent over the text content
+	// (e.g. Claude Code) would otherwise hide the tool's main output. The text
+	// content carries the complete payload including all metadata.
+	for key := range payload {
+		if structuredContentTextOnlyField(key) {
+			return nil, nil
+		}
+	}
 	out := make(map[string]any, len(payload))
 	budget := structuredContentBudget{}
 	if value, ok := payload["error"]; ok {
@@ -268,10 +278,6 @@ func structuredContent(payload map[string]any) (map[string]any, error) {
 			continue
 		}
 		value := payload[key]
-		if structuredContentTextOnlyField(key) {
-			budget.omit(key)
-			continue
-		}
 		fieldBytes, err := structuredContentFieldBytes(key, value)
 		if err != nil {
 			return nil, err
@@ -294,7 +300,7 @@ func structuredContent(payload map[string]any) (map[string]any, error) {
 
 func structuredContentTextOnlyField(key string) bool {
 	switch key {
-	case "body", "content", "elements", "headers", "messages", "page_errors", "requests", "state":
+	case "body", "content", "headers", "messages", "page_errors", "requests", "state":
 		return true
 	default:
 		return false
