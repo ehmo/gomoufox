@@ -627,7 +627,21 @@ func (s *gomoufoxSession) WaitFor(ctx context.Context, condition waitCondition) 
 		_, err := s.page.WaitForSelector(ctx, "text="+condition.Value, gomoufox.WaitForSelectorTimeout(condition.Timeout), gomoufox.WaitForSelectorState("visible"))
 		return err
 	case "url_contains":
-		return s.page.WaitForURL(ctx, "**"+condition.Value+"**", gomoufox.WithTimeout(condition.Timeout))
+		// Poll the URL directly: a "**<value>**" glob degrades to [^/]* around
+		// non-slash text under Playwright glob rules, so it can never match an
+		// absolute URL and always times out.
+		ticker := time.NewTicker(100 * time.Millisecond)
+		defer ticker.Stop()
+		for {
+			if strings.Contains(s.page.URL(), condition.Value) {
+				return nil
+			}
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-ticker.C:
+			}
+		}
 	case "load_state":
 		return s.page.WaitForLoadState(ctx, condition.Value)
 	default:
