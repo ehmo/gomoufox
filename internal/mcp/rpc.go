@@ -295,7 +295,7 @@ func structuredContent(payload map[string]any) (map[string]any, error) {
 
 func structuredContentTextOnlyField(key string) bool {
 	switch key {
-	case "body", "content", "elements", "headers", "messages", "page_errors", "requests", "state":
+	case "body", "content", "headers", "messages", "page_errors", "requests", "state":
 		return true
 	default:
 		return false

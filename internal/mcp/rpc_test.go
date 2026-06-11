@@ -299,7 +299,7 @@ func TestJSONRPCLargeBrowserToolsExposeMetadataStructuredContent(t *testing.T) {
 	resp = callRPC(t, server, `{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"browser_snapshot","arguments":{}}}`)
 	result = rpcResult(t, resp)
 	structured = result["structuredContent"].(map[string]any)
-	if structured["elements"] != nil || structured["title"] != "Login" || structured["url"] != "https://example.com/login" {
+	if structured["elements"] == nil || structured["title"] != "Login" || structured["url"] != "https://example.com/login" {
 		t.Fatalf("snapshot structuredContent = %#v", structured)
 	}
 	if structured["provenance"].(map[string]any)["trust"] != "untrusted" {
@@ -554,8 +554,8 @@ func TestRPCIDAndToolResultDefensiveBranches(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if structured := result["structuredContent"].(map[string]any); structured["elements"] != nil || !structuredContentBudgetMeta(t, structured)["truncated"].(bool) {
-		t.Fatalf("snapshot elements should not duplicate structuredContent = %#v", result)
+	if structured := result["structuredContent"].(map[string]any); structured["elements"] == nil {
+		t.Fatalf("small snapshot elements should be included in structuredContent = %#v", result)
 	}
 	result, err = toolResult(Response{Payload: map[string]any{
 		"elements":   []map[string]any{{"ref": "e1", "name": "Sign in"}},
@@ -566,7 +566,7 @@ func TestRPCIDAndToolResultDefensiveBranches(t *testing.T) {
 		t.Fatal(err)
 	}
 	snapshotMetadata := result["structuredContent"].(map[string]any)
-	if snapshotMetadata["elements"] != nil || snapshotMetadata["title"] != "Login" || snapshotMetadata["provenance"].(map[string]any)["trust"] != "untrusted" {
+	if snapshotMetadata["elements"] == nil || snapshotMetadata["title"] != "Login" || snapshotMetadata["provenance"].(map[string]any)["trust"] != "untrusted" {
 		t.Fatalf("snapshot metadata structuredContent = %#v", snapshotMetadata)
 	}
 
@@ -774,6 +774,49 @@ func TestRPCIDAndToolResultDefensiveBranches(t *testing.T) {
 	}
 	if result["structuredContent"] != nil || result["isError"] == true {
 		t.Fatalf("plain explicit content result = %#v", result)
+	}
+}
+
+func TestStructuredContentElementsSizeBudget(t *testing.T) {
+	smallResult, err := toolResult(Response{Payload: map[string]any{
+		"elements": []map[string]any{{"ref": "e1", "role": "heading", "name": "Example Domain"}},
+		"title":    "Example Domain",
+		"url":      "https://example.com",
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	smallStructured := smallResult["structuredContent"].(map[string]any)
+	elements, ok := smallStructured["elements"].([]map[string]any)
+	if !ok || len(elements) != 1 || elements[0]["ref"] != "e1" {
+		t.Fatalf("small elements should pass through structuredContent = %#v", smallStructured)
+	}
+	if smallStructured["_meta"] != nil {
+		t.Fatalf("small elements should not report truncation = %#v", smallStructured)
+	}
+
+	largeElements := make([]map[string]any, 0, 100)
+	for i := 0; i < 100; i++ {
+		largeElements = append(largeElements, map[string]any{
+			"ref":  fmt.Sprintf("e%d", i),
+			"role": "link",
+			"name": strings.Repeat("x", 100),
+		})
+	}
+	largeResult, err := toolResult(Response{Payload: map[string]any{
+		"elements": largeElements,
+		"title":    "Big Page",
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	largeStructured := largeResult["structuredContent"].(map[string]any)
+	if largeStructured["elements"] != nil || largeStructured["title"] != "Big Page" {
+		t.Fatalf("oversized elements should be omitted from structuredContent = %#v", largeStructured)
+	}
+	meta := structuredContentBudgetMeta(t, largeStructured)
+	if meta["truncated"] != true || !stringSetFromAny(t, meta["omitted"])["elements"] {
+		t.Fatalf("oversized elements metadata = %#v", meta)
 	}
 }
 
