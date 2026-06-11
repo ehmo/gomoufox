@@ -320,7 +320,13 @@ func mergeScreenSample(config map[string]any, sample map[string]any, cfg Config)
 		"screenX":     "window.screenX",
 		"screenY":     "window.screenY",
 	} {
-		if value, ok := screen[source]; ok && value != nil {
+		// Skip falsy values just like upstream camoufox-python's
+		// _cast_to_properties ("if not data: continue"). The bundled apify
+		// fingerprint dataset contains screen samples with innerWidth=0 and
+		// innerHeight=0; emitting them would make Camoufox spoof
+		// window.innerWidth/innerHeight to 0 in every JS world, breaking all
+		// Playwright pointer actions ("element is outside of the viewport").
+		if value, ok := screen[source]; ok && value != nil && !isFalsyPersonaValue(value) {
 			config[target] = nonNegativePersonaNumber(target, value)
 		}
 	}
@@ -340,6 +346,23 @@ func mergeScreenSample(config map[string]any, sample map[string]any, cfg Config)
 	if _, ok := config["window.screenX"]; !ok {
 		config["window.screenX"] = 0
 	}
+}
+
+// isFalsyPersonaValue mirrors Python's truthiness check used by upstream
+// camoufox-python when casting fingerprint samples to Camoufox properties:
+// zero numbers, empty strings and false are skipped, never emitted.
+func isFalsyPersonaValue(value any) bool {
+	switch v := value.(type) {
+	case float64:
+		return v == 0
+	case int:
+		return v == 0
+	case string:
+		return v == ""
+	case bool:
+		return !v
+	}
+	return false
 }
 
 func nonNegativePersonaNumber(key string, value any) any {
