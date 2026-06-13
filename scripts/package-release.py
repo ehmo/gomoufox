@@ -386,8 +386,9 @@ def write_formula(path: Path, version: str, artifacts: list[Artifact]) -> str:
         lines.append("")
     lines.extend([
         "  def install",
-        '    bin.install "gomoufox"',
-        '    bin.install "gomoufox-realpass"',
+        '    archive_root = Dir["gomoufox_*"].find { |path| File.directory?(path) } || "."',
+        '    bin.install "#{archive_root}/gomoufox"',
+        '    bin.install "#{archive_root}/gomoufox-realpass"',
         "  end",
         "",
         "  test do",

@@ -4,6 +4,11 @@
 
 - No changes yet.
 
+## v0.1.10
+
+- Fix the generated Homebrew formula to install binaries from the release
+  archive's top-level directory, and add release audit coverage for that path.
+
 ## v0.1.9
 
 - Add `gomoufox agents install` to install bundled Agent Skills and guarded

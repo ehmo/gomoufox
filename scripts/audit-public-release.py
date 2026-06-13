@@ -405,6 +405,9 @@ def audit_formula(asset_dir: Path, version: str, checksums: dict[str, str]) -> d
         f"releases/download/{version}/gomoufox_{plain}_linux_amd64.tar.gz",
         "no supported macOS Intel browser binary",
         "no supported Linux ARM browser binary",
+        'archive_root = Dir["gomoufox_*"].find { |path| File.directory?(path) } || "."',
+        'bin.install "#{archive_root}/gomoufox"',
+        'bin.install "#{archive_root}/gomoufox-realpass"',
     ]
     missing = [item for item in required if item not in text]
     if missing:
