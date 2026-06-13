@@ -222,6 +222,19 @@ the right instructions even when no skill directory exists yet. `export` and
 `install` write the same checked bodies that ship in the repo. Existing files are
 left alone unless you pass `--force`.
 
+Install skills plus MCP configuration for common agents:
+
+```bash
+gomoufox agents install --target all --dry-run --json
+gomoufox agents install --target cursor --scope project --features skills,mcp --force
+```
+
+`agents install` supports `codex`, `claude`, `cursor`, `gemini`, or `all`, with
+`--scope user|project` and `--features skills,mcp`. MCP entries use stdio and
+default to `gomoufox mcp --toolset core`; pass repeated `--mcp-arg <arg>` only
+when you explicitly want to enable additional MCP server flags. Dry-run output
+shows the exact absolute paths that would be written.
+
 ## MCP
 
 Run browser tools over stdio:

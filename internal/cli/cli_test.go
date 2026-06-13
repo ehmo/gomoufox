@@ -844,6 +844,111 @@ func TestSkillsCLIExportAndInstall(t *testing.T) {
 	}
 }
 
+func TestAgentsCLIInstallDryRunJSON(t *testing.T) {
+	tmp := t.TempDir()
+	home := filepath.Join(tmp, "home")
+	if err := os.MkdirAll(home, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	oldUserHomeDir := userHomeDir
+	t.Cleanup(func() { userHomeDir = oldUserHomeDir })
+	userHomeDir = func() (string, error) { return home, nil }
+
+	var stdout, stderr bytes.Buffer
+	code := (Runner{}).Run(context.Background(), []string{"agents", "install", "--target", "all", "--scope", "user", "--features", "skills,mcp", "--toolset", "core", "--dry-run", "--json"}, Streams{Stdout: &stdout, Stderr: &stderr})
+	if code != ExitOK {
+		t.Fatalf("agents install dry-run code=%d stderr=%q", code, stderr.String())
+	}
+	var plan struct {
+		Target  string `json:"target"`
+		Scope   string `json:"scope"`
+		Toolset string `json:"toolset"`
+		DryRun  bool   `json:"dry_run"`
+		Actions []struct {
+			Target string `json:"target"`
+			Kind   string `json:"kind"`
+			Path   string `json:"path"`
+			Status string `json:"status"`
+		} `json:"actions"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &plan); err != nil {
+		t.Fatalf("agents install json = %q err=%v", stdout.String(), err)
+	}
+	if plan.Target != "all" || plan.Scope != "user" || plan.Toolset != "core" || !plan.DryRun || len(plan.Actions) == 0 {
+		t.Fatalf("plan = %#v", plan)
+	}
+	for _, action := range plan.Actions {
+		if action.Status != "would_write" || action.Path == "" {
+			t.Fatalf("bad action = %#v", action)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(home, ".agents")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("dry-run created files err=%v", err)
+	}
+}
+
+func TestAgentsCLIInstallProjectScopeApplies(t *testing.T) {
+	tmp := t.TempDir()
+	home := filepath.Join(tmp, "home")
+	if err := os.MkdirAll(home, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	oldUserHomeDir := userHomeDir
+	t.Cleanup(func() { userHomeDir = oldUserHomeDir })
+	userHomeDir = func() (string, error) { return home, nil }
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := os.Chdir(wd); err != nil {
+			t.Fatal(err)
+		}
+	})
+	work := filepath.Join(tmp, "work")
+	if err := os.MkdirAll(work, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(work); err != nil {
+		t.Fatal(err)
+	}
+
+	var stdout, stderr bytes.Buffer
+	code := (Runner{}).Run(context.Background(), []string{"agents", "install", "--target", "cursor", "--scope", "project", "--features", "skills,mcp", "--force"}, Streams{Stdout: &stdout, Stderr: &stderr})
+	if code != ExitOK {
+		t.Fatalf("agents install code=%d stdout=%q stderr=%q", code, stdout.String(), stderr.String())
+	}
+	if _, err := os.Stat(filepath.Join(work, ".agents", "skills", "gomoufox", "SKILL.md")); err != nil {
+		t.Fatalf("project skill missing: %v", err)
+	}
+	data, err := os.ReadFile(filepath.Join(work, ".cursor", "mcp.json"))
+	if err != nil {
+		t.Fatalf("project MCP missing: %v", err)
+	}
+	if !bytes.Contains(data, []byte(`"gomoufox"`)) || !bytes.Contains(data, []byte(`"--toolset"`)) {
+		t.Fatalf("MCP config = %s", data)
+	}
+}
+
+func TestAgentsCLIUsageErrors(t *testing.T) {
+	cases := [][]string{
+		{"agents"},
+		{"agents", "bad"},
+		{"agents", "install", "--target", "bad"},
+		{"agents", "install", "--scope", "bad"},
+		{"agents", "install", "--features", "bad"},
+		{"agents", "install", "--toolset", "core --enable-eval"},
+	}
+	for _, args := range cases {
+		t.Run(strings.Join(args, " "), func(t *testing.T) {
+			var stderr bytes.Buffer
+			if code := (Runner{}).Run(context.Background(), args, Streams{Stderr: &stderr}); code == ExitOK {
+				t.Fatalf("%v succeeded stderr=%q", args, stderr.String())
+			}
+		})
+	}
+}
+
 func TestSkillsCLIInstallDefaultsToCodexHome(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("CODEX_HOME", filepath.Join(tmp, "codex-home"))
@@ -973,6 +1078,16 @@ func TestSkillsCLIJSONWriteErrors(t *testing.T) {
 			t.Fatalf("skills install json write code=%d stderr=%q", code, stderr.String())
 		}
 	})
+	t.Run("agents install", func(t *testing.T) {
+		oldUserHomeDir := userHomeDir
+		t.Cleanup(func() { userHomeDir = oldUserHomeDir })
+		home := t.TempDir()
+		userHomeDir = func() (string, error) { return home, nil }
+		var stderr bytes.Buffer
+		if code := (Runner{}).Run(context.Background(), []string{"agents", "install", "--target", "codex", "--dry-run", "--json"}, Streams{Stdout: errWriter{}, Stderr: &stderr}); code != ExitRuntime || !strings.Contains(stderr.String(), "write failed") {
+			t.Fatalf("agents install json write code=%d stderr=%q", code, stderr.String())
+		}
+	})
 }
 
 func TestAgentHelpGoldenContracts(t *testing.T) {
@@ -1019,6 +1134,7 @@ func TestCommandHelpAdvertisesParsedFlags(t *testing.T) {
 		"fetch":      fetchFlagSpecs(),
 		"session":    mergeFlagSpecs(sessionExportFlagSpecs(), sessionImportFlagSpecs()),
 		"skills":     mergeFlagSpecs(skillsListFlagSpecs(), skillsShowFlagSpecs(), skillsExportFlagSpecs(), skillsInstallFlagSpecs()),
+		"agents":     agentsInstallFlagSpecs(),
 		"serve":      serveFlagSpecs(),
 		"mcp":        mcpFlagSpecs(),
 		"help":       helpFlagSpecs(),

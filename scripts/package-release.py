@@ -394,6 +394,7 @@ def write_formula(path: Path, version: str, artifacts: list[Artifact]) -> str:
         '    assert_match "gomoufox v#{version}", shell_output("#{bin}/gomoufox --version")',
         '    assert_match "gomoufox-realpass v#{version}", shell_output("#{bin}/gomoufox-realpass --version")',
         '    assert_match "commands", shell_output("#{bin}/gomoufox help --json --fields commands")',
+        '    assert_match "actions", shell_output("#{bin}/gomoufox agents install --target all --scope user --features skills,mcp --toolset core --dry-run --json")',
         "  end",
         "end",
         "",

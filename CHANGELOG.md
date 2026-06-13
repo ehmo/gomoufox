@@ -4,6 +4,11 @@
 
 - No changes yet.
 
+## v0.1.9
+
+- Add `gomoufox agents install` to install bundled Agent Skills and guarded
+  MCP stdio configuration for Codex, Claude, Cursor, and Gemini.
+
 ## v0.1.8
 
 - Remove Python from the default node-direct install path for public consumers,

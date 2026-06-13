@@ -37,6 +37,10 @@
       "usage": "gomoufox skills <list|show|export|install> [flags]"
     },
     {
+      "name": "agents",
+      "usage": "gomoufox agents <install> [flags]"
+    },
+    {
       "name": "serve",
       "usage": "gomoufox serve --auth-token <token> [--bind 127.0.0.1] [--port 3741] [--session-dir <dir>]"
     },

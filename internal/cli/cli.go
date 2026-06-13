@@ -19,6 +19,7 @@ import (
 	"time"
 
 	gomoufox "github.com/ehmo/gomoufox"
+	"github.com/ehmo/gomoufox/internal/agents"
 	"github.com/ehmo/gomoufox/internal/buildinfo"
 	"github.com/ehmo/gomoufox/internal/daemon"
 	mcpserver "github.com/ehmo/gomoufox/internal/mcp"
@@ -238,6 +239,8 @@ func (r Runner) Run(ctx context.Context, args []string, streams Streams) int {
 		return r.runMCP(ctx, global, rest, streams)
 	case "skills":
 		return runSkills(global, rest, streams)
+	case "agents":
+		return runAgents(global, rest, streams)
 	case "get":
 		return r.runBrowserCommand(ctx, global, rest, commandGet, streams)
 	case "screenshot":
@@ -513,6 +516,13 @@ func nestedCommandHelps() []commandHelp {
 			Flags:    []string{"--target", "--dir", "--force", "--dry-run", "--json"},
 			Examples: []string{"gomoufox skills install --target codex --dry-run --json"},
 		},
+		{
+			Name:     "agents install",
+			Usage:    "gomoufox agents install [--target codex|claude|cursor|gemini|all] [--scope user|project] [--features skills,mcp] [--toolset core] [--mcp-arg <arg>] [--force] [--dry-run] [--json]",
+			Summary:  "install gomoufox skills and MCP configuration for common coding agents",
+			Flags:    []string{"--target", "--scope", "--features", "--toolset", "--mcp-arg", "--force", "--dry-run", "--json"},
+			Examples: []string{"gomoufox agents install --target all --dry-run --json"},
+		},
 	}
 }
 
@@ -597,6 +607,13 @@ func commandHelps() []commandHelp {
 			Summary:  "list, print, export, or install version-matched agent skills",
 			Flags:    []string{"list", "show <name>", "export --out <dir>", "install --target codex", "--version", "--dir", "--force", "--dry-run"},
 			Examples: []string{"gomoufox skills list --json", "gomoufox skills show core", "gomoufox skills export --out ./skills", "gomoufox skills install --target codex --dry-run --json"},
+		},
+		{
+			Name:     "agents",
+			Usage:    "gomoufox agents <install> [flags]",
+			Summary:  "install gomoufox skills and MCP server config for common coding agents",
+			Flags:    []string{"install", "--target", "--scope", "--features", "--toolset", "--mcp-arg", "--force", "--dry-run"},
+			Examples: []string{"gomoufox agents install --target all --dry-run --json"},
 		},
 		{
 			Name:    "serve",
@@ -1616,6 +1633,18 @@ func skillsInstallFlagSpecs() map[string]flagSpec {
 	}
 }
 
+func agentsInstallFlagSpecs() map[string]flagSpec {
+	return map[string]flagSpec{
+		"target":   {Kind: flagValue},
+		"scope":    {Kind: flagValue},
+		"features": {Kind: flagValue},
+		"toolset":  {Kind: flagValue},
+		"mcp-arg":  {Kind: flagValue, Repeat: true},
+		"force":    {Kind: flagBool},
+		"dry-run":  {Kind: flagBool},
+	}
+}
+
 type skillsCommand struct {
 	Subcommand string
 	Name       string
@@ -1623,6 +1652,17 @@ type skillsCommand struct {
 	Out        string
 	Target     string
 	Dir        string
+	Force      bool
+	DryRun     bool
+}
+
+type agentsCommand struct {
+	Subcommand string
+	Target     string
+	Scope      string
+	Features   []string
+	Toolset    string
+	MCPArgs    []string
 	Force      bool
 	DryRun     bool
 }
@@ -1706,6 +1746,54 @@ func runSkills(global globalFlags, args []string, streams Streams) int {
 	return ExitOK
 }
 
+func runAgents(global globalFlags, args []string, streams Streams) int {
+	command, err := parseAgents(args)
+	if err != nil {
+		writeDiagnosticLine(streams.Stderr, err)
+		return ExitUsage
+	}
+	if command.Subcommand != "install" {
+		writeDiagnosticLine(streams.Stderr, errors.New("usage: gomoufox agents <install>"))
+		return ExitUsage
+	}
+	home, err := userHomeDir()
+	if err != nil {
+		writeDiagnosticLine(streams.Stderr, fmt.Errorf("resolve home directory: %w", err))
+		return ExitRuntime
+	}
+	work, err := os.Getwd()
+	if err != nil {
+		writeDiagnosticLine(streams.Stderr, fmt.Errorf("resolve working directory: %w", err))
+		return ExitRuntime
+	}
+	plan, err := agents.Install(agents.Options{
+		Target:   command.Target,
+		Scope:    command.Scope,
+		Features: command.Features,
+		Toolset:  command.Toolset,
+		MCPArgs:  command.MCPArgs,
+		Force:    command.Force,
+		DryRun:   command.DryRun,
+		HomeDir:  home,
+		WorkDir:  work,
+	})
+	if err != nil {
+		writeDiagnosticLine(streams.Stderr, err)
+		return ExitRuntime
+	}
+	if global.JSON {
+		encoder := json.NewEncoder(streams.Stdout)
+		encoder.SetEscapeHTML(false)
+		if err := encoder.Encode(plan); err != nil {
+			writeDiagnosticLine(streams.Stderr, err)
+			return ExitRuntime
+		}
+		return ExitOK
+	}
+	printAgentPlan(streams.Stdout, plan)
+	return ExitOK
+}
+
 func parseSkills(args []string) (skillsCommand, error) {
 	if len(args) == 0 {
 		return skillsCommand{}, errors.New("usage: gomoufox skills <list|show|export|install>")
@@ -1758,6 +1846,35 @@ func parseSkills(args []string) (skillsCommand, error) {
 	}
 }
 
+func parseAgents(args []string) (agentsCommand, error) {
+	if len(args) == 0 {
+		return agentsCommand{}, errors.New("usage: gomoufox agents <install>")
+	}
+	switch args[0] {
+	case "install":
+		parsed, err := parseFlags(args[1:], agentsInstallFlagSpecs())
+		if err != nil {
+			return agentsCommand{}, err
+		}
+		if len(parsed.Positionals) != 0 {
+			return agentsCommand{}, errors.New("usage: gomoufox agents install [--target codex|claude|cursor|gemini|all] [--scope user|project] [--features skills,mcp] [--toolset core] [--mcp-arg <arg>] [--force] [--dry-run]")
+		}
+		features := splitCSV(parsed.value("features"))
+		return agentsCommand{
+			Subcommand: "install",
+			Target:     parsed.valueDefault("target", agents.TargetAll),
+			Scope:      parsed.valueDefault("scope", agents.ScopeUser),
+			Features:   features,
+			Toolset:    parsed.valueDefault("toolset", agents.DefaultToolset),
+			MCPArgs:    parsed.values["mcp-arg"],
+			Force:      parsed.bool("force"),
+			DryRun:     parsed.bool("dry-run"),
+		}, nil
+	default:
+		return agentsCommand{}, errors.New("usage: gomoufox agents <install>")
+	}
+}
+
 func printSkillsList(w io.Writer, items []skillreg.Summary) {
 	for _, item := range items {
 		_, _ = fmt.Fprintf(w, "%s %s min=%s sha256=%s bytes=%d - %s\n", item.Name, item.Version, item.MinGomoufox, item.SHA256, item.Bytes, item.Summary)
@@ -1775,6 +1892,12 @@ func printSkillsWritten(w io.Writer, written []string, dryRun bool) {
 	}
 	for _, path := range written {
 		_, _ = fmt.Fprintf(w, "%s %s\n", verb, filepath.ToSlash(path))
+	}
+}
+
+func printAgentPlan(w io.Writer, plan agents.Plan) {
+	for _, action := range plan.Actions {
+		_, _ = fmt.Fprintf(w, "%s %s %s %s\n", action.Status, action.Target, action.Kind, filepath.ToSlash(action.Path))
 	}
 }
 

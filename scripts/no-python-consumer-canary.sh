@@ -119,6 +119,7 @@ run_no_python "$gomoufox_bin" skills list --json
 run_no_python "$gomoufox_bin" skills show core --json
 run_no_python "$gomoufox_bin" skills show mcp --json
 run_no_python "$gomoufox_bin" skills install --target codex --dir "$skills_dir" --dry-run --json
+run_no_python "$gomoufox_bin" agents install --target all --scope user --features skills,mcp --toolset core --dry-run --json
 
 if [ "$dry_run" = "true" ]; then
   printf '+ write MCP smoke input %q\n' "$mcp_in"

@@ -140,6 +140,24 @@
       "usage": "gomoufox skills <list|show|export|install> [flags]"
     },
     {
+      "examples": [
+        "gomoufox agents install --target all --dry-run --json"
+      ],
+      "flags": [
+        "install",
+        "--target",
+        "--scope",
+        "--features",
+        "--toolset",
+        "--mcp-arg",
+        "--force",
+        "--dry-run"
+      ],
+      "name": "agents",
+      "summary": "install gomoufox skills and MCP server config for common coding agents",
+      "usage": "gomoufox agents <install> [flags]"
+    },
+    {
       "flags": [
         "--auth-token",
         "--bind",

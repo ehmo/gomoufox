@@ -354,6 +354,7 @@ def audit_binaries(version: str, root: Path, browser_smoke_url: str) -> dict:
         raise RuntimeError(f"unexpected skills list: {skills}")
     skill_dir = root.parent / "skills-install"
     install = json_command(gomoufox, ["skills", "install", "--target", "codex", "--dir", str(skill_dir), "--dry-run", "--json"], "gomoufox skills install")
+    agents_install = json_command(gomoufox, ["agents", "install", "--target", "all", "--scope", "user", "--features", "skills,mcp", "--toolset", "core", "--dry-run", "--json"], "gomoufox agents install")
     browser = None
     if browser_smoke_url:
         started = time.time()
@@ -371,6 +372,7 @@ def audit_binaries(version: str, root: Path, browser_smoke_url: str) -> dict:
         "mcp_tools": len(mcp_help.get("mcp_tools", [])),
         "skills": skills["skills"],
         "skills_install_dry_run": install,
+        "agents_install_dry_run": agents_install,
         "browser_smoke": browser,
     }
 

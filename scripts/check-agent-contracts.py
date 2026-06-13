@@ -58,7 +58,7 @@ CONTRACTS = {
     },
 }
 
-CLI_MCP_DOC_BUDGET = 90000
+CLI_MCP_DOC_BUDGET = 91000
 SKILL_DOC_BUDGET = 16000
 SKILL_SCAN_SKIP_DIRS = {".beads", ".git", ".dolt", "dist", "public", "team" + "reports"}
 POSITIONING_OVERCLAIMS = {
@@ -251,6 +251,38 @@ def check_mcp_skill_body(root: Path, gomoufox: str | None, live: dict[str, str])
     for flag in sorted(set(re.findall(r"--[a-z0-9-]+", body))):
         if flag not in normalized:
             failures.append(f"embedded mcp skill references unknown mcp flag {flag!r}")
+    return failures
+
+
+def check_agents_install_dry_run(root: Path, gomoufox: str | None) -> list[str]:
+    command = gomoufox_base(root, gomoufox)
+    failures: list[str] = []
+    data = run_json(
+        root,
+        command,
+        ["agents", "install", "--target", "all", "--scope", "user", "--features", "skills,mcp", "--toolset", "core", "--dry-run", "--json"],
+    )
+    if data.get("target") != "all" or data.get("scope") != "user" or data.get("toolset") != "core" or data.get("dry_run") is not True:
+        failures.append(f"agents install dry-run metadata mismatch: {data}")
+    actions = data.get("actions")
+    if not isinstance(actions, list) or len(actions) < 8:
+        failures.append(f"agents install dry-run action list too small: {data}")
+    else:
+        kinds = {action.get("kind") for action in actions if isinstance(action, dict)}
+        targets = ",".join(sorted(str(action.get("target")) for action in actions if isinstance(action, dict)))
+        if kinds != {"skills", "mcp"}:
+            failures.append(f"agents install dry-run kinds mismatch: {kinds}")
+        for action in actions:
+            if not isinstance(action, dict):
+                failures.append(f"agents install action is not object: {action}")
+                continue
+            if action.get("status") != "would_write":
+                failures.append(f"agents install dry-run non-dry status: {action}")
+            if not Path(str(action.get("path", ""))).is_absolute():
+                failures.append(f"agents install dry-run path is not absolute: {action}")
+        for required in ("codex", "claude", "cursor", "gemini"):
+            if required not in targets:
+                failures.append(f"agents install dry-run missing target {required}: {targets}")
     return failures
 
 
@@ -509,6 +541,7 @@ def check_or_update(root: Path, contracts_dir: Path, docs_path: Path, spec_path:
             failures.append(f"{name} drift: run scripts/check-agent-contracts.py --update and review the diff")
     if update:
         update_docs(root, docs_path, gomoufox, live)
+    failures.extend(check_agents_install_dry_run(root, gomoufox))
     failures.extend(check_docs(root, docs_path, spec_path, gomoufox, live))
     return failures
 
