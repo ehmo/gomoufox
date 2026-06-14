@@ -32,6 +32,8 @@ writes skill files plus a stdio MCP entry that runs
 `gomoufox mcp --toolset core`.
 
 Run the dry run first. It prints the exact files gomoufox would write.
+Reruns are safe: MCP config files are merged, and existing skill files are left
+alone unless you pass `--force`.
 
 ## At a glance
 

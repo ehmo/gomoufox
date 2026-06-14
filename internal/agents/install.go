@@ -90,13 +90,21 @@ func Install(opts Options) (Plan, error) {
 		if opts.DryRun {
 			status = "would_write"
 		}
-		plan.Actions = append(plan.Actions, Action{Target: write.target, Kind: write.kind, Path: write.path, Status: status})
 		if opts.DryRun {
+			plan.Actions = append(plan.Actions, Action{Target: write.target, Kind: write.kind, Path: write.path, Status: status})
 			continue
 		}
-		safePath, err := resolveSafeWrite(write.path, opts.Force)
+		safePath, err := resolveSafeWrite(write.path, true)
 		if err != nil {
 			return Plan{}, err
+		}
+		exists, err := regularFileExists(safePath)
+		if err != nil {
+			return Plan{}, err
+		}
+		if exists && write.merge == nil && !opts.Force {
+			plan.Actions = append(plan.Actions, Action{Target: write.target, Kind: write.kind, Path: write.path, Status: "skipped"})
+			continue
 		}
 		contents := []byte(write.contents)
 		if write.merge != nil {
@@ -109,14 +117,33 @@ func Install(opts Options) (Plan, error) {
 				return Plan{}, err
 			}
 		}
-		if err := safefile.WriteFile0600(safePath, contents, opts.Force); err != nil {
+		allowExisting := opts.Force || write.merge != nil
+		if err := safefile.WriteFile0600(safePath, contents, allowExisting); err != nil {
 			if errors.Is(err, os.ErrExist) {
 				return Plan{}, fmt.Errorf("%s already exists; pass --force to overwrite", safePath)
 			}
 			return Plan{}, err
 		}
+		plan.Actions = append(plan.Actions, Action{Target: write.target, Kind: write.kind, Path: write.path, Status: status})
 	}
 	return plan, nil
+}
+
+func regularFileExists(path string) (bool, error) {
+	st, err := os.Lstat(path)
+	if err == nil {
+		if st.Mode()&os.ModeSymlink != 0 {
+			return false, fmt.Errorf("path contains symlink component: %s", path)
+		}
+		if st.IsDir() {
+			return false, fmt.Errorf("path is a directory: %s", path)
+		}
+		return true, nil
+	}
+	if os.IsNotExist(err) {
+		return false, nil
+	}
+	return false, err
 }
 
 func resolveSafeWrite(path string, overwrite bool) (string, error) {

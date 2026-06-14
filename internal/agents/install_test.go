@@ -94,6 +94,102 @@ func TestInstallAppliesProjectScopeSkillsAndMCP(t *testing.T) {
 	}
 }
 
+func TestInstallMergesExistingMCPConfigWithoutForce(t *testing.T) {
+	home := t.TempDir()
+	work := t.TempDir()
+	configPath := filepath.Join(home, ".claude", "mcp.json")
+	if err := os.MkdirAll(filepath.Dir(configPath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(configPath, []byte(`{"mcpServers":{"other":{"command":"other","args":["x"]}},"keep":true}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	plan, err := Install(Options{
+		Target:   TargetClaude,
+		Scope:    ScopeUser,
+		Features: []string{FeatureMCP},
+		HomeDir:  home,
+		WorkDir:  work,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	realHome, err := canonicalRoot(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	realConfigPath := filepath.Join(realHome, ".claude", "mcp.json")
+	if len(plan.Actions) != 1 || plan.Actions[0].Path != realConfigPath {
+		t.Fatalf("plan actions = %#v", plan.Actions)
+	}
+
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var parsed map[string]any
+	if err := json.Unmarshal(data, &parsed); err != nil {
+		t.Fatal(err)
+	}
+	if parsed["keep"] != true {
+		t.Fatalf("top-level key lost: %s", data)
+	}
+	servers := parsed["mcpServers"].(map[string]any)
+	if _, ok := servers["other"]; !ok {
+		t.Fatalf("unrelated server lost: %s", data)
+	}
+	gomoufox := servers["gomoufox"].(map[string]any)
+	if gomoufox["command"] != "gomoufox" {
+		t.Fatalf("gomoufox server = %#v", gomoufox)
+	}
+}
+
+func TestInstallExistingSkillSkipsWithoutForce(t *testing.T) {
+	home := t.TempDir()
+	work := t.TempDir()
+	skillPath := filepath.Join(home, ".agents", "skills", "gomoufox", "SKILL.md")
+	if err := os.MkdirAll(filepath.Dir(skillPath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(skillPath, []byte("custom skill\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	plan, err := Install(Options{
+		Target:   TargetCodex,
+		Scope:    ScopeUser,
+		Features: []string{FeatureSkills},
+		HomeDir:  home,
+		WorkDir:  work,
+	})
+	if err != nil {
+		t.Fatalf("Install error = %v", err)
+	}
+	realHome, err := canonicalRoot(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	realSkillPath := filepath.Join(realHome, ".agents", "skills", "gomoufox", "SKILL.md")
+	var skipped bool
+	for _, action := range plan.Actions {
+		if action.Path == realSkillPath && action.Status == "skipped" {
+			skipped = true
+			break
+		}
+	}
+	if !skipped {
+		t.Fatalf("existing skill was not skipped: %#v", plan.Actions)
+	}
+	data, readErr := os.ReadFile(skillPath)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	if string(data) != "custom skill\n" {
+		t.Fatalf("skill was overwritten: %q", data)
+	}
+}
+
 func TestInstallDryRunCreatesNothing(t *testing.T) {
 	home := t.TempDir()
 	work := t.TempDir()

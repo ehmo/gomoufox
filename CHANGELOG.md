@@ -4,6 +4,11 @@
 
 - No changes yet.
 
+## v0.1.12
+
+- Fix `gomoufox setup --features mcp --yes` so existing MCP config files are
+  merged instead of failing with a raw `path exists` error.
+
 ## v0.1.11
 
 - Improve human CLI help with grouped commands, `-h`, `-v`, and `gomoufox
