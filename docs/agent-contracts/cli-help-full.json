@@ -2,6 +2,27 @@
   "commands": [
     {
       "examples": [
+        "gomoufox setup --dry-run",
+        "gomoufox setup --target all --features skills,mcp --yes"
+      ],
+      "flags": [
+        "--target",
+        "--scope",
+        "--features",
+        "--toolset",
+        "--mcp-arg",
+        "--force",
+        "--yes",
+        "--dry-run",
+        "--skip-install",
+        "--skip-doctor"
+      ],
+      "name": "setup",
+      "summary": "guided runtime, doctor, and agent setup",
+      "usage": "gomoufox setup [--target all] [--scope user|project] [--features skills,mcp] [--yes] [--dry-run]"
+    },
+    {
+      "examples": [
         "gomoufox --json doctor"
       ],
       "name": "doctor",

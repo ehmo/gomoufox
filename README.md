@@ -15,6 +15,24 @@ control the pinned Camoufox browser stack without writing Python glue.
 
 Use it only on sites you own, test, or have permission to automate.
 
+## Add gomoufox to an agent
+
+Install the bundled skills and MCP server config in one step:
+
+```bash
+gomoufox setup --dry-run
+gomoufox setup --target all --features skills,mcp --yes
+gomoufox agents install --target all --features skills,mcp --dry-run --json
+gomoufox agents install --target all --features skills,mcp
+```
+
+Use `--target codex`, `claude`, `cursor`, or `gemini` to install for one
+agent. Use `--scope project` when you want repo-local MCP config. The default
+writes skill files plus a stdio MCP entry that runs
+`gomoufox mcp --toolset core`.
+
+Run the dry run first. It prints the exact files gomoufox would write.
+
 ## At a glance
 
 | Need | Use |
@@ -22,7 +40,7 @@ Use it only on sites you own, test, or have permission to automate.
 | Go browser automation | `github.com/ehmo/gomoufox` |
 | Shell automation | `gomoufox get`, `gomoufox screenshot`, `gomoufox fetch` |
 | Agent browser tools | `gomoufox mcp` |
-| Agent instructions | `gomoufox skills list`, `show`, `export`, `install` |
+| Guided setup | `gomoufox setup`, `gomoufox agents install` |
 | Release evidence | [docs/BENCHMARKS.md](docs/BENCHMARKS.md) |
 
 ```mermaid
@@ -59,6 +77,7 @@ CLI:
 
 ```bash
 go install github.com/ehmo/gomoufox/cmd/gomoufox@latest
+gomoufox -h
 gomoufox install
 gomoufox doctor
 ```
@@ -158,6 +177,9 @@ when the cap is reached.
 Agent-friendly discovery:
 
 ```bash
+gomoufox -h
+gomoufox -v
+gomoufox version
 gomoufox help
 gomoufox help --json --fields commands
 gomoufox help skills --json
@@ -201,7 +223,7 @@ gomoufox skills export --out ./skills
 gomoufox skills export --out ./skills --force
 ```
 
-Install them for Codex:
+Install skill files only for Codex:
 
 ```bash
 gomoufox skills install --target codex --dry-run --json
@@ -222,18 +244,28 @@ the right instructions even when no skill directory exists yet. `export` and
 `install` write the same checked bodies that ship in the repo. Existing files are
 left alone unless you pass `--force`.
 
-Install skills plus MCP configuration for common agents:
+Install skills plus MCP configuration for a specific agent or project:
 
 ```bash
 gomoufox agents install --target all --dry-run --json
-gomoufox agents install --target cursor --scope project --features skills,mcp --force
+gomoufox agents install --target cursor --scope project --features skills,mcp
 ```
 
 `agents install` supports `codex`, `claude`, `cursor`, `gemini`, or `all`, with
 `--scope user|project` and `--features skills,mcp`. MCP entries use stdio and
-default to `gomoufox mcp --toolset core`; pass repeated `--mcp-arg <arg>` only
-when you explicitly want to enable additional MCP server flags. Dry-run output
-shows the exact absolute paths that would be written.
+default to `gomoufox mcp --toolset core`. Use `--toolset full` for the full MCP
+surface. Reserve repeated `--mcp-arg <arg>` for extra MCP server flags. Use
+`--force` only when you want to replace existing skill files or rewrite merged
+MCP config.
+
+| Target | User-scope MCP file | Project-scope MCP file | Skill root |
+|---|---|---|---|
+| `codex` | `~/.codex/config.toml` | `.codex/config.toml` | `~/.agents/skills` or `.agents/skills` |
+| `claude` | `~/.claude/mcp.json` | `.mcp.json` | `~/.claude/skills` or `.claude/skills` |
+| `cursor` | `~/.cursor/mcp.json` | `.cursor/mcp.json` | `~/.agents/skills` or `.agents/skills` |
+| `gemini` | `~/.gemini/settings.json` | `.gemini/settings.json` | `~/.agents/skills` or `.agents/skills` |
+
+Dry-run output shows the exact absolute paths that would be written.
 
 ## MCP
 

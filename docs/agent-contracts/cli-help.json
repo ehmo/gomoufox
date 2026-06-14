@@ -1,6 +1,10 @@
 {
   "commands": [
     {
+      "name": "setup",
+      "usage": "gomoufox setup [--target all] [--scope user|project] [--features skills,mcp] [--yes] [--dry-run]"
+    },
+    {
       "name": "doctor",
       "usage": "gomoufox doctor [--json]"
     },

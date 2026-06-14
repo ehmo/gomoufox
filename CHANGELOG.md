@@ -4,6 +4,13 @@
 
 - No changes yet.
 
+## v0.1.11
+
+- Improve human CLI help with grouped commands, `-h`, `-v`, and `gomoufox
+  version`.
+- Add `gomoufox setup` for guided runtime, doctor, and agent skill plus MCP
+  setup.
+
 ## v0.1.10
 
 - Fix the generated Homebrew formula to install binaries from the release

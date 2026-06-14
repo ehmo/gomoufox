@@ -74,6 +74,29 @@ type InstallRequest struct {
 	Force   bool
 }
 
+type SetupRequest struct {
+	Target      string `json:"target"`
+	Scope       string `json:"scope"`
+	Features    string `json:"features"`
+	Toolset     string `json:"toolset"`
+	SkipInstall bool   `json:"skip_install,omitempty"`
+	SkipDoctor  bool   `json:"skip_doctor,omitempty"`
+	Force       bool   `json:"force,omitempty"`
+	Yes         bool   `json:"yes,omitempty"`
+	DryRun      bool   `json:"dry_run,omitempty"`
+}
+
+type SetupResponse struct {
+	Request      SetupRequest `json:"request"`
+	Runtime      string       `json:"runtime,omitempty"`
+	Doctor       DoctorReport `json:"doctor,omitempty"`
+	AgentPlan    agents.Plan  `json:"agent_plan"`
+	Applied      bool         `json:"applied"`
+	InstallRan   bool         `json:"install_ran"`
+	DoctorRan    bool         `json:"doctor_ran"`
+	AgentPlanRan bool         `json:"agent_plan_ran"`
+}
+
 type DoctorRequest struct {
 	JSON bool
 }
@@ -193,6 +216,7 @@ func writeDiagnosticf(w io.Writer, format string, args ...any) {
 
 func (r Runner) Run(ctx context.Context, args []string, streams Streams) int {
 	streams = normalizeStreams(streams)
+	args = normalizeShortAliases(args)
 	global, command, rest, err := parseGlobal(args)
 	if err != nil {
 		writeDiagnosticLine(streams.Stderr, err)
@@ -205,9 +229,17 @@ func (r Runner) Run(ctx context.Context, args []string, streams Streams) int {
 		_, _ = fmt.Fprintf(streams.Stdout, "gomoufox %s\n", buildinfo.Version)
 		return ExitOK
 	}
+	if command == "version" {
+		if len(rest) != 0 {
+			_, _ = fmt.Fprintln(streams.Stderr, "usage: gomoufox version")
+			return ExitUsage
+		}
+		_, _ = fmt.Fprintf(streams.Stdout, "gomoufox %s\n", buildinfo.Version)
+		return ExitOK
+	}
 	if command == "" {
-		_, _ = fmt.Fprintln(streams.Stderr, "usage: gomoufox <command> [flags]")
-		return ExitUsage
+		printHelpText(streams.Stdout, "")
+		return ExitOK
 	}
 	if global.HeadlessSet && global.Headful && global.Headless {
 		_, _ = fmt.Fprintln(streams.Stderr, "--headless and --headful are mutually exclusive")
@@ -227,6 +259,8 @@ func (r Runner) Run(ctx context.Context, args []string, streams Streams) int {
 	switch command {
 	case "help":
 		return runHelp(global, rest, streams)
+	case "setup":
+		return r.runSetup(ctx, global, rest, streams)
 	case "doctor":
 		return r.runDoctor(ctx, global, rest, streams)
 	case "install":
@@ -367,6 +401,21 @@ func appendCommand(command string, rest ...string) []string {
 	return out
 }
 
+func normalizeShortAliases(args []string) []string {
+	out := make([]string, len(args))
+	for i, arg := range args {
+		switch arg {
+		case "-h":
+			out[i] = "--help"
+		case "-v":
+			out[i] = "--version"
+		default:
+			out[i] = arg
+		}
+	}
+	return out
+}
+
 func buildHelpCatalog(opts helpOptions) helpCatalog {
 	all := helpCatalog{
 		Usage:    "gomoufox <command> [flags]",
@@ -427,35 +476,72 @@ func commandHelpIndex() []commandHelp {
 func printHelpText(w io.Writer, command string) {
 	if command != "" {
 		doc, _ := helpForCommand(command)
-		_, _ = fmt.Fprintf(w, "usage: %s\n%s\n", doc.Usage, doc.Summary)
+		_, _ = fmt.Fprintf(w, "%s\n\nUsage\n  %s\n\n", doc.Summary, doc.Usage)
 		if len(doc.Flags) > 0 {
-			_, _ = fmt.Fprintf(w, "flags: %s\n", strings.Join(doc.Flags, " "))
+			_, _ = fmt.Fprintln(w, "Flags")
+			for _, flag := range doc.Flags {
+				_, _ = fmt.Fprintf(w, "  %s\n", flag)
+			}
+			_, _ = fmt.Fprintln(w)
 		}
 		if command == "mcp" {
 			tools := make([]string, 0, len(mcpserver.Tools()))
 			for _, tool := range mcpserver.Tools() {
 				tools = append(tools, tool.Name)
 			}
-			_, _ = fmt.Fprintf(w, "tools: %s\n", strings.Join(tools, ","))
+			_, _ = fmt.Fprintf(w, "Tools\n  %s\n\n", strings.Join(tools, ", "))
 		}
 		if len(doc.Examples) > 0 {
-			_, _ = fmt.Fprintf(w, "examples: %s\n", strings.Join(doc.Examples, " ; "))
+			_, _ = fmt.Fprintln(w, "Examples")
+			for _, example := range doc.Examples {
+				_, _ = fmt.Fprintf(w, "  %s\n", example)
+			}
 		}
 		return
 	}
-	_, _ = fmt.Fprintln(w, "usage: gomoufox <command> [flags]")
-	_, _ = fmt.Fprintf(w, "commands: %s\n", strings.Join(commandNames(), " "))
-	_, _ = fmt.Fprintf(w, "global: %s\n", strings.Join(globalHelpFlags(), " "))
-	_, _ = fmt.Fprintln(w, "discovery: gomoufox help --json ; gomoufox skills list --json ; gomoufox mcp --help")
+	_, _ = fmt.Fprintln(w, "gomoufox drives the pinned Camoufox browser stack from Go, shell scripts, and MCP agents.")
+	_, _ = fmt.Fprintln(w)
+	_, _ = fmt.Fprintln(w, "Start here")
+	_, _ = fmt.Fprintln(w, "  gomoufox setup")
+	_, _ = fmt.Fprintln(w, "  gomoufox install")
+	_, _ = fmt.Fprintln(w, "  gomoufox doctor")
+	_, _ = fmt.Fprintln(w, "  gomoufox agents install --target all --features skills,mcp --dry-run --json")
+	_, _ = fmt.Fprintln(w)
+	_, _ = fmt.Fprintln(w, "Browser commands")
+	printCommandGroup(w, []string{"open", "get", "screenshot", "fetch", "eval", "session"})
+	_, _ = fmt.Fprintln(w)
+	_, _ = fmt.Fprintln(w, "Agent commands")
+	printCommandGroup(w, []string{"setup", "agents", "skills", "mcp"})
+	_, _ = fmt.Fprintln(w)
+	_, _ = fmt.Fprintln(w, "Service commands")
+	printCommandGroup(w, []string{"serve", "doctor", "install", "help"})
+	_, _ = fmt.Fprintln(w)
+	_, _ = fmt.Fprintln(w, "Global flags")
+	for _, flag := range globalHelpFlags() {
+		switch flag {
+		case "--help":
+			flag = "-h, --help"
+		case "--version":
+			flag = "-v, --version"
+		}
+		_, _ = fmt.Fprintf(w, "  %s\n", flag)
+	}
+	_, _ = fmt.Fprintln(w)
+	_, _ = fmt.Fprintln(w, "Discovery")
+	_, _ = fmt.Fprintln(w, "  gomoufox help <command>")
+	_, _ = fmt.Fprintln(w, "  gomoufox help --json --fields commands")
+	_, _ = fmt.Fprintln(w, "  gomoufox mcp --help")
+	_, _ = fmt.Fprintln(w, "  gomoufox version")
 }
 
-func commandNames() []string {
-	commands := commandHelps()
-	out := make([]string, 0, len(commands))
-	for _, command := range commands {
-		out = append(out, command.Name)
+func printCommandGroup(w io.Writer, names []string) {
+	for _, name := range names {
+		doc, ok := helpForCommand(name)
+		if !ok {
+			continue
+		}
+		_, _ = fmt.Fprintf(w, "  %-11s %s\n", doc.Name, doc.Summary)
 	}
-	return out
 }
 
 func helpForCommand(name string) (commandHelp, bool) {
@@ -547,6 +633,13 @@ func globalHelpFlags() []string {
 
 func commandHelps() []commandHelp {
 	return []commandHelp{
+		{
+			Name:     "setup",
+			Usage:    "gomoufox setup [--target all] [--scope user|project] [--features skills,mcp] [--yes] [--dry-run]",
+			Summary:  "guided runtime, doctor, and agent setup",
+			Flags:    []string{"--target", "--scope", "--features", "--toolset", "--mcp-arg", "--force", "--yes", "--dry-run", "--skip-install", "--skip-doctor"},
+			Examples: []string{"gomoufox setup --dry-run", "gomoufox setup --target all --features skills,mcp --yes"},
+		},
 		{
 			Name:     "doctor",
 			Usage:    "gomoufox doctor [--json]",
@@ -706,6 +799,182 @@ func (r Runner) runServe(ctx context.Context, global globalFlags, args []string,
 	if err := serve(ctx, req); err != nil {
 		writeDiagnosticLine(streams.Stderr, err)
 		return mapError(err)
+	}
+	return ExitOK
+}
+
+func (r Runner) runSetup(ctx context.Context, global globalFlags, args []string, streams Streams) int {
+	command, err := parseSetup(args)
+	if err != nil {
+		writeDiagnosticLine(streams.Stderr, err)
+		return ExitUsage
+	}
+	request := SetupRequest{
+		Target:      command.Target,
+		Scope:       command.Scope,
+		Features:    strings.Join(command.Features, ","),
+		Toolset:     command.Toolset,
+		SkipInstall: command.SkipInstall,
+		SkipDoctor:  command.SkipDoctor,
+		Force:       command.Force,
+		Yes:         command.Yes,
+		DryRun:      command.DryRun,
+	}
+	if command.DryRun {
+		request.Yes = false
+	}
+	if !global.JSON {
+		_, _ = fmt.Fprintln(streams.Stdout, "gomoufox setup")
+		_, _ = fmt.Fprintln(streams.Stdout)
+		_, _ = fmt.Fprintln(streams.Stdout, "This will install runtime assets, check the local browser stack, and install agent skills plus MCP config.")
+		_, _ = fmt.Fprintf(streams.Stdout, "Agent target: %s\nScope: %s\nFeatures: %s\nToolset: %s\n\n", request.Target, request.Scope, request.Features, request.Toolset)
+	}
+	home, err := userHomeDir()
+	if err != nil {
+		writeDiagnosticLine(streams.Stderr, fmt.Errorf("resolve home directory: %w", err))
+		return ExitRuntime
+	}
+	work, err := os.Getwd()
+	if err != nil {
+		writeDiagnosticLine(streams.Stderr, fmt.Errorf("resolve working directory: %w", err))
+		return ExitRuntime
+	}
+	plan, err := agents.Install(agents.Options{
+		Target:   command.Target,
+		Scope:    command.Scope,
+		Features: command.Features,
+		Toolset:  command.Toolset,
+		MCPArgs:  command.MCPArgs,
+		Force:    command.Force,
+		DryRun:   true,
+		HomeDir:  home,
+		WorkDir:  work,
+	})
+	if err != nil {
+		writeDiagnosticLine(streams.Stderr, err)
+		return ExitRuntime
+	}
+	response := SetupResponse{
+		Request:      request,
+		Runtime:      string(gomoufox.SidecarRuntimeNodeDirect),
+		AgentPlan:    plan,
+		AgentPlanRan: true,
+	}
+	if command.DryRun {
+		return writeSetupResponse(streams, global.JSON, response)
+	}
+	if !command.Yes && !confirmSetup(streams, "Apply these changes?") {
+		_, _ = fmt.Fprintln(streams.Stderr, "setup cancelled; pass --yes to run non-interactively")
+		return ExitUsage
+	}
+	if !command.SkipInstall {
+		install := r.Hooks.Install
+		if install == nil {
+			install = defaultInstallEnsureInstalled
+		}
+		if !global.JSON {
+			_, _ = fmt.Fprintln(streams.Stdout, "Installing runtime assets...")
+		}
+		if err := install(ctx, InstallRequest{Runtime: string(gomoufox.SidecarRuntimeNodeDirect), Force: command.Force}); err != nil {
+			writeDiagnosticLine(streams.Stderr, err)
+			return mapError(err)
+		}
+		response.InstallRan = true
+	}
+	if !command.SkipDoctor {
+		doctor := r.Hooks.Doctor
+		if doctor == nil {
+			doctor = defaultDoctor
+		}
+		if !global.JSON {
+			_, _ = fmt.Fprintln(streams.Stdout, "Checking browser stack...")
+		}
+		report, err := doctor(ctx, DoctorRequest{JSON: true})
+		response.Doctor = report
+		response.DoctorRan = true
+		if err != nil {
+			if global.JSON {
+				_ = writeSetupResponse(streams, true, response)
+			}
+			writeDiagnosticLine(streams.Stderr, err)
+			return ExitUnavailable
+		}
+	}
+	plan, err = agents.Install(agents.Options{
+		Target:   command.Target,
+		Scope:    command.Scope,
+		Features: command.Features,
+		Toolset:  command.Toolset,
+		MCPArgs:  command.MCPArgs,
+		Force:    command.Force,
+		DryRun:   false,
+		HomeDir:  home,
+		WorkDir:  work,
+	})
+	if err != nil {
+		writeDiagnosticLine(streams.Stderr, err)
+		return ExitRuntime
+	}
+	response.AgentPlan = plan
+	response.Applied = true
+	return writeSetupResponse(streams, global.JSON, response)
+}
+
+func parseSetup(args []string) (setupCommand, error) {
+	parsed, err := parseFlags(args, setupFlagSpecs())
+	if err != nil {
+		return setupCommand{}, err
+	}
+	if len(parsed.Positionals) != 0 {
+		return setupCommand{}, errors.New("usage: gomoufox setup [--target codex|claude|cursor|gemini|all] [--scope user|project] [--features skills,mcp] [--toolset core|full] [--yes] [--dry-run]")
+	}
+	features := splitCSV(parsed.value("features"))
+	return setupCommand{
+		Target:      parsed.valueDefault("target", agents.TargetAll),
+		Scope:       parsed.valueDefault("scope", agents.ScopeUser),
+		Features:    features,
+		Toolset:     parsed.valueDefault("toolset", agents.DefaultToolset),
+		MCPArgs:     parsed.values["mcp-arg"],
+		Force:       parsed.bool("force"),
+		DryRun:      parsed.bool("dry-run"),
+		Yes:         parsed.bool("yes"),
+		SkipInstall: parsed.bool("skip-install"),
+		SkipDoctor:  parsed.bool("skip-doctor"),
+	}, nil
+}
+
+func confirmSetup(streams Streams, prompt string) bool {
+	_, _ = fmt.Fprintf(streams.Stdout, "%s [y/N] ", prompt)
+	var answer string
+	if _, err := fmt.Fscanln(streams.Stdin, &answer); err != nil {
+		return false
+	}
+	switch strings.ToLower(strings.TrimSpace(answer)) {
+	case "y", "yes":
+		return true
+	default:
+		return false
+	}
+}
+
+func writeSetupResponse(streams Streams, asJSON bool, response SetupResponse) int {
+	if asJSON {
+		encoder := json.NewEncoder(streams.Stdout)
+		encoder.SetEscapeHTML(false)
+		if err := encoder.Encode(response); err != nil {
+			writeDiagnosticLine(streams.Stderr, err)
+			return ExitRuntime
+		}
+		return ExitOK
+	}
+	if response.AgentPlanRan {
+		_, _ = fmt.Fprintln(streams.Stdout, "Agent files")
+		printAgentPlan(streams.Stdout, response.AgentPlan)
+	}
+	if response.Applied {
+		_, _ = fmt.Fprintln(streams.Stdout, "setup complete")
+	} else {
+		_, _ = fmt.Fprintln(streams.Stdout, "dry run complete")
 	}
 	return ExitOK
 }
@@ -1493,6 +1762,21 @@ func installFlagSpecs() map[string]flagSpec {
 	}
 }
 
+func setupFlagSpecs() map[string]flagSpec {
+	return map[string]flagSpec{
+		"target":       {Kind: flagValue},
+		"scope":        {Kind: flagValue},
+		"features":     {Kind: flagValue},
+		"toolset":      {Kind: flagValue},
+		"mcp-arg":      {Kind: flagValue, Repeat: true},
+		"force":        {Kind: flagBool},
+		"dry-run":      {Kind: flagBool},
+		"yes":          {Kind: flagBool},
+		"skip-install": {Kind: flagBool},
+		"skip-doctor":  {Kind: flagBool},
+	}
+}
+
 func serveFlagSpecs() map[string]flagSpec {
 	return map[string]flagSpec{
 		"port":                 {Kind: flagValue},
@@ -1665,6 +1949,19 @@ type agentsCommand struct {
 	MCPArgs    []string
 	Force      bool
 	DryRun     bool
+}
+
+type setupCommand struct {
+	Target      string
+	Scope       string
+	Features    []string
+	Toolset     string
+	MCPArgs     []string
+	Force       bool
+	DryRun      bool
+	Yes         bool
+	SkipInstall bool
+	SkipDoctor  bool
 }
 
 type skillsListResponse struct {

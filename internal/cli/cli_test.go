@@ -400,6 +400,182 @@ func TestInstallHookAndExitMapping(t *testing.T) {
 	}
 }
 
+func TestSetupDryRunCancelAndApply(t *testing.T) {
+	home := t.TempDir()
+	work := t.TempDir()
+	oldUserHomeDir := userHomeDir
+	t.Cleanup(func() { userHomeDir = oldUserHomeDir })
+	userHomeDir = func() (string, error) { return home, nil }
+	oldWd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(work); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(oldWd) })
+
+	var stdout, stderr bytes.Buffer
+	code := (Runner{}).Run(context.Background(), []string{"setup", "--target", "cursor", "--scope", "project", "--features", "skills,mcp", "--dry-run"}, Streams{Stdout: &stdout, Stderr: &stderr})
+	if code != ExitOK || !strings.Contains(stdout.String(), "dry run complete") || !strings.Contains(stdout.String(), ".cursor/mcp.json") {
+		t.Fatalf("dry-run code=%d stdout=%q stderr=%q", code, stdout.String(), stderr.String())
+	}
+	if _, err := os.Stat(filepath.Join(work, ".cursor", "mcp.json")); !os.IsNotExist(err) {
+		t.Fatalf("dry-run wrote mcp file err=%v", err)
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	code = (Runner{}).Run(context.Background(), []string{"setup", "--target", "cursor", "--scope", "project", "--skip-install", "--skip-doctor"}, Streams{Stdin: strings.NewReader(""), Stdout: &stdout, Stderr: &stderr})
+	if code != ExitUsage || !strings.Contains(stderr.String(), "setup cancelled") {
+		t.Fatalf("cancel code=%d stdout=%q stderr=%q", code, stdout.String(), stderr.String())
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	code = (Runner{}).Run(context.Background(), []string{"setup", "--target", "cursor", "--scope", "project", "--features", "skills,mcp", "--skip-install", "--skip-doctor", "--yes"}, Streams{Stdout: &stdout, Stderr: &stderr})
+	if code != ExitOK || !strings.Contains(stdout.String(), "setup complete") {
+		t.Fatalf("apply code=%d stdout=%q stderr=%q", code, stdout.String(), stderr.String())
+	}
+	if _, err := os.Stat(filepath.Join(work, ".cursor", "mcp.json")); err != nil {
+		t.Fatalf("apply missing mcp file: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(work, ".agents", "skills", "gomoufox", "SKILL.md")); err != nil {
+		t.Fatalf("apply missing skill file: %v", err)
+	}
+}
+
+func TestSetupJSONRunsInstallAndDoctorHooks(t *testing.T) {
+	home := t.TempDir()
+	work := t.TempDir()
+	oldUserHomeDir := userHomeDir
+	t.Cleanup(func() { userHomeDir = oldUserHomeDir })
+	userHomeDir = func() (string, error) { return home, nil }
+	oldWd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(work); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(oldWd) })
+
+	installCalled := false
+	doctorCalled := false
+	runner := Runner{Hooks: Hooks{
+		Install: func(ctx context.Context, req InstallRequest) error {
+			installCalled = true
+			if req.Runtime != string(gomoufox.SidecarRuntimeNodeDirect) {
+				t.Fatalf("install request = %#v", req)
+			}
+			return nil
+		},
+		Doctor: func(context.Context, DoctorRequest) (DoctorReport, error) {
+			doctorCalled = true
+			return DoctorReport{RuntimeAssets: Check{OK: true}}, nil
+		},
+	}}
+	var stdout, stderr bytes.Buffer
+	code := runner.Run(context.Background(), []string{"--json", "setup", "--target", "codex", "--features", "mcp", "--yes"}, Streams{Stdout: &stdout, Stderr: &stderr})
+	if code != ExitOK || !installCalled || !doctorCalled {
+		t.Fatalf("setup code=%d install=%v doctor=%v stdout=%q stderr=%q", code, installCalled, doctorCalled, stdout.String(), stderr.String())
+	}
+	var response SetupResponse
+	if err := json.Unmarshal(stdout.Bytes(), &response); err != nil {
+		t.Fatalf("setup json = %q err=%v", stdout.String(), err)
+	}
+	if !response.Applied || !response.InstallRan || !response.DoctorRan || response.Request.Target != "codex" || response.Request.Features != "mcp" {
+		t.Fatalf("setup response = %#v", response)
+	}
+}
+
+func TestSetupErrorBranches(t *testing.T) {
+	home := t.TempDir()
+	work := t.TempDir()
+	oldUserHomeDir := userHomeDir
+	t.Cleanup(func() { userHomeDir = oldUserHomeDir })
+	userHomeDir = func() (string, error) { return home, nil }
+	oldWd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(work); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(oldWd) })
+
+	for _, tc := range []struct {
+		name string
+		args []string
+		want string
+	}{
+		{name: "unknown flag", args: []string{"setup", "--bogus"}, want: "unknown flag"},
+		{name: "extra positional", args: []string{"setup", "extra"}, want: "usage: gomoufox setup"},
+		{name: "invalid target", args: []string{"setup", "--target", "bad", "--dry-run"}, want: "unsupported agents target"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var stderr bytes.Buffer
+			if code := (Runner{}).Run(context.Background(), tc.args, Streams{Stderr: &stderr}); code == ExitOK || !strings.Contains(stderr.String(), tc.want) {
+				t.Fatalf("%s code=%d stderr=%q", tc.name, code, stderr.String())
+			}
+		})
+	}
+
+	var stdout, stderr bytes.Buffer
+	code := (Runner{}).Run(context.Background(), []string{"--json", "setup", "--target", "cursor", "--scope", "project", "--dry-run"}, Streams{Stdout: errWriter{}, Stderr: &stderr})
+	if code != ExitRuntime || !strings.Contains(stderr.String(), "write failed") {
+		t.Fatalf("json write code=%d stdout=%q stderr=%q", code, stdout.String(), stderr.String())
+	}
+
+	userHomeDir = func() (string, error) { return "", errors.New("home failed") }
+	stderr.Reset()
+	code = (Runner{}).Run(context.Background(), []string{"setup", "--dry-run"}, Streams{Stderr: &stderr})
+	if code != ExitRuntime || !strings.Contains(stderr.String(), "home failed") {
+		t.Fatalf("home error code=%d stderr=%q", code, stderr.String())
+	}
+	userHomeDir = func() (string, error) { return home, nil }
+
+	runner := Runner{Hooks: Hooks{Install: func(context.Context, InstallRequest) error {
+		return gomoufox.ErrURLBlocked
+	}}}
+	stderr.Reset()
+	code = runner.Run(context.Background(), []string{"setup", "--target", "cursor", "--scope", "project", "--yes"}, Streams{Stderr: &stderr})
+	if code != ExitURLBlocked {
+		t.Fatalf("install error code=%d stderr=%q", code, stderr.String())
+	}
+
+	runner = Runner{Hooks: Hooks{
+		Install: func(context.Context, InstallRequest) error { return nil },
+		Doctor: func(context.Context, DoctorRequest) (DoctorReport, error) {
+			return DoctorReport{RuntimeAssets: Check{Error: "bad"}}, errors.New("doctor failed")
+		},
+	}}
+	stdout.Reset()
+	stderr.Reset()
+	code = runner.Run(context.Background(), []string{"--json", "setup", "--target", "cursor", "--scope", "project", "--yes"}, Streams{Stdout: &stdout, Stderr: &stderr})
+	if code != ExitUnavailable || !strings.Contains(stderr.String(), "doctor failed") || !strings.Contains(stdout.String(), `"doctor_ran":true`) {
+		t.Fatalf("doctor error code=%d stdout=%q stderr=%q", code, stdout.String(), stderr.String())
+	}
+}
+
+func TestSetupPromptHelpers(t *testing.T) {
+	for _, tc := range []struct {
+		input string
+		want  bool
+	}{
+		{input: "yes\n", want: true},
+		{input: "Y\n", want: true},
+		{input: "no\n", want: false},
+		{input: "", want: false},
+	} {
+		var stdout bytes.Buffer
+		got := confirmSetup(Streams{Stdin: strings.NewReader(tc.input), Stdout: &stdout}, "Apply?")
+		if got != tc.want || !strings.Contains(stdout.String(), "Apply? [y/N]") {
+			t.Fatalf("confirmSetup(%q)=%v stdout=%q", tc.input, got, stdout.String())
+		}
+	}
+}
+
 func TestDoctorJSONAndFailure(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	runner := Runner{Hooks: Hooks{Doctor: func(context.Context, DoctorRequest) (DoctorReport, error) {
@@ -522,11 +698,23 @@ func TestVersionAndUnknownCommand(t *testing.T) {
 		t.Fatalf("version stdout = %q", stdout.String())
 	}
 	stdout.Reset()
+	if code := (Runner{}).Run(context.Background(), []string{"-v"}, Streams{Stdout: &stdout}); code != ExitOK || stdout.String() != "gomoufox dev\n" {
+		t.Fatalf("-v code/stdout = %d %q", code, stdout.String())
+	}
+	stdout.Reset()
+	if code := (Runner{}).Run(context.Background(), []string{"version"}, Streams{Stdout: &stdout}); code != ExitOK || stdout.String() != "gomoufox dev\n" {
+		t.Fatalf("version command code/stdout = %d %q", code, stdout.String())
+	}
+	stdout.Reset()
 	if code := (Runner{}).Run(context.Background(), []string{"--help"}, Streams{Stdout: &stdout}); code != ExitOK {
 		t.Fatalf("help code = %d", code)
 	}
-	if !strings.Contains(stdout.String(), "usage: gomoufox") || !strings.Contains(stdout.String(), "discovery:") {
+	if !strings.Contains(stdout.String(), "Start here") || !strings.Contains(stdout.String(), "gomoufox setup") || !strings.Contains(stdout.String(), "Discovery") {
 		t.Fatalf("help stdout = %q", stdout.String())
+	}
+	stdout.Reset()
+	if code := (Runner{}).Run(context.Background(), []string{"-h"}, Streams{Stdout: &stdout}); code != ExitOK || !strings.Contains(stdout.String(), "Start here") {
+		t.Fatalf("-h code/stdout = %d %q", code, stdout.String())
 	}
 	if code := (Runner{}).Run(context.Background(), []string{"wat"}, Streams{Stderr: &stderr}); code != ExitUsage {
 		t.Fatalf("unknown code = %d", code)
@@ -538,7 +726,7 @@ func TestAgentOptimizedHelpDiscovery(t *testing.T) {
 	if code := (Runner{}).Run(context.Background(), []string{"mcp", "--help"}, Streams{Stdout: &stdout, Stderr: &stderr}); code != ExitOK {
 		t.Fatalf("mcp help code=%d stderr=%q", code, stderr.String())
 	}
-	if got := stdout.String(); !strings.Contains(got, "usage: gomoufox mcp") || !strings.Contains(got, "tools: browser_navigate") || !strings.Contains(got, "--toolset") || !strings.Contains(got, "--max-response-bytes") || !strings.Contains(got, "--allowed-origins") {
+	if got := stdout.String(); !strings.Contains(got, "Usage\n  gomoufox mcp") || !strings.Contains(got, "Tools\n  browser_navigate") || !strings.Contains(got, "--toolset") || !strings.Contains(got, "--max-response-bytes") || !strings.Contains(got, "--allowed-origins") {
 		t.Fatalf("mcp help = %q", got)
 	}
 
@@ -581,10 +769,10 @@ func TestAgentOptimizedHelpDiscovery(t *testing.T) {
 		args []string
 		want string
 	}{
-		{args: []string{"skills", "install", "--help"}, want: "usage: gomoufox skills install"},
-		{args: []string{"help", "skills", "install"}, want: "usage: gomoufox skills install"},
-		{args: []string{"session", "export", "--help"}, want: "usage: gomoufox session export"},
-		{args: []string{"help", "session", "import"}, want: "usage: gomoufox session import"},
+		{args: []string{"skills", "install", "--help"}, want: "gomoufox skills install"},
+		{args: []string{"help", "skills", "install"}, want: "gomoufox skills install"},
+		{args: []string{"session", "export", "--help"}, want: "gomoufox session export"},
+		{args: []string{"help", "session", "import"}, want: "gomoufox session import"},
 	} {
 		stdout.Reset()
 		stderr.Reset()
@@ -631,7 +819,7 @@ func TestAgentOptimizedHelpDiscovery(t *testing.T) {
 	if err := json.Unmarshal(stdout.Bytes(), &catalog); err != nil {
 		t.Fatalf("top help json = %q err=%v", stdout.String(), err)
 	}
-	if len(catalog.Commands) < 11 || catalog.Commands[0].Name != "doctor" || len(catalog.Discovery) == 0 || catalog.MCPTools != nil {
+	if len(catalog.Commands) < 12 || catalog.Commands[0].Name != "setup" || len(catalog.Discovery) == 0 || catalog.MCPTools != nil {
 		t.Fatalf("top catalog = %#v", catalog)
 	}
 	if catalog.Commands[0].Summary != "" || len(catalog.Commands[0].Flags) != 0 || len(catalog.Commands[0].Examples) != 0 {
@@ -1126,6 +1314,7 @@ func TestAgentHelpGoldenContracts(t *testing.T) {
 
 func TestCommandHelpAdvertisesParsedFlags(t *testing.T) {
 	parsed := map[string]map[string]flagSpec{
+		"setup":      setupFlagSpecs(),
 		"install":    installFlagSpecs(),
 		"open":       openFlagSpecs(),
 		"get":        getFlagSpecs(),
@@ -3271,7 +3460,6 @@ func TestRunnerGlobalAndInstallEdges(t *testing.T) {
 		code int
 		want string
 	}{
-		{nil, ExitUsage, "usage:"},
 		{[]string{"--bad", "doctor"}, ExitUsage, "unknown global flag"},
 		{[]string{"--profile"}, ExitUsage, "--profile requires a value"},
 		{[]string{"--timeout", "0s", "doctor"}, ExitUsage, "duration"},
@@ -3286,6 +3474,10 @@ func TestRunnerGlobalAndInstallEdges(t *testing.T) {
 		if code := (Runner{}).Run(context.Background(), tc.args, Streams{Stderr: &stderr}); code != tc.code || !strings.Contains(stderr.String(), tc.want) {
 			t.Fatalf("%v code=%d stderr=%q", tc.args, code, stderr.String())
 		}
+	}
+	var stdout bytes.Buffer
+	if code := (Runner{}).Run(context.Background(), nil, Streams{Stdout: &stdout}); code != ExitOK || !strings.Contains(stdout.String(), "Start here") {
+		t.Fatalf("empty args code/stdout = %d %q", code, stdout.String())
 	}
 	if canForward("session", nil) || canForward("doctor", nil) || !canForward("session", []string{"import"}) {
 		t.Fatalf("canForward session/default mismatch")
