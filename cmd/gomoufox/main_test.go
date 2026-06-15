@@ -120,8 +120,10 @@ func TestBuiltBinarySpeaksMCPStdio(t *testing.T) {
 		t.Fatalf("session_list result = %#v", sessionResult)
 	}
 	skillResult := jsonRPCResultForTest(t, lines[3])
-	skillStructured := skillResult["structuredContent"].(map[string]any)
-	if skillStructured["body"] != nil || skillStructured["name"] != "core" || !strings.Contains(skillResult["content"].([]any)[0].(map[string]any)["text"].(string), `"truncated":true`) {
+	if _, ok := skillResult["structuredContent"]; ok {
+		t.Fatalf("skills_get structuredContent should be absent = %#v", skillResult)
+	}
+	if !strings.Contains(skillResult["content"].([]any)[0].(map[string]any)["text"].(string), `"truncated":true`) {
 		t.Fatalf("skills_get result = %#v", skillResult)
 	}
 	blockedResult := jsonRPCResultForTest(t, lines[4])

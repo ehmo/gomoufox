@@ -4,6 +4,18 @@
 
 - No changes yet.
 
+## v0.1.13
+
+- Fix MCP client compatibility by accepting reserved `params._meta` on
+  `tools/call` and removing JSON Schema combinators from advertised tool
+  input schemas.
+- Restore browser interaction reliability by skipping falsy fingerprint screen
+  samples, decoding snapshot element resolvers, including small snapshot
+  element lists in `structuredContent`, and fixing `browser_wait_for`
+  `url_contains`.
+- Make text-heavy MCP tool responses fall back to text content instead of
+  emitting metadata-only `structuredContent`.
+
 ## v0.1.12
 
 - Fix `gomoufox setup --features mcp --yes` so existing MCP config files are

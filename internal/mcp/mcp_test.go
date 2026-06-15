@@ -241,7 +241,7 @@ func TestToolsCatalogSchemasMatchSpecCriticalFields(t *testing.T) {
 	assertProp(t, tools["browser_click"], "wait_for_navigation", "default", false)
 	assertProp(t, tools["browser_click"], "timeout_ms", "minimum", 0)
 	assertProp(t, tools["browser_click"], "timeout_ms", "maximum", 120000)
-	assertTargetOneOf(t, tools["browser_click"])
+	assertTargetChoiceDocumented(t, tools["browser_click"])
 	requireFields(t, tools["browser_type"], "text")
 	assertProp(t, tools["browser_type"], "text", "maxLength", policy.TypedTextInputBytes)
 	assertProp(t, tools["browser_type"], "clear_first", "default", true)
@@ -251,27 +251,27 @@ func TestToolsCatalogSchemasMatchSpecCriticalFields(t *testing.T) {
 	assertProp(t, tools["browser_type"], "delay_ms", "default", 0)
 	assertProp(t, tools["browser_type"], "timeout_ms", "minimum", 0)
 	assertProp(t, tools["browser_type"], "timeout_ms", "maximum", 120000)
-	assertTargetOneOf(t, tools["browser_type"])
+	assertTargetChoiceDocumented(t, tools["browser_type"])
 	requireFields(t, tools["browser_press_key"], "key")
 	assertProp(t, tools["browser_press_key"], "key", "maxLength", 128)
 	assertProp(t, tools["browser_press_key"], "timeout_ms", "minimum", 0)
 	assertProp(t, tools["browser_press_key"], "timeout_ms", "maximum", 120000)
-	assertTargetOneOf(t, tools["browser_press_key"])
+	assertTargetChoiceDocumented(t, tools["browser_press_key"])
 	assertProp(t, tools["browser_hover"], "force", "default", false)
 	assertProp(t, tools["browser_hover"], "timeout_ms", "minimum", 0)
-	assertTargetOneOf(t, tools["browser_hover"])
+	assertTargetChoiceDocumented(t, tools["browser_hover"])
 	assertProp(t, tools["browser_scroll"], "delta_x", "minimum", -maxScrollDelta)
 	assertProp(t, tools["browser_scroll"], "delta_y", "maximum", maxScrollDelta)
 	assertSelectOptionSchema(t, tools["browser_select_option"])
 	requireFields(t, tools["browser_set_checked"], "checked")
 	assertProp(t, tools["browser_set_checked"], "checked", "default", false)
 	assertProp(t, tools["browser_set_checked"], "force", "default", false)
-	assertTargetOneOf(t, tools["browser_set_checked"])
+	assertTargetChoiceDocumented(t, tools["browser_set_checked"])
 	requireFields(t, tools["browser_upload_file"], "paths")
 	assertProp(t, tools["browser_upload_file"], "paths", "minItems", 1)
 	assertProp(t, tools["browser_upload_file"], "paths", "maxItems", maxUploadFiles)
 	assertArrayItemProp(t, tools["browser_upload_file"], "paths", "maxLength", maxUploadPathBytes)
-	assertTargetOneOf(t, tools["browser_upload_file"])
+	assertTargetChoiceDocumented(t, tools["browser_upload_file"])
 	requireFields(t, tools["browser_dialog"], "action")
 	assertEnum(t, tools["browser_dialog"], "action", dialogActionHistory, dialogActionSetPolicy)
 	assertEnum(t, tools["browser_dialog"], "policy", dialogPolicyDismiss, dialogPolicyAccept)
@@ -279,7 +279,7 @@ func TestToolsCatalogSchemasMatchSpecCriticalFields(t *testing.T) {
 	assertProp(t, tools["browser_dialog"], "max_events", "maximum", maxObservationEvents)
 	assertFormBatchSchema(t, tools["browser_form_batch"])
 	assertEnum(t, tools["browser_wait_for"], "load_state", "domcontentloaded", "load", "networkidle")
-	assertTopLevelOneOfRequired(t, tools["browser_wait_for"], "selector", "text", "url_contains", "load_state")
+	assertSchemaDescriptionDocuments(t, tools["browser_wait_for"], "Exactly one of selector, text, url_contains, or load_state must be provided.")
 
 	requireFields(t, tools["browser_evaluate"], "script")
 	assertProp(t, tools["browser_evaluate"], "script", "maxLength", policy.ScriptInputBytes)
@@ -301,7 +301,7 @@ func TestToolsCatalogSchemasMatchSpecCriticalFields(t *testing.T) {
 	assertEnum(t, tools["browser_cookies"], "action", "get", "set", "clear")
 
 	assertEnum(t, tools["session_load"], "mode", "replace")
-	assertTopLevelOneOfRequired(t, tools["session_load"], "path", "state")
+	assertSchemaDescriptionDocuments(t, tools["session_load"], "Exactly one of path or state must be provided.")
 	requireFields(t, tools["session_create"], "session_id")
 	assertEnum(t, tools["session_create"], "os", "windows", "macos", "linux")
 	requireFields(t, tools["session_destroy"], "session_id")
@@ -317,6 +317,16 @@ func TestToolsCatalogSchemasMatchSpecCriticalFields(t *testing.T) {
 	assertProp(t, tools["skills_get"], "name", "maxLength", skillreg.MaxNameBytes)
 	assertProp(t, tools["skills_get"], "version", "pattern", skillreg.VersionPattern)
 	assertProp(t, tools["skills_get"], "version", "maxLength", skillreg.MaxVersionBytes)
+}
+
+// TestToolSchemasContainNoCombinators guards against reintroducing JSON
+// Schema combinators (oneOf/allOf/anyOf/not) in advertised tool input
+// schemas. The Anthropic API rejects tool input_schema objects that use them,
+// which makes Claude Code silently skip the affected tools.
+func TestToolSchemasContainNoCombinators(t *testing.T) {
+	for _, tool := range Tools() {
+		assertNoSchemaCombinators(t, tool)
+	}
 }
 
 func TestToolsCatalogRiskMetadataAndAnnotations(t *testing.T) {
@@ -2864,61 +2874,60 @@ func assertArrayItemProp(t *testing.T, tool Tool, propName, key string, want any
 	}
 }
 
-func assertTargetOneOf(t *testing.T, tool Tool) {
+func assertTargetChoiceDocumented(t *testing.T, tool Tool) {
 	t.Helper()
-	raw, ok := tool.InputSchema["oneOf"].([]map[string]any)
-	if !ok {
-		t.Fatalf("%s missing target oneOf: %#v", tool.Name, tool.InputSchema["oneOf"])
+	assertNoSchemaCombinators(t, tool)
+	for _, prop := range []string{"ref", "selector"} {
+		desc, _ := propOf(t, tool, prop)["description"].(string)
+		if !strings.Contains(desc, "Provide exactly one of ref or selector.") {
+			t.Fatalf("%s.%s description does not document ref/selector exclusivity: %q", tool.Name, prop, desc)
+		}
 	}
-	assertOneOfRequired(t, tool.Name, raw, "ref", "selector")
 }
 
-func assertTopLevelOneOfRequired(t *testing.T, tool Tool, want ...string) {
+func assertSchemaDescriptionDocuments(t *testing.T, tool Tool, want string) {
 	t.Helper()
-	raw, ok := tool.InputSchema["oneOf"].([]map[string]any)
-	if !ok {
-		t.Fatalf("%s missing top-level oneOf: %#v", tool.Name, tool.InputSchema["oneOf"])
+	assertNoSchemaCombinators(t, tool)
+	desc, _ := tool.InputSchema["description"].(string)
+	if !strings.Contains(desc, want) {
+		t.Fatalf("%s schema description = %q, want substring %q", tool.Name, desc, want)
 	}
-	assertOneOfRequired(t, tool.Name, raw, want...)
 }
 
-func assertOneOfRequired(t *testing.T, label string, oneOf []map[string]any, want ...string) {
+// assertNoSchemaCombinators rejects oneOf/allOf/anyOf/not anywhere in the
+// schema: the Anthropic API rejects tool input schemas that use top-level
+// JSON Schema combinators, which makes clients skip the tool entirely.
+func assertNoSchemaCombinators(t *testing.T, tool Tool) {
 	t.Helper()
-	if len(oneOf) != len(want) {
-		t.Fatalf("%s oneOf length = %d, want %d: %#v", label, len(oneOf), len(want), oneOf)
-	}
-	for i, name := range want {
-		required, ok := oneOf[i]["required"].([]string)
-		if !ok || len(required) != 1 || required[0] != name {
-			t.Fatalf("%s oneOf[%d] required = %#v, want [%s]", label, i, oneOf[i]["required"], name)
+	assertNoCombinatorKeys(t, tool.Name, tool.InputSchema)
+}
+
+func assertNoCombinatorKeys(t *testing.T, label string, value any) {
+	t.Helper()
+	switch typed := value.(type) {
+	case map[string]any:
+		for key, nested := range typed {
+			switch key {
+			case "oneOf", "allOf", "anyOf", "not":
+				t.Fatalf("%s schema uses forbidden combinator %q: %#v", label, key, nested)
+			}
+			assertNoCombinatorKeys(t, label, nested)
+		}
+	case []any:
+		for _, nested := range typed {
+			assertNoCombinatorKeys(t, label, nested)
+		}
+	case []map[string]any:
+		for _, nested := range typed {
+			assertNoCombinatorKeys(t, label, nested)
 		}
 	}
 }
 
 func assertSelectOptionSchema(t *testing.T, tool Tool) {
 	t.Helper()
-	allOf, ok := tool.InputSchema["allOf"].([]any)
-	if !ok || len(allOf) != 2 {
-		t.Fatalf("%s allOf = %#v", tool.Name, tool.InputSchema["allOf"])
-	}
-	targetGroup, ok := allOf[0].(map[string]any)
-	if !ok {
-		t.Fatalf("%s target allOf group = %#v", tool.Name, allOf[0])
-	}
-	targetOneOf, ok := targetGroup["oneOf"].([]map[string]any)
-	if !ok {
-		t.Fatalf("%s target oneOf = %#v", tool.Name, targetGroup["oneOf"])
-	}
-	assertOneOfRequired(t, tool.Name+" target", targetOneOf, "ref", "selector")
-	optionGroup, ok := allOf[1].(map[string]any)
-	if !ok {
-		t.Fatalf("%s option allOf group = %#v", tool.Name, allOf[1])
-	}
-	optionOneOf, ok := optionGroup["oneOf"].([]map[string]any)
-	if !ok {
-		t.Fatalf("%s option oneOf = %#v", tool.Name, optionGroup["oneOf"])
-	}
-	assertOneOfRequired(t, tool.Name+" option", optionOneOf, "values", "labels", "indexes")
+	assertTargetChoiceDocumented(t, tool)
+	assertSchemaDescriptionDocuments(t, tool, "Provide exactly one of ref or selector, and exactly one of values, labels, or indexes.")
 	for _, prop := range []string{"values", "labels", "indexes"} {
 		assertProp(t, tool, prop, "minItems", 1)
 		assertProp(t, tool, prop, "maxItems", maxSelectOptionItems)
@@ -2944,11 +2953,6 @@ func assertFormBatchSchema(t *testing.T, tool Tool) {
 	if !ok || strings.Join(required, ",") != "kind" {
 		t.Fatalf("%s action required = %#v", tool.Name, items["required"])
 	}
-	oneOf, ok := items["oneOf"].([]map[string]any)
-	if !ok {
-		t.Fatalf("%s action oneOf = %#v", tool.Name, items["oneOf"])
-	}
-	assertOneOfRequired(t, tool.Name+" action target", oneOf, "ref", "selector")
 	props, ok := items["properties"].(map[string]any)
 	if !ok {
 		t.Fatalf("%s action props = %#v", tool.Name, items["properties"])

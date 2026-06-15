@@ -214,18 +214,6 @@
       "description": "Click an element by snapshot ref or CSS selector, with optional navigation waiting.",
       "inputSchema": {
         "additionalProperties": false,
-        "oneOf": [
-          {
-            "required": [
-              "ref"
-            ]
-          },
-          {
-            "required": [
-              "selector"
-            ]
-          }
-        ],
         "properties": {
           "button": {
             "default": "left",
@@ -243,11 +231,11 @@
             "type": "integer"
           },
           "ref": {
-            "description": "Element ref from browser_snapshot.",
+            "description": "Element ref from browser_snapshot. Provide exactly one of ref or selector.",
             "type": "string"
           },
           "selector": {
-            "description": "CSS selector. Used only when ref is absent.",
+            "description": "CSS selector. Provide exactly one of ref or selector.",
             "type": "string"
           },
           "session_id": {
@@ -286,18 +274,6 @@
       "description": "Type text into an element by snapshot ref or CSS selector without echoing the typed value.",
       "inputSchema": {
         "additionalProperties": false,
-        "oneOf": [
-          {
-            "required": [
-              "ref"
-            ]
-          },
-          {
-            "required": [
-              "selector"
-            ]
-          }
-        ],
         "properties": {
           "clear_first": {
             "default": true,
@@ -316,11 +292,11 @@
             "type": "boolean"
           },
           "ref": {
-            "description": "Element ref from browser_snapshot.",
+            "description": "Element ref from browser_snapshot. Provide exactly one of ref or selector.",
             "type": "string"
           },
           "selector": {
-            "description": "CSS selector. Used only when ref is absent.",
+            "description": "CSS selector. Provide exactly one of ref or selector.",
             "type": "string"
           },
           "session_id": {
@@ -362,18 +338,6 @@
       "description": "Press one keyboard key on an element by snapshot ref or CSS selector without echoing page state.",
       "inputSchema": {
         "additionalProperties": false,
-        "oneOf": [
-          {
-            "required": [
-              "ref"
-            ]
-          },
-          {
-            "required": [
-              "selector"
-            ]
-          }
-        ],
         "properties": {
           "key": {
             "description": "Keyboard key, such as Enter, Escape, Tab, ArrowDown, or Control+A.",
@@ -381,11 +345,11 @@
             "type": "string"
           },
           "ref": {
-            "description": "Element ref from browser_snapshot.",
+            "description": "Element ref from browser_snapshot. Provide exactly one of ref or selector.",
             "type": "string"
           },
           "selector": {
-            "description": "CSS selector. Used only when ref is absent.",
+            "description": "CSS selector. Provide exactly one of ref or selector.",
             "type": "string"
           },
           "session_id": {
@@ -422,18 +386,6 @@
       "description": "Hover an element by snapshot ref or CSS selector without returning page state.",
       "inputSchema": {
         "additionalProperties": false,
-        "oneOf": [
-          {
-            "required": [
-              "ref"
-            ]
-          },
-          {
-            "required": [
-              "selector"
-            ]
-          }
-        ],
         "properties": {
           "force": {
             "default": false,
@@ -441,11 +393,11 @@
             "type": "boolean"
           },
           "ref": {
-            "description": "Element ref from browser_snapshot.",
+            "description": "Element ref from browser_snapshot. Provide exactly one of ref or selector.",
             "type": "string"
           },
           "selector": {
-            "description": "CSS selector. Used only when ref is absent.",
+            "description": "CSS selector. Provide exactly one of ref or selector.",
             "type": "string"
           },
           "session_id": {
@@ -531,41 +483,7 @@
       "description": "Select one or more options in a select element by values, labels, or indexes.",
       "inputSchema": {
         "additionalProperties": false,
-        "allOf": [
-          {
-            "oneOf": [
-              {
-                "required": [
-                  "ref"
-                ]
-              },
-              {
-                "required": [
-                  "selector"
-                ]
-              }
-            ]
-          },
-          {
-            "oneOf": [
-              {
-                "required": [
-                  "values"
-                ]
-              },
-              {
-                "required": [
-                  "labels"
-                ]
-              },
-              {
-                "required": [
-                  "indexes"
-                ]
-              }
-            ]
-          }
-        ],
+        "description": "Provide exactly one of ref or selector, and exactly one of values, labels, or indexes.",
         "properties": {
           "force": {
             "default": false,
@@ -594,11 +512,11 @@
             "type": "array"
           },
           "ref": {
-            "description": "Element ref from browser_snapshot.",
+            "description": "Element ref from browser_snapshot. Provide exactly one of ref or selector.",
             "type": "string"
           },
           "selector": {
-            "description": "CSS selector. Used only when ref is absent.",
+            "description": "CSS selector. Provide exactly one of ref or selector.",
             "type": "string"
           },
           "session_id": {
@@ -642,18 +560,6 @@
       "description": "Set checkbox or radio state by snapshot ref or CSS selector.",
       "inputSchema": {
         "additionalProperties": false,
-        "oneOf": [
-          {
-            "required": [
-              "ref"
-            ]
-          },
-          {
-            "required": [
-              "selector"
-            ]
-          }
-        ],
         "properties": {
           "checked": {
             "default": false,
@@ -666,11 +572,11 @@
             "type": "boolean"
           },
           "ref": {
-            "description": "Element ref from browser_snapshot.",
+            "description": "Element ref from browser_snapshot. Provide exactly one of ref or selector.",
             "type": "string"
           },
           "selector": {
-            "description": "CSS selector. Used only when ref is absent.",
+            "description": "CSS selector. Provide exactly one of ref or selector.",
             "type": "string"
           },
           "session_id": {
@@ -710,18 +616,6 @@
       "description": "Set files on a file input using paths confined under --session-dir; disabled unless --allow-file-upload is set.",
       "inputSchema": {
         "additionalProperties": false,
-        "oneOf": [
-          {
-            "required": [
-              "ref"
-            ]
-          },
-          {
-            "required": [
-              "selector"
-            ]
-          }
-        ],
         "properties": {
           "paths": {
             "description": "File paths under --session-dir.",
@@ -734,11 +628,11 @@
             "type": "array"
           },
           "ref": {
-            "description": "Element ref from browser_snapshot.",
+            "description": "Element ref from browser_snapshot. Provide exactly one of ref or selector.",
             "type": "string"
           },
           "selector": {
-            "description": "CSS selector. Used only when ref is absent.",
+            "description": "CSS selector. Provide exactly one of ref or selector.",
             "type": "string"
           },
           "session_id": {
@@ -838,18 +732,6 @@
           "actions": {
             "items": {
               "additionalProperties": false,
-              "oneOf": [
-                {
-                  "required": [
-                    "ref"
-                  ]
-                },
-                {
-                  "required": [
-                    "selector"
-                  ]
-                }
-              ],
               "properties": {
                 "checked": {
                   "default": false,
@@ -913,11 +795,11 @@
                   "type": "boolean"
                 },
                 "ref": {
-                  "description": "Element ref from browser_snapshot.",
+                  "description": "Element ref from browser_snapshot. Provide exactly one of ref or selector.",
                   "type": "string"
                 },
                 "selector": {
-                  "description": "CSS selector. Used only when ref is absent.",
+                  "description": "CSS selector. Provide exactly one of ref or selector.",
                   "type": "string"
                 },
                 "text": {
@@ -979,28 +861,7 @@
       "description": "Wait for one page condition: selector, text, URL substring, or load state.",
       "inputSchema": {
         "additionalProperties": false,
-        "oneOf": [
-          {
-            "required": [
-              "selector"
-            ]
-          },
-          {
-            "required": [
-              "text"
-            ]
-          },
-          {
-            "required": [
-              "url_contains"
-            ]
-          },
-          {
-            "required": [
-              "load_state"
-            ]
-          }
-        ],
+        "description": "Exactly one of selector, text, url_contains, or load_state must be provided.",
         "properties": {
           "load_state": {
             "enum": [
@@ -1435,18 +1296,7 @@
       "description": "Replace the named non-persistent session context from a confined storage_state file or inline state.",
       "inputSchema": {
         "additionalProperties": false,
-        "oneOf": [
-          {
-            "required": [
-              "path"
-            ]
-          },
-          {
-            "required": [
-              "state"
-            ]
-          }
-        ],
+        "description": "Exactly one of path or state must be provided.",
         "properties": {
           "mode": {
             "default": "replace",

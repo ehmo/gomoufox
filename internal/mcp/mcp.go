@@ -2306,48 +2306,48 @@ func browserSnapshotSchema() map[string]any {
 }
 
 func browserClickSchema() map[string]any {
-	return withTargetOneOf(objectSchema(nil, map[string]any{
-		"ref":                 stringProp("Element ref from browser_snapshot."),
-		"selector":            stringProp("CSS selector. Used only when ref is absent."),
+	return objectSchema(nil, map[string]any{
+		"ref":                 targetRefProp(),
+		"selector":            targetSelectorProp(),
 		"button":              enumProp([]string{"left", "right", "middle"}, "left"),
 		"click_count":         intProp(1, 3, 1),
 		"wait_for_navigation": boolProp(false, "Wait for navigation after click."),
 		"timeout_ms":          intProp(0, 120000, 10000),
 		"session_id":          sessionIDProp(),
-	}))
+	})
 }
 
 func browserTypeSchema() map[string]any {
-	return withTargetOneOf(objectSchema([]string{"text"}, map[string]any{
-		"ref":               stringProp("Element ref from browser_snapshot."),
-		"selector":          stringProp("CSS selector. Used only when ref is absent."),
+	return objectSchema([]string{"text"}, map[string]any{
+		"ref":               targetRefProp(),
+		"selector":          targetSelectorProp(),
 		"text":              stringMaxProp(policy.TypedTextInputBytes, "Text to type. The response must not echo this value."),
 		"clear_first":       boolProp(true, "Clear the field before typing."),
 		"press_enter_after": boolProp(false, "Press Enter after typing."),
 		"delay_ms":          intProp(0, 500, 0),
 		"timeout_ms":        intProp(0, 120000, 10000),
 		"session_id":        sessionIDProp(),
-	}))
+	})
 }
 
 func browserPressKeySchema() map[string]any {
-	return withTargetOneOf(objectSchema([]string{"key"}, map[string]any{
-		"ref":        stringProp("Element ref from browser_snapshot."),
-		"selector":   stringProp("CSS selector. Used only when ref is absent."),
+	return objectSchema([]string{"key"}, map[string]any{
+		"ref":        targetRefProp(),
+		"selector":   targetSelectorProp(),
 		"key":        stringMaxProp(maxKeyboardKeyBytes, "Keyboard key, such as Enter, Escape, Tab, ArrowDown, or Control+A."),
 		"timeout_ms": intProp(0, 120000, 10000),
 		"session_id": sessionIDProp(),
-	}))
+	})
 }
 
 func browserHoverSchema() map[string]any {
-	return withTargetOneOf(objectSchema(nil, map[string]any{
-		"ref":        stringProp("Element ref from browser_snapshot."),
-		"selector":   stringProp("CSS selector. Used only when ref is absent."),
+	return objectSchema(nil, map[string]any{
+		"ref":        targetRefProp(),
+		"selector":   targetSelectorProp(),
 		"force":      boolProp(false, "Bypass actionability checks."),
 		"timeout_ms": intProp(0, 120000, 10000),
 		"session_id": sessionIDProp(),
-	}))
+	})
 }
 
 func browserScrollSchema() map[string]any {
@@ -2362,37 +2362,37 @@ func browserScrollSchema() map[string]any {
 }
 
 func browserSelectOptionSchema() map[string]any {
-	return withAllOfOneOf(objectSchema(nil, map[string]any{
-		"ref":        stringProp("Element ref from browser_snapshot."),
-		"selector":   stringProp("CSS selector. Used only when ref is absent."),
+	return withSchemaDescription(objectSchema(nil, map[string]any{
+		"ref":        targetRefProp(),
+		"selector":   targetSelectorProp(),
 		"values":     boundedStringArrayProp(maxSelectOptionItems, maxSelectOptionTextBytes, "Option values to select."),
 		"labels":     boundedStringArrayProp(maxSelectOptionItems, maxSelectOptionTextBytes, "Option labels to select."),
 		"indexes":    boundedIntegerArrayProp(maxSelectOptionItems, 0, 10000, "Option indexes to select."),
 		"force":      boolProp(false, "Bypass actionability checks."),
 		"timeout_ms": intProp(0, 120000, 10000),
 		"session_id": sessionIDProp(),
-	}), targetOneOf(), []map[string]any{{"required": []string{"values"}}, {"required": []string{"labels"}}, {"required": []string{"indexes"}}})
+	}), "Provide exactly one of ref or selector, and exactly one of values, labels, or indexes.")
 }
 
 func browserSetCheckedSchema() map[string]any {
-	return withTargetOneOf(objectSchema([]string{"checked"}, map[string]any{
-		"ref":        stringProp("Element ref from browser_snapshot."),
-		"selector":   stringProp("CSS selector. Used only when ref is absent."),
+	return objectSchema([]string{"checked"}, map[string]any{
+		"ref":        targetRefProp(),
+		"selector":   targetSelectorProp(),
 		"checked":    boolProp(false, "Desired checked state."),
 		"force":      boolProp(false, "Bypass actionability checks."),
 		"timeout_ms": intProp(0, 120000, 10000),
 		"session_id": sessionIDProp(),
-	}))
+	})
 }
 
 func browserUploadFileSchema() map[string]any {
-	return withTargetOneOf(objectSchema([]string{"paths"}, map[string]any{
-		"ref":        stringProp("Element ref from browser_snapshot."),
-		"selector":   stringProp("CSS selector. Used only when ref is absent."),
+	return objectSchema([]string{"paths"}, map[string]any{
+		"ref":        targetRefProp(),
+		"selector":   targetSelectorProp(),
 		"paths":      boundedStringArrayProp(maxUploadFiles, maxUploadPathBytes, "File paths under --session-dir."),
 		"timeout_ms": intProp(0, 120000, 10000),
 		"session_id": sessionIDProp(),
-	}))
+	})
 }
 
 func browserDialogSchema() map[string]any {
@@ -2417,8 +2417,8 @@ func browserFormBatchSchema() map[string]any {
 				"additionalProperties": false,
 				"properties": map[string]any{
 					"kind":              enumProp([]string{"type", "press_key", "select_option", "set_checked"}, ""),
-					"ref":               stringProp("Element ref from browser_snapshot."),
-					"selector":          stringProp("CSS selector. Used only when ref is absent."),
+					"ref":               targetRefProp(),
+					"selector":          targetSelectorProp(),
 					"text":              stringMaxProp(policy.TypedTextInputBytes, "Text to type. Batch responses do not echo this value."),
 					"key":               stringMaxProp(maxKeyboardKeyBytes, "Keyboard key."),
 					"values":            boundedStringArrayProp(maxSelectOptionItems, maxSelectOptionTextBytes, "Option values."),
@@ -2432,7 +2432,6 @@ func browserFormBatchSchema() map[string]any {
 					"timeout_ms":        intProp(0, 120000, 10000),
 				},
 				"required": []string{"kind"},
-				"oneOf":    targetOneOf(),
 			},
 		},
 		"session_id": sessionIDProp(),
@@ -2440,14 +2439,14 @@ func browserFormBatchSchema() map[string]any {
 }
 
 func browserWaitForSchema() map[string]any {
-	return withOneOf(objectSchema(nil, map[string]any{
+	return withSchemaDescription(objectSchema(nil, map[string]any{
 		"selector":     stringProp("CSS selector to wait for."),
 		"text":         stringProp("Text to wait for."),
 		"url_contains": stringProp("URL substring to wait for."),
 		"load_state":   enumProp([]string{"domcontentloaded", "load", "networkidle"}, ""),
 		"timeout_ms":   intProp(500, 120000, 30000),
 		"session_id":   sessionIDProp(),
-	}), requiredOneOf("selector", "text", "url_contains", "load_state"))
+	}), "Exactly one of selector, text, url_contains, or load_state must be provided.")
 }
 
 func browserEvaluateSchema() map[string]any {
@@ -2513,12 +2512,12 @@ func sessionSaveSchema() map[string]any {
 }
 
 func sessionLoadSchema() map[string]any {
-	return withOneOf(objectSchema(nil, map[string]any{
+	return withSchemaDescription(objectSchema(nil, map[string]any{
 		"path":       stringProp("Storage_state path under --session-dir. Requires --allow-session-import."),
 		"state":      map[string]any{"type": "object", "description": "Inline storage_state JSON. Requires --allow-session-import."},
 		"mode":       enumProp([]string{sessionLoadModeReplace}, sessionLoadModeReplace),
 		"session_id": sessionIDProp(),
-	}), requiredOneOf("path", "state"))
+	}), "Exactly one of path or state must be provided.")
 }
 
 func sessionCreateSchema() map[string]any {
@@ -2560,34 +2559,19 @@ func objectSchema(required []string, properties map[string]any) map[string]any {
 	return out
 }
 
-func targetOneOf() []map[string]any {
-	return requiredOneOf("ref", "selector")
+// The Anthropic API rejects tool input schemas with top-level oneOf/allOf/anyOf
+// combinators, so mutual-exclusion rules are documented in descriptions instead.
+// The handlers enforce the rules at tools/call time via exactlyOne().
+func targetRefProp() map[string]any {
+	return stringProp("Element ref from browser_snapshot. Provide exactly one of ref or selector.")
 }
 
-func requiredOneOf(names ...string) []map[string]any {
-	out := make([]map[string]any, 0, len(names))
-	for _, name := range names {
-		out = append(out, map[string]any{"required": []string{name}})
-	}
-	return out
+func targetSelectorProp() map[string]any {
+	return stringProp("CSS selector. Provide exactly one of ref or selector.")
 }
 
-func withTargetOneOf(schema map[string]any) map[string]any {
-	schema["oneOf"] = targetOneOf()
-	return schema
-}
-
-func withOneOf(schema map[string]any, group []map[string]any) map[string]any {
-	schema["oneOf"] = group
-	return schema
-}
-
-func withAllOfOneOf(schema map[string]any, groups ...[]map[string]any) map[string]any {
-	allOf := make([]any, 0, len(groups))
-	for _, group := range groups {
-		allOf = append(allOf, map[string]any{"oneOf": group})
-	}
-	schema["allOf"] = allOf
+func withSchemaDescription(schema map[string]any, description string) map[string]any {
+	schema["description"] = description
 	return schema
 }
 

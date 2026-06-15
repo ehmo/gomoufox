@@ -1,6 +1,7 @@
 package a11y
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 )
@@ -22,6 +23,21 @@ type Element struct {
 	Required   bool   `json:"required,omitempty"`
 	Resolver   string `json:"-"`
 	Occurrence int    `json:"-"`
+}
+
+// UnmarshalJSON decodes the snapshot script payload, including the "resolver"
+// locator path that MarshalJSON must keep hidden from tool output.
+func (e *Element) UnmarshalJSON(data []byte) error {
+	type plain Element
+	aux := struct {
+		*plain
+		Resolver string `json:"resolver"`
+	}{plain: (*plain)(e)}
+	if err := json.Unmarshal(data, &aux); err != nil {
+		return err
+	}
+	e.Resolver = aux.Resolver
+	return nil
 }
 
 type Snapshot struct {
