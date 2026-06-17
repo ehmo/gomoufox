@@ -42,7 +42,8 @@
     },
     {
       "examples": [
-        "gomoufox open https://example.com --profile profiles/site"
+        "gomoufox open https://example.com --save-session state.json --wait",
+        "gomoufox fetch https://example.com/api/me --cookies-file state.json"
       ],
       "flags": [
         "--wait",
@@ -50,7 +51,7 @@
         "--humanize"
       ],
       "name": "open",
-      "summary": "open a headful browser for login or manual inspection",
+      "summary": "open a headful browser for human login and optional session-state capture",
       "usage": "gomoufox open <url> [--profile <dir>] [--save-session <path>] [--wait]"
     },
     {

@@ -32,7 +32,9 @@ gomoufox skills show mcp
 
 Use ` + "`gomoufox get`" + ` for capped page text or Markdown, ` + "`gomoufox screenshot`" + ` for visual evidence, ` + "`gomoufox fetch`" + ` for authenticated in-browser HTTP, and ` + "`gomoufox open`" + ` for human login.
 
-Prefer ` + "`--json`" + ` when another tool or agent will parse the output. Keep response caps low with ` + "`--max-bytes`" + ` on large pages. Use ` + "`--profile`" + ` only when the operator wants state to persist.
+For human login, run ` + "`gomoufox open <url> --save-session <state.json> --wait`" + `, have the operator complete login, then wait for them to close the browser window. Reuse that state with ` + "`--cookies-file <state.json>`" + ` on ` + "`get`" + `, ` + "`fetch`" + `, ` + "`screenshot`" + `, or ` + "`eval`" + `; use ` + "`--profile <dir>`" + ` only when the operator wants a full persistent Firefox profile instead of portable cookies/localStorage.
+
+Prefer ` + "`--json`" + ` when another tool or agent will parse the output. Keep response caps low with ` + "`--max-bytes`" + ` on large pages. If ` + "`open`" + ` fails with ` + "`go node-direct launch plan unsupported: dynamic locale/geo/humanize`" + `, retry with ` + "`--humanize=false`" + ` or use a current gomoufox build; profile, locale, and humanize flows require the Python sidecar.
 
 ## Safety
 
@@ -77,6 +79,8 @@ Use ` + "`browser_navigate`" + `, then ` + "`browser_snapshot`" + ` with ` + "`i
 For failures, inspect ` + "`browser_console_messages`" + `, ` + "`browser_network_requests`" + `, and ` + "`browser_performance_snapshot`" + `. Use ` + "`browser_dialog`" + ` to set prompt/alert policy or read bounded dialog history. These diagnosis tools are capped. Network summaries do not include bodies, and URLs, headers, console text, and page errors are redacted.
 
 Use named ` + "`session_id`" + ` values for separate accounts or tasks. Destroy sessions when done. Leave ` + "`browser_evaluate`" + `, browser fetch, file upload, cookie mutation, session import, and session export disabled unless the operator explicitly enables them.
+
+For human login before MCP work, use the CLI bridge first: ` + "`gomoufox open <url> --save-session <state.json> --wait`" + `, wait for the operator to log in and close the window, then make that file available under the MCP ` + "`--session-dir`" + `. Start MCP with ` + "`--allow-session-import`" + `, then call ` + "`session_create`" + ` with ` + "`storage_state_path`" + ` or ` + "`session_load`" + ` with ` + "`path`" + ` for the target ` + "`session_id`" + `. Do not ask for cookie values or session export unless the operator explicitly requested it.
 
 Start with ` + "`--toolset core`" + ` for token-sensitive tasks that only need navigation, snapshots/content, common form actions, sessions, and skills. Use the default ` + "`full`" + ` toolset when diagnostics, eval, fetch, cookies, storage import/export, uploads, or dialog tooling are needed.
 

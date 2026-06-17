@@ -37,6 +37,8 @@ For failures, inspect `browser_console_messages`, `browser_network_requests`, an
 
 Use named `session_id` values for separate accounts or tasks. Destroy sessions when done. Leave `browser_evaluate`, browser fetch, file upload, cookie mutation, session import, and session export disabled unless the operator explicitly enables them.
 
+For human login before MCP work, use the CLI bridge first: `gomoufox open <url> --save-session <state.json> --wait`, wait for the operator to log in and close the window, then make that file available under the MCP `--session-dir`. Start MCP with `--allow-session-import`, then call `session_create` with `storage_state_path` or `session_load` with `path` for the target `session_id`. Do not ask for cookie values or session export unless the operator explicitly requested it.
+
 Start with `--toolset core` for token-sensitive tasks that only need navigation, snapshots/content, common form actions, sessions, and skills. Use the default `full` toolset when diagnostics, eval, fetch, cookies, storage import/export, uploads, or dialog tooling are needed.
 
 ## Guardrails

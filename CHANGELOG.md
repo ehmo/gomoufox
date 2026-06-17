@@ -4,6 +4,18 @@
 
 - No changes yet.
 
+## v0.1.14
+
+- Fix `gomoufox open` human-login launches that need profile, locale, or
+  humanize launch options by selecting the Python sidecar instead of the
+  node-direct runtime.
+- Treat manual browser window closure as successful completion for
+  `gomoufox open --save-session --wait`, so the storage state is still written
+  after the operator logs in and closes the window.
+- Document the human-login session handoff across CLI help, MCP guidance,
+  bundled agent skills, generated agent contracts, README, and the public
+  mirror.
+
 ## v0.1.13
 
 - Fix MCP client compatibility by accepting reserved `params._meta` on

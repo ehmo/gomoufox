@@ -2104,12 +2104,24 @@ func TestLocalOptionAndFileHelperEdges(t *testing.T) {
 			"proxy":    "http://user:pass@proxy.example:8080",
 		},
 	})
-	if err != nil || len(browserOpts) != 6 {
+	if err != nil || len(browserOpts) != 7 {
 		t.Fatalf("browser opts len=%d err=%v", len(browserOpts), err)
 	}
 	browserOpts, err = browserOptions(LocalCommandRequest{Command: "open", Flags: map[string]any{}})
-	if err != nil || len(browserOpts) != 2 {
+	if err != nil || len(browserOpts) != 3 {
 		t.Fatalf("open browser opts len=%d err=%v", len(browserOpts), err)
+	}
+	if !localCommandNeedsPythonRuntime(LocalCommandRequest{Profile: "/profile"}, false) {
+		t.Fatal("profile should select python runtime")
+	}
+	if !localCommandNeedsPythonRuntime(LocalCommandRequest{Flags: map[string]any{"locale": "en-US"}}, false) {
+		t.Fatal("locale should select python runtime")
+	}
+	if !localCommandNeedsPythonRuntime(LocalCommandRequest{}, true) {
+		t.Fatal("humanize should select python runtime")
+	}
+	if localCommandNeedsPythonRuntime(LocalCommandRequest{}, false) {
+		t.Fatal("plain command should keep default runtime")
 	}
 	if _, err := browserOptions(LocalCommandRequest{Flags: map[string]any{"proxy": "%"}}); err == nil {
 		t.Fatal("bad browser proxy succeeded")
@@ -4122,6 +4134,23 @@ func TestDefaultLocalCommandPageErrorEdgesWithFakes(t *testing.T) {
 	openWithPage(t, &fakeLocalPage{url: "https://example.com/final", waitClosedErr: errors.New("close wait failed")})
 	if _, err = defaultLocalCommand(context.Background(), LocalCommandRequest{Command: "open", Args: []string{"https://example.com"}}); err == nil {
 		t.Fatal("open wait failure succeeded")
+	}
+
+	targetClosedOut := filepath.Join(t.TempDir(), "target-closed-state.json")
+	openWithPage(t, &fakeLocalPage{
+		url:           "https://example.com/final",
+		waitClosedErr: errors.New("target closed"),
+		state:         &gomoufox.StorageState{Cookies: []gomoufox.Cookie{{Name: "sid", Value: "1"}}},
+	})
+	if _, err = defaultLocalCommand(context.Background(), LocalCommandRequest{
+		Command: "open",
+		Args:    []string{"https://example.com"},
+		Flags:   map[string]any{"save_session": targetClosedOut},
+	}); err != nil {
+		t.Fatalf("open target closed save-session err = %v", err)
+	}
+	if data, err := os.ReadFile(targetClosedOut); err != nil || !bytes.Contains(data, []byte(`"sid"`)) {
+		t.Fatalf("target closed saved state=%q err=%v", data, err)
 	}
 
 	openWithPage(t, &fakeLocalPage{url: "https://example.com/final", storageErr: errors.New("state failed")})

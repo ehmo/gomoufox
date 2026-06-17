@@ -306,7 +306,9 @@ func localOpen(ctx context.Context, req LocalCommandRequest) (LocalCommandRespon
 	}
 	stdout := []byte(p.URL() + "\n")
 	if err := p.WaitClosed(ctx); err != nil {
-		return LocalCommandResponse{}, err
+		if !isExpectedPageCloseError(err) {
+			return LocalCommandResponse{}, err
+		}
 	}
 	if out := flagString(req, "save_session", ""); out != "" {
 		state, err := p.StorageState(ctx)
@@ -486,11 +488,19 @@ func (p realLocalPage) WaitClosed(ctx context.Context) error {
 	}()
 	select {
 	case err := <-done:
+		if isExpectedPageCloseError(err) {
+			return nil
+		}
 		return err
 	case <-ctx.Done():
 		return ctx.Err()
 	}
 }
+
+func isExpectedPageCloseError(err error) bool {
+	return err != nil && strings.Contains(strings.ToLower(err.Error()), "target closed")
+}
+
 func (p realLocalPage) StorageState(ctx context.Context) (*gomoufox.StorageState, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -563,7 +573,14 @@ func browserOptions(req LocalCommandRequest) ([]gomoufox.Option, error) {
 	if enabled {
 		opts = append(opts, gomoufox.WithHumanize(duration))
 	}
+	if localCommandNeedsPythonRuntime(req, enabled) {
+		opts = append(opts, gomoufox.WithSidecarRuntime(gomoufox.SidecarRuntimePython))
+	}
 	return opts, nil
+}
+
+func localCommandNeedsPythonRuntime(req LocalCommandRequest, humanizeEnabled bool) bool {
+	return req.Profile != "" || flagString(req, "locale", "") != "" || humanizeEnabled
 }
 
 func humanizeForLocal(req LocalCommandRequest) (bool, time.Duration, error) {

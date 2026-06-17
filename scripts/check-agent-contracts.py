@@ -248,8 +248,9 @@ def check_mcp_skill_body(root: Path, gomoufox: str | None, live: dict[str, str])
         if isinstance(command_doc, dict):
             allowed_flags.update(command_doc.get("flags", []))
     normalized = {flag.split()[0] for flag in allowed_flags}
+    allowed_cli_bridge_flags = {"--save-session", "--wait"}
     for flag in sorted(set(re.findall(r"--[a-z0-9-]+", body))):
-        if flag not in normalized:
+        if flag not in normalized and flag not in allowed_cli_bridge_flags:
             failures.append(f"embedded mcp skill references unknown mcp flag {flag!r}")
     return failures
 

@@ -653,11 +653,14 @@ func commandHelps() []commandHelp {
 			Flags:   []string{"--dir", "--runtime", "--python", "--force"},
 		},
 		{
-			Name:     "open",
-			Usage:    "gomoufox open <url> [--profile <dir>] [--save-session <path>] [--wait]",
-			Summary:  "open a headful browser for login or manual inspection",
-			Flags:    []string{"--wait", "--save-session", "--humanize"},
-			Examples: []string{"gomoufox open https://example.com --profile profiles/site"},
+			Name:    "open",
+			Usage:   "gomoufox open <url> [--profile <dir>] [--save-session <path>] [--wait]",
+			Summary: "open a headful browser for human login and optional session-state capture",
+			Flags:   []string{"--wait", "--save-session", "--humanize"},
+			Examples: []string{
+				"gomoufox open https://example.com --save-session state.json --wait",
+				"gomoufox fetch https://example.com/api/me --cookies-file state.json",
+			},
 		},
 		{
 			Name:     "get",

@@ -103,12 +103,13 @@ Homebrew build still has that command.
 | Path | Status | Use it when |
 |---|---|---|
 | `gomoufox install` | ![default](https://img.shields.io/badge/default-no%20Python-2ea44f) | You want the Go-managed node-direct runtime. |
-| `gomoufox install --runtime python` | ![legacy](https://img.shields.io/badge/legacy-explicit-f97316) | You need BrowserForge, geoip, or the old Python sidecar. |
+| `gomoufox install --runtime python` | ![legacy](https://img.shields.io/badge/legacy-explicit-f97316) | You need BrowserForge, geoip, persistent profiles, locale/humanize launch options, or the legacy Python sidecar. |
 | `GOMOUFOX_CAMOUFOX_PATH=/path/to/browser` | ![custom](https://img.shields.io/badge/custom-local%20browser-64748b) | You already have a compatible Camoufox browser directory. |
 
-Normal Go, CLI, and MCP use does not require Python. The default install fetches
-Playwright's Node driver, gomoufox's launch server, and the pinned Camoufox
-browser archive.
+Default Go, CLI, and MCP flows use the Go-managed node-direct runtime. The
+default install fetches Playwright's Node driver, gomoufox's launch server, and
+the pinned Camoufox browser archive. Profile, locale, and humanize flows still
+use the Python sidecar because they require Camoufox launch options.
 
 Use `gomoufox install --runtime python` only for the explicit legacy
 Python-sidecar path. That path uses hash-locked wheels and fails closed on a
@@ -170,6 +171,8 @@ when an agent needs browser tools over stdio or HTTP.
 gomoufox get https://example.com --markdown
 gomoufox screenshot https://example.com --out page.png --full-page
 gomoufox fetch https://api.example.com/me --navigate-first https://example.com
+gomoufox open https://app.example.com --save-session state.json --wait
+gomoufox fetch https://app.example.com/api/me --cookies-file state.json
 ```
 
 Fetch responses are read through a bounded browser stream. `gomoufox fetch`
@@ -195,7 +198,9 @@ Automation tips:
 
 - Use `--json` for machine-readable output and keep status logs on stderr.
 - Use `--timeout <dur>` for bounded shell jobs.
-- Use `--profile <dir>` when a workflow needs persistent browser state.
+- Use `open --save-session` for human login, then reuse the state with
+  `--cookies-file`.
+- Use `--profile <dir>` when a workflow needs full persistent browser state.
 - Keep the default URL policy for normal work. Use `--allow-private-ips` only
   when you need local or private network targets.
 
@@ -314,6 +319,10 @@ MCP defaults:
 - Browser-context fetches, cookie values, cookie mutation, session export,
   session import, session proxy use, and file upload stay disabled unless you
   enable their matching operator flags.
+- To reuse a CLI login in MCP, save state with `gomoufox open --save-session`,
+  place the file under `--session-dir`, start MCP with `--allow-session-import`,
+  then call `session_create` with `storage_state_path` or `session_load` with
+  `path`.
 - `browser_upload_file` requires `--allow-file-upload`; paths must resolve under
   `--session-dir`, and responses do not echo file paths.
 - `browser_fetch` requires `--allow-browser-fetch` plus at least one
@@ -430,13 +439,9 @@ python3 scripts/audit-public-release.py \
 
 ### Where is Python still used?
 
-No for normal Go, CLI, MCP, install, and doctor flows. The default runtime is
-Go-managed node-direct and the no-Python consumer canary verifies install,
-doctor, CLI discovery, MCP core handshake, and skills with failing
-`python`/`python3` shims.
-
-It is removed from default install/runtime paths. Python remains for explicit
-legacy Python-sidecar mode, upstream Python Camoufox comparison benchmarks, and
+Default install and ordinary node-direct flows do not need Python at runtime.
+Python remains for explicit legacy Python-sidecar mode, profile/locale/humanize
+launch-option flows, upstream Python Camoufox comparison benchmarks, and
 maintainer release/dev scripts listed in `scripts/python-tooling-policy.json`.
 
 The audit path still exists for upstream parity work:
@@ -468,6 +473,8 @@ changes, and upstream Camoufox changes can still affect results.
 Temporary sessions use temporary profile data. Persistent sessions use the
 directory you pass with `--profile`. MCP session import, export, proxy use, and
 file upload stay disabled until you start MCP with the matching operator flags.
+Portable `storage_state` files from `open --save-session` contain cookies and
+localStorage only; reuse them with CLI `--cookies-file` or MCP session import.
 
 ### Does MCP trust page content?
 
