@@ -2,7 +2,7 @@
   "_meta": {
     "gomoufox/agent_hint": "use core for lower-token browser control; use full for diagnostics or gated tools",
     "gomoufox/core_command": "gomoufox mcp --toolset core",
-    "gomoufox/tool_count": 28,
+    "gomoufox/tool_count": 29,
     "gomoufox/toolset": "full"
   },
   "tools": [
@@ -653,6 +653,62 @@
         "type": "object"
       },
       "name": "browser_upload_file"
+    },
+    {
+      "_meta": {
+        "gomoufox/risk": {
+          "gates": [
+            "--allow-file-download"
+          ],
+          "level": "high"
+        }
+      },
+      "annotations": {
+        "destructiveHint": true,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": false
+      },
+      "description": "Click an element and save the resulting browser download to a path confined under --session-dir; disabled unless --allow-file-download is set.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "overwrite": {
+            "default": false,
+            "description": "Allow replacing an existing regular file.",
+            "type": "boolean"
+          },
+          "path": {
+            "description": "Destination file path under --session-dir.",
+            "maxLength": 4096,
+            "type": "string"
+          },
+          "ref": {
+            "description": "Element ref from browser_snapshot. Provide exactly one of ref or selector.",
+            "type": "string"
+          },
+          "selector": {
+            "description": "CSS selector. Provide exactly one of ref or selector.",
+            "type": "string"
+          },
+          "session_id": {
+            "default": "default",
+            "description": "Session name.",
+            "type": "string"
+          },
+          "timeout_ms": {
+            "default": 30000,
+            "maximum": 120000,
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "path"
+        ],
+        "type": "object"
+      },
+      "name": "browser_download"
     },
     {
       "_meta": {

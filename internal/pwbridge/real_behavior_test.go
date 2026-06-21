@@ -529,6 +529,18 @@ func TestRealPageDelegatesObservableBehavior(t *testing.T) {
 	if !actionCalled || raw.expectEventName != "framenavigated" || raw.expectEventOptions.Timeout == nil || *raw.expectEventOptions.Timeout != 1500 || !raw.expectEventPredicateHit || raw.expectEventPredicateMiss || raw.waitForLoadOptions.State == nil || string(*raw.waitForLoadOptions.State) != "domcontentloaded" || raw.waitForLoadOptions.Timeout == nil || *raw.waitForLoadOptions.Timeout != 1500 {
 		t.Fatalf("RunAndWaitForNavigation action=%t event=%q opts=%#v hit=%t miss=%t load=%#v", actionCalled, raw.expectEventName, raw.expectEventOptions, raw.expectEventPredicateHit, raw.expectEventPredicateMiss, raw.waitForLoadOptions)
 	}
+	downloadActionCalled := false
+	raw.expectDownloadResp = &fakeDownload{url: "https://download.example/receipt", suggestedFilename: "receipt.pdf"}
+	download, err := page.RunAndWaitForDownload(func() error {
+		downloadActionCalled = true
+		return nil
+	}, DownloadOptions{Timeout: 2500 * time.Millisecond})
+	if err != nil {
+		t.Fatalf("RunAndWaitForDownload() error = %v", err)
+	}
+	if !downloadActionCalled || raw.expectDownloadOptions.Timeout == nil || *raw.expectDownloadOptions.Timeout != 2500 || download.URL() != "https://download.example/receipt" || download.SuggestedFilename() != "receipt.pdf" {
+		t.Fatalf("RunAndWaitForDownload action=%t opts=%#v download=%#v", downloadActionCalled, raw.expectDownloadOptions, download)
+	}
 
 	evaluated, err := page.Evaluate("() => 1", "arg")
 	if err != nil {
@@ -672,6 +684,25 @@ func TestRealPageDelegatesObservableBehavior(t *testing.T) {
 	raw.onDialog(dialog)
 	if dialogSeen != "prompt:hello:name" || !dialog.accepted || dialog.acceptText != "ok" {
 		t.Fatalf("OnDialog saw %q dialog=%#v", dialogSeen, dialog)
+	}
+	downloadEvent := &fakeDownload{url: "https://download.example/file", suggestedFilename: "file.txt"}
+	downloadSeen := ""
+	page.OnDownload(func(d Download) { downloadSeen = d.URL() + ":" + d.SuggestedFilename() })
+	raw.onDownload(downloadEvent)
+	if downloadSeen != "https://download.example/file:file.txt" {
+		t.Fatalf("OnDownload saw %q", downloadSeen)
+	}
+	if err := download.SaveAs("/tmp/receipt.pdf"); err != nil || raw.expectDownloadResp.(*fakeDownload).savePath != "/tmp/receipt.pdf" {
+		t.Fatalf("Download SaveAs path=%q err=%v", raw.expectDownloadResp.(*fakeDownload).savePath, err)
+	}
+	if err := download.Failure(); err != nil {
+		t.Fatalf("Download Failure = %v", err)
+	}
+	if err := download.Cancel(); err != nil || raw.expectDownloadResp.(*fakeDownload).cancelCalls != 1 {
+		t.Fatalf("Download Cancel calls=%d err=%v", raw.expectDownloadResp.(*fakeDownload).cancelCalls, err)
+	}
+	if err := download.Delete(); err != nil || raw.expectDownloadResp.(*fakeDownload).deleteCalls != 1 {
+		t.Fatalf("Download Delete calls=%d err=%v", raw.expectDownloadResp.(*fakeDownload).deleteCalls, err)
 	}
 	dismissDialog := &fakePWDialog{typ: "alert"}
 	if err := (&realDialog{raw: dismissDialog}).Dismiss(); err != nil || !dismissDialog.dismissed {
@@ -1190,6 +1221,8 @@ type fakePage struct {
 	expectEventOptions       playwright.PageExpectEventOptions
 	expectEventPredicateHit  bool
 	expectEventPredicateMiss bool
+	expectDownloadOptions    playwright.PageExpectDownloadOptions
+	expectDownloadResp       playwright.Download
 	evaluateExpression       string
 	evaluateArgs             []any
 	evaluateResp             any
@@ -1219,6 +1252,7 @@ type fakePage struct {
 	onPageError              func(error)
 	onConsole                func(playwright.ConsoleMessage)
 	onDialog                 func(playwright.Dialog)
+	onDownload               func(playwright.Download)
 	wheelX                   float64
 	wheelY                   float64
 	wheelErr                 error
@@ -1267,6 +1301,19 @@ func (p *fakePage) ExpectEvent(event string, action func() error, options ...pla
 		return nil, err
 	}
 	return p.MainFrame(), nil
+}
+
+func (p *fakePage) ExpectDownload(action func() error, options ...playwright.PageExpectDownloadOptions) (playwright.Download, error) {
+	if len(options) > 0 {
+		p.expectDownloadOptions = options[0]
+	}
+	if err := action(); err != nil {
+		return nil, err
+	}
+	if p.expectDownloadResp != nil {
+		return p.expectDownloadResp, nil
+	}
+	return &fakeDownload{url: "https://example.com/file", suggestedFilename: "file.txt"}, nil
 }
 
 func (p *fakePage) Evaluate(expression string, arg ...any) (any, error) {
@@ -1365,6 +1412,9 @@ func (p *fakePage) OnConsole(fn func(playwright.ConsoleMessage)) {
 func (p *fakePage) OnDialog(fn func(playwright.Dialog)) {
 	p.onDialog = fn
 }
+func (p *fakePage) OnDownload(fn func(playwright.Download)) {
+	p.onDownload = fn
+}
 func (p *fakePage) Mouse() playwright.Mouse {
 	return &fakeMouse{page: p}
 }
@@ -1415,6 +1465,35 @@ func (d *fakePWDialog) Accept(promptText ...string) error {
 func (d *fakePWDialog) Dismiss() error {
 	d.dismissed = true
 	return d.dismissErr
+}
+
+type fakeDownload struct {
+	playwright.Download
+	url               string
+	suggestedFilename string
+	savePath          string
+	saveErr           error
+	failureErr        error
+	cancelErr         error
+	deleteErr         error
+	cancelCalls       int
+	deleteCalls       int
+}
+
+func (d *fakeDownload) URL() string               { return d.url }
+func (d *fakeDownload) SuggestedFilename() string { return d.suggestedFilename }
+func (d *fakeDownload) SaveAs(path string) error {
+	d.savePath = path
+	return d.saveErr
+}
+func (d *fakeDownload) Failure() error { return d.failureErr }
+func (d *fakeDownload) Cancel() error {
+	d.cancelCalls++
+	return d.cancelErr
+}
+func (d *fakeDownload) Delete() error {
+	d.deleteCalls++
+	return d.deleteErr
 }
 
 type fakeElement struct {

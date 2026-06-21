@@ -40,6 +40,7 @@ type Config struct {
 	AllowSessionImport  bool
 	AllowSessionProxy   bool
 	AllowFileUpload     bool
+	AllowFileDownload   bool
 	ContentWarning      bool
 	AllowedOrigins      []string
 	AllowedHosts        []string

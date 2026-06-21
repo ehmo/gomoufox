@@ -553,6 +553,9 @@ func launchArgsJSON(cfg Config) ([]byte, error) {
 	if cfg.DisableCOOP {
 		launchArgs["disable_coop"] = true
 	}
+	if cfg.AcceptDownloads != nil {
+		launchArgs["accept_downloads"] = *cfg.AcceptDownloads
+	}
 	return json.Marshal(launchArgs)
 }
 

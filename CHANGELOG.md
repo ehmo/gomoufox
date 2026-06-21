@@ -4,6 +4,11 @@
 
 - No changes yet.
 
+## v0.1.15
+
+- Add native browser download support to the Go API and MCP server, including
+  an opt-in `browser_download` tool that saves only under `--session-dir`.
+
 ## v0.1.14
 
 - Fix `gomoufox open` human-login launches that need profile, locale, or

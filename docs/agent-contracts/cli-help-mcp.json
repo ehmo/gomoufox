@@ -28,7 +28,8 @@
         "--allow-session-export",
         "--allow-session-import",
         "--allow-session-proxy",
-        "--allow-file-upload"
+        "--allow-file-upload",
+        "--allow-file-download"
       ],
       "name": "mcp",
       "summary": "run the token-capped MCP browser tool server for agents",
@@ -72,6 +73,7 @@
     "browser_select_option",
     "browser_set_checked",
     "browser_upload_file",
+    "browser_download",
     "browser_dialog",
     "browser_form_batch",
     "browser_wait_for",

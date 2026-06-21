@@ -743,6 +743,7 @@ func commandHelps() []commandHelp {
 				"--allow-session-import",
 				"--allow-session-proxy",
 				"--allow-file-upload",
+				"--allow-file-download",
 			},
 			Examples: []string{"gomoufox mcp", "gomoufox mcp --toolset core", "gomoufox mcp --allow-browser-fetch --allowed-hosts api.example.com", "gomoufox mcp --transport http --auth-token $TOKEN"},
 		},
@@ -1480,6 +1481,7 @@ func (r Runner) runMCP(ctx context.Context, global globalFlags, args []string, s
 	cfg.AllowSessionImport = parsed.bool("allow-session-import")
 	cfg.AllowSessionProxy = parsed.bool("allow-session-proxy")
 	cfg.AllowFileUpload = parsed.bool("allow-file-upload")
+	cfg.AllowFileDownload = parsed.bool("allow-file-download")
 	cfg.AllowedOrigins = splitCSV(parsed.value("allowed-origins"))
 	cfg.AllowedHosts = splitCSV(parsed.value("allowed-hosts"))
 	req := MCPRequest{
@@ -1811,6 +1813,7 @@ func mcpFlagSpecs() map[string]flagSpec {
 		"allow-session-import":  {Kind: flagBool},
 		"allow-session-proxy":   {Kind: flagBool},
 		"allow-file-upload":     {Kind: flagBool},
+		"allow-file-download":   {Kind: flagBool},
 		"max-input-bytes":       {Kind: flagValue},
 		"max-response-bytes":    {Kind: flagValue},
 		"session-dir":           {Kind: flagValue},

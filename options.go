@@ -142,6 +142,10 @@ func WithSidecarRuntime(runtime SidecarRuntime) Option {
 	return func(c *launchConfig) { c.sidecarRuntime = runtime }
 }
 
+func WithBrowserAcceptDownloads(enabled bool) Option {
+	return func(c *launchConfig) { c.acceptDownloads = &enabled }
+}
+
 // withConnector is intentionally unexported; tests and internal packages use it
 // to swap playwright-go for deterministic fakes without expanding the public API.
 func withConnector(connector pwbridge.Connector) Option {
@@ -189,4 +193,8 @@ func WithExtraHTTPHeaders(headers map[string]string) ContextOption {
 
 func WithHTTPCredentials(username, password string) ContextOption {
 	return func(c *contextConfig) { c.HTTPCredentials = &HTTPCredentials{Username: username, Password: password} }
+}
+
+func WithAcceptDownloads(enabled bool) ContextOption {
+	return func(c *contextConfig) { c.AcceptDownloads = &enabled }
 }

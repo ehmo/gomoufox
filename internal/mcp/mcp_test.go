@@ -68,7 +68,7 @@ func TestToolsCatalogIncludesCoreAndSessionTools(t *testing.T) {
 			t.Fatalf("%s exposes unsafe_direct_network", tool.Name)
 		}
 	}
-	for _, name := range []string{"browser_navigate", "browser_click", "browser_type", "browser_press_key", "browser_hover", "browser_scroll", "browser_select_option", "browser_set_checked", "browser_upload_file", "browser_dialog", "browser_form_batch", "browser_wait_for", "browser_evaluate", "browser_console_messages", "browser_network_requests", "browser_performance_snapshot", "session_create", "session_list", "skills_list", "skills_get"} {
+	for _, name := range []string{"browser_navigate", "browser_click", "browser_type", "browser_press_key", "browser_hover", "browser_scroll", "browser_select_option", "browser_set_checked", "browser_upload_file", "browser_download", "browser_dialog", "browser_form_batch", "browser_wait_for", "browser_evaluate", "browser_console_messages", "browser_network_requests", "browser_performance_snapshot", "session_create", "session_list", "skills_list", "skills_get"} {
 		if !seen[name] {
 			t.Fatalf("missing tool %s", name)
 		}
@@ -97,7 +97,7 @@ func TestCoreToolsetTrimsAgentDiscoverySurface(t *testing.T) {
 			t.Fatalf("core toolset missing %s", want)
 		}
 	}
-	for _, hidden := range []string{"browser_evaluate", "browser_fetch", "browser_cookies", "browser_network_requests", "session_save", "session_load", "browser_upload_file"} {
+	for _, hidden := range []string{"browser_evaluate", "browser_fetch", "browser_cookies", "browser_network_requests", "session_save", "session_load", "browser_upload_file", "browser_download"} {
 		if names[hidden] {
 			t.Fatalf("core toolset includes %s", hidden)
 		}
@@ -272,6 +272,12 @@ func TestToolsCatalogSchemasMatchSpecCriticalFields(t *testing.T) {
 	assertProp(t, tools["browser_upload_file"], "paths", "maxItems", maxUploadFiles)
 	assertArrayItemProp(t, tools["browser_upload_file"], "paths", "maxLength", maxUploadPathBytes)
 	assertTargetChoiceDocumented(t, tools["browser_upload_file"])
+	requireFields(t, tools["browser_download"], "path")
+	assertProp(t, tools["browser_download"], "path", "maxLength", maxDownloadPathBytes)
+	assertProp(t, tools["browser_download"], "overwrite", "default", false)
+	assertProp(t, tools["browser_download"], "timeout_ms", "minimum", 0)
+	assertProp(t, tools["browser_download"], "timeout_ms", "maximum", 120000)
+	assertTargetChoiceDocumented(t, tools["browser_download"])
 	requireFields(t, tools["browser_dialog"], "action")
 	assertEnum(t, tools["browser_dialog"], "action", dialogActionHistory, dialogActionSetPolicy)
 	assertEnum(t, tools["browser_dialog"], "policy", dialogPolicyDismiss, dialogPolicyAccept)
@@ -376,6 +382,9 @@ func TestToolsCatalogRiskMetadataAndAnnotations(t *testing.T) {
 	assertToolRisk(t, tools["browser_upload_file"], "high", false, "--allow-file-upload")
 	assertAnnotation(t, tools["browser_upload_file"], "openWorldHint", false)
 	assertPropDescriptionContains(t, tools["browser_upload_file"], "paths", "--session-dir")
+	assertToolRisk(t, tools["browser_download"], "high", false, "--allow-file-download")
+	assertAnnotation(t, tools["browser_download"], "openWorldHint", true)
+	assertPropDescriptionContains(t, tools["browser_download"], "path", "--session-dir")
 	assertToolRisk(t, tools["browser_dialog"], "medium", false)
 	assertToolRisk(t, tools["browser_form_batch"], "high", false)
 
@@ -1621,6 +1630,7 @@ func TestAdditionalInteractionArgumentsAndNoEcho(t *testing.T) {
 	}
 
 	assertError(t, server.Handle(context.Background(), "browser_upload_file", raw(`{"selector":"input","paths":["missing.txt"]}`)), "file_upload_disabled")
+	assertError(t, server.Handle(context.Background(), "browser_download", raw(`{"selector":"a","path":"receipt.pdf"}`)), "file_download_disabled")
 
 	assertError(t, server.Handle(context.Background(), "browser_dialog", nil), "invalid_arguments")
 	assertError(t, server.Handle(context.Background(), "browser_dialog", raw(`{`)), "invalid_arguments")
@@ -1715,6 +1725,96 @@ func TestBrowserUploadFileJailAndSizeGuards(t *testing.T) {
 	fileStat = oldStat
 
 	assertError(t, server.Handle(context.Background(), "browser_upload_file", raw(`{"selector":"input","paths":["large.bin"]}`)), "file_too_large")
+}
+
+func TestBrowserDownloadJailSizeAndSaveGuards(t *testing.T) {
+	session := &fakeBrowserSession{
+		downloadData:   []byte("%PDF"),
+		downloadResult: downloadResult{URL: "https://shop.example/receipt", SuggestedFilename: "../../evil.pdf"},
+	}
+	cfg := defaultTestConfig(t)
+	cfg.Policy.AllowFileDownload = true
+	cfg.BrowserFactory = &fakeBrowserFactory{session: session}
+	server := newTestServer(t, cfg)
+
+	assertError(t, server.Handle(context.Background(), "browser_download", nil), "invalid_arguments")
+	assertError(t, server.Handle(context.Background(), "browser_download", raw(`{`)), "invalid_arguments")
+	assertError(t, server.Handle(context.Background(), "browser_download", raw(`{"selector":"a","path":5}`)), "invalid_arguments")
+	assertError(t, server.Handle(context.Background(), "browser_download", raw(`{"selector":"a"}`)), "invalid_arguments")
+	assertError(t, server.Handle(context.Background(), "browser_download", raw(`{"path":"receipt.pdf"}`)), "invalid_arguments")
+	assertError(t, server.Handle(context.Background(), "browser_download", raw(`{"ref":"r","selector":"a","path":"receipt.pdf"}`)), "invalid_arguments")
+	assertError(t, server.Handle(context.Background(), "browser_download", raw(`{"selector":"a","path":""}`)), "invalid_arguments")
+	assertError(t, server.Handle(context.Background(), "browser_download", raw(`{"selector":"a","path":"`+strings.Repeat("x", maxDownloadPathBytes+1)+`"}`)), "invalid_arguments")
+	assertError(t, server.Handle(context.Background(), "browser_download", raw(`{"selector":"a","path":"receipt.pdf","timeout_ms":120001}`)), "invalid_arguments")
+	assertError(t, server.Handle(context.Background(), "browser_download", raw(`{"selector":"a","path":"../escape.pdf"}`)), "path_rejected")
+
+	if err := os.Mkdir(filepath.Join(cfg.SessionDir, "download-dir"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	assertError(t, server.Handle(context.Background(), "browser_download", raw(`{"selector":"a","path":"download-dir"}`)), "path_rejected")
+	if err := os.WriteFile(filepath.Join(cfg.SessionDir, "exists.pdf"), []byte("old"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	assertError(t, server.Handle(context.Background(), "browser_download", raw(`{"selector":"a","path":"exists.pdf"}`)), "path_rejected")
+
+	resp := server.Handle(context.Background(), "browser_download", raw(`{"selector":"a.receipt","path":"downloads/receipt.pdf","timeout_ms":650,"session_id":"work"}`))
+	if resp.IsError || resp.Payload["saved"] != true || resp.Payload["path"] != "downloads/receipt.pdf" || resp.Payload["bytes"] != int64(4) || resp.Payload["url"] != "https://shop.example/receipt" || resp.Payload["suggested_filename"] != "../../evil.pdf" {
+		t.Fatalf("download response = %#v", resp)
+	}
+	data, err := os.ReadFile(filepath.Join(cfg.SessionDir, "downloads", "receipt.pdf"))
+	if err != nil || string(data) != "%PDF" {
+		t.Fatalf("downloaded file = %q err=%v", data, err)
+	}
+	if len(session.downloadCalls) != 1 || session.downloadCalls[0].target.Selector != "a.receipt" || session.downloadCalls[0].opts.Timeout != 650*time.Millisecond || session.downloadCalls[0].opts.Path == filepath.Join(cfg.SessionDir, "downloads", "receipt.pdf") {
+		t.Fatalf("download calls = %#v", session.downloadCalls)
+	}
+	encoded, _ := json.Marshal(resp)
+	if strings.Contains(string(encoded), cfg.SessionDir) {
+		t.Fatalf("download response leaked host path: %s", encoded)
+	}
+
+	session.downloadData = []byte("new")
+	resp = server.Handle(context.Background(), "browser_download", raw(`{"selector":"a","path":"exists.pdf","overwrite":true}`))
+	if resp.IsError {
+		t.Fatalf("overwrite download response = %#v", resp)
+	}
+	data, err = os.ReadFile(filepath.Join(cfg.SessionDir, "exists.pdf"))
+	if err != nil || string(data) != "new" {
+		t.Fatalf("overwrite file = %q err=%v", data, err)
+	}
+
+	oldStat := fileStat
+	t.Cleanup(func() { fileStat = oldStat })
+	fileStat = func(path string) (os.FileInfo, error) {
+		if strings.Contains(path, ".download-") {
+			return fakeFileInfo{name: filepath.Base(path), size: maxDownloadFileBytes + 1, mode: 0o600}, nil
+		}
+		return oldStat(path)
+	}
+	assertError(t, server.Handle(context.Background(), "browser_download", raw(`{"selector":"a","path":"too-large.bin"}`)), "file_too_large")
+	if _, err := os.Stat(filepath.Join(cfg.SessionDir, "too-large.bin")); !os.IsNotExist(err) {
+		t.Fatalf("oversized final file exists err=%v", err)
+	}
+	fileStat = oldStat
+
+	session.downloadErr = errors.New("download failed")
+	assertError(t, server.Handle(context.Background(), "browser_download", raw(`{"selector":"a","path":"browser-error.bin"}`)), "browser_error")
+	session.downloadErr = nil
+
+	fileStat = func(path string) (os.FileInfo, error) {
+		if strings.Contains(path, ".download-") {
+			return fakeFileInfo{name: filepath.Base(path), size: 0, mode: os.ModeDir}, nil
+		}
+		return oldStat(path)
+	}
+	assertError(t, server.Handle(context.Background(), "browser_download", raw(`{"selector":"a","path":"not-regular.bin"}`)), "file_save_failed")
+	fileStat = oldStat
+
+	oldRename := fileRename
+	t.Cleanup(func() { fileRename = oldRename })
+	fileRename = func(string, string) error { return errors.New("rename failed") }
+	assertError(t, server.Handle(context.Background(), "browser_download", raw(`{"selector":"a","path":"rename-failed.bin"}`)), "file_save_failed")
+	fileRename = oldRename
 }
 
 func TestClickTypeAndWaitUseBrowserSession(t *testing.T) {
@@ -2390,6 +2490,19 @@ func assertWebProvenance(t *testing.T, payload map[string]any, url string) {
 	}
 }
 
+type fakeFileInfo struct {
+	name string
+	size int64
+	mode os.FileMode
+}
+
+func (f fakeFileInfo) Name() string       { return f.name }
+func (f fakeFileInfo) Size() int64        { return f.size }
+func (f fakeFileInfo) Mode() os.FileMode  { return f.mode }
+func (f fakeFileInfo) ModTime() time.Time { return time.Time{} }
+func (f fakeFileInfo) IsDir() bool        { return f.mode.IsDir() }
+func (f fakeFileInfo) Sys() any           { return nil }
+
 func assertError(t *testing.T, resp Response, code string) {
 	t.Helper()
 	if !resp.IsError || resp.Payload["error"] != code {
@@ -2467,6 +2580,10 @@ type fakeBrowserSession struct {
 	checkedErr        error
 	uploadCalls       []uploadCall
 	uploadErr         error
+	downloadCalls     []downloadCall
+	downloadResult    downloadResult
+	downloadData      []byte
+	downloadErr       error
 	dialogResult      dialogResult
 	dialogCalls       []dialogOptions
 	dialogErr         error
@@ -2628,6 +2745,29 @@ type uploadCall struct {
 func (f *fakeBrowserSession) UploadFile(_ context.Context, target elementTarget, files []string, opts uploadOptions) error {
 	f.uploadCalls = append(f.uploadCalls, uploadCall{target: target, files: append([]string(nil), files...), opts: opts})
 	return f.uploadErr
+}
+
+type downloadCall struct {
+	target elementTarget
+	opts   downloadOptions
+}
+
+func (f *fakeBrowserSession) DownloadFile(_ context.Context, target elementTarget, opts downloadOptions) (downloadResult, error) {
+	f.downloadCalls = append(f.downloadCalls, downloadCall{target: target, opts: opts})
+	if f.downloadErr != nil {
+		return downloadResult{}, f.downloadErr
+	}
+	data := f.downloadData
+	if data == nil {
+		data = []byte("download")
+	}
+	if err := os.WriteFile(opts.Path, data, 0o600); err != nil {
+		return downloadResult{}, err
+	}
+	if f.downloadResult.URL == "" {
+		f.downloadResult = downloadResult{URL: "https://download.example/file", SuggestedFilename: "file.txt"}
+	}
+	return f.downloadResult, nil
 }
 
 func (f *fakeBrowserSession) Dialog(_ context.Context, opts dialogOptions) (dialogResult, error) {

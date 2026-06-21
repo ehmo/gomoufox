@@ -45,6 +45,7 @@ type ContextOptions struct {
 	TimezoneID       string
 	ExtraHTTPHeaders map[string]string
 	HTTPCredentials  *HTTPCredentials
+	AcceptDownloads  *bool
 }
 
 type Viewport struct {
@@ -110,6 +111,7 @@ type Page interface {
 	GoForward(opts NavigateOptions) (Response, error)
 	Reload(opts NavigateOptions) (Response, error)
 	RunAndWaitForNavigation(action func() error, opts NavigateOptions) error
+	RunAndWaitForDownload(action func() error, opts DownloadOptions) (Download, error)
 	Evaluate(expression string, arg ...any) (any, error)
 	EvaluateInternal(expression string, arg ...any) (any, error)
 	AddInitScript(script string) error
@@ -131,6 +133,7 @@ type Page interface {
 	OnPageError(func(error))
 	OnConsole(func(ConsoleMessage))
 	OnDialog(func(Dialog))
+	OnDownload(func(Download))
 	Wheel(deltaX, deltaY float64) error
 	Locator(selector string) Locator
 	Close() error
@@ -146,6 +149,10 @@ type GotoOptions struct {
 type NavigateOptions struct {
 	WaitUntil string
 	Timeout   time.Duration
+}
+
+type DownloadOptions struct {
+	Timeout time.Duration
 }
 
 type WaitForSelectorOptions struct {
@@ -241,6 +248,15 @@ type Dialog interface {
 	DefaultValue() string
 	Accept(promptText ...string) error
 	Dismiss() error
+}
+
+type Download interface {
+	URL() string
+	SuggestedFilename() string
+	SaveAs(path string) error
+	Failure() error
+	Cancel() error
+	Delete() error
 }
 
 type Locator interface {

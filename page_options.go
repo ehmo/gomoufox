@@ -12,6 +12,7 @@ import (
 
 type GotoOption func(*gotoConfig)
 type NavigateOption func(*navigateConfig)
+type DownloadOption func(*downloadConfig)
 
 type gotoConfig struct {
 	waitUntil string
@@ -24,6 +25,10 @@ type navigateConfig struct {
 	timeout   time.Duration
 }
 
+type downloadConfig struct {
+	timeout time.Duration
+}
+
 func WaitUntil(state string) GotoOption      { return func(c *gotoConfig) { c.waitUntil = state } }
 func WithReferer(referer string) GotoOption  { return func(c *gotoConfig) { c.referer = referer } }
 func WithTimeout(d time.Duration) GotoOption { return func(c *gotoConfig) { c.timeout = d } }
@@ -32,6 +37,9 @@ func NavigateWaitUntil(state string) NavigateOption {
 }
 func NavigateTimeout(d time.Duration) NavigateOption {
 	return func(c *navigateConfig) { c.timeout = d }
+}
+func DownloadTimeout(d time.Duration) DownloadOption {
+	return func(c *downloadConfig) { c.timeout = d }
 }
 
 func buildGotoConfig(opts ...GotoOption) gotoConfig {
@@ -44,6 +52,14 @@ func buildGotoConfig(opts ...GotoOption) gotoConfig {
 
 func buildNavigateConfig(opts ...NavigateOption) navigateConfig {
 	cfg := navigateConfig{waitUntil: "load"}
+	for _, opt := range opts {
+		opt(&cfg)
+	}
+	return cfg
+}
+
+func buildDownloadConfig(opts ...DownloadOption) downloadConfig {
+	var cfg downloadConfig
 	for _, opt := range opts {
 		opt(&cfg)
 	}
@@ -64,6 +80,14 @@ func (c navigateConfig) toBridge(ctx context.Context) pwbridge.NavigateOptions {
 		timeout = deadlineTimeout(ctx, 30*time.Second)
 	}
 	return pwbridge.NavigateOptions{WaitUntil: c.waitUntil, Timeout: timeout}
+}
+
+func (c downloadConfig) toBridge(ctx context.Context) pwbridge.DownloadOptions {
+	timeout := c.timeout
+	if timeout <= 0 {
+		timeout = deadlineTimeout(ctx, 30*time.Second)
+	}
+	return pwbridge.DownloadOptions{Timeout: timeout}
 }
 
 type WaitForSelectorOption func(*waitForSelectorConfig)
@@ -129,6 +153,16 @@ func mapNavigationError(err error) error {
 	}
 	if strings.Contains(strings.ToLower(err.Error()), "timeout") {
 		return fmt.Errorf("%w: %v", ErrNavigationTimeout, err)
+	}
+	return err
+}
+
+func mapDownloadError(err error) error {
+	if err == nil {
+		return nil
+	}
+	if errors.Is(err, context.DeadlineExceeded) || strings.Contains(strings.ToLower(err.Error()), "timeout") {
+		return fmt.Errorf("%w: %v", ErrTimeout, err)
 	}
 	return err
 }

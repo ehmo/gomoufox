@@ -368,6 +368,7 @@ func TestPublicOptionCoverageAndConversions(t *testing.T) {
 	WithEnableCache(true)(&cfg)
 	WithDisableCOOP(true)(&cfg)
 	WithExtraEnv("A=B")(&cfg)
+	WithBrowserAcceptDownloads(false)(&cfg)
 	if cfg.humanize == nil || *cfg.humanize != 1.5 || !cfg.geoip || cfg.proxy.Server != "http://proxy" || cfg.os != camoufoxcfg.OSLinux {
 		t.Fatalf("launch options not applied: %#v", cfg)
 	}
@@ -386,6 +387,9 @@ func TestPublicOptionCoverageAndConversions(t *testing.T) {
 	if !cfg.mainWorldEval || !cfg.enableCache || !cfg.disableCOOP || cfg.extraEnv[0] != "A=B" {
 		t.Fatalf("advanced options not applied: %#v", cfg)
 	}
+	if cfg.acceptDownloads == nil || *cfg.acceptDownloads {
+		t.Fatalf("accept downloads option not applied: %#v", cfg.acceptDownloads)
+	}
 
 	headers := map[string]string{"x": "1"}
 	state := &StorageState{Cookies: []Cookie{{Name: "a", Value: "b"}}, Origins: []Origin{{Origin: "https://example.com", LocalStorage: []LSEntry{{Name: "k", Value: "v"}}}}}
@@ -397,6 +401,7 @@ func TestPublicOptionCoverageAndConversions(t *testing.T) {
 		WithTimezoneID("America/Los_Angeles"),
 		WithExtraHTTPHeaders(headers),
 		WithHTTPCredentials("user", "pass"),
+		WithAcceptDownloads(true),
 	)
 	headers["x"] = "mutated"
 	pwOpts := toPWBridgeContextOptions(contextCfg)
@@ -405,6 +410,9 @@ func TestPublicOptionCoverageAndConversions(t *testing.T) {
 	}
 	if pwOpts.ExtraHTTPHeaders["x"] != "1" || pwOpts.HTTPCredentials.Username != "user" || pwOpts.Locale != "en-US" || pwOpts.TimezoneID == "" {
 		t.Fatalf("context scalar conversion = %#v", pwOpts)
+	}
+	if pwOpts.AcceptDownloads == nil || !*pwOpts.AcceptDownloads {
+		t.Fatalf("context accept downloads conversion = %#v", pwOpts.AcceptDownloads)
 	}
 }
 
@@ -434,6 +442,7 @@ func TestSidecarManagerReceivesLaunchOptions(t *testing.T) {
 	WithEnableCache(true)(&cfg)
 	WithDisableCOOP(true)(&cfg)
 	WithExtraEnv("A=B")(&cfg)
+	WithBrowserAcceptDownloads(false)(&cfg)
 	WithAllowedOrigins("https://example.com", "https://api.example.com:8443")(&cfg)
 	WithAllowedHosts("example.com", ".example.org")(&cfg)
 	handle, err := newSidecarManager(cfg)
@@ -460,6 +469,9 @@ func TestSidecarManagerReceivesLaunchOptions(t *testing.T) {
 	}
 	if scfg.Fingerprint["navigator.userAgent"] != "ua" || !scfg.MainWorldEval || !scfg.EnableCache || !scfg.DisableCOOP || scfg.ExtraEnv[0] != "A=B" {
 		t.Fatalf("advanced options not mapped: %#v", scfg)
+	}
+	if scfg.AcceptDownloads == nil || *scfg.AcceptDownloads {
+		t.Fatalf("accept downloads not mapped: %#v", scfg.AcceptDownloads)
 	}
 	if strings.Join(scfg.Policy.AllowedOrigins, ",") != "https://example.com,https://api.example.com:8443" || strings.Join(scfg.Policy.AllowedHosts, ",") != "example.com,.example.org" {
 		t.Fatalf("network policy not mapped: %#v", scfg.Policy)
@@ -1107,6 +1119,77 @@ func TestPageWrappersAndRouteRegistry(t *testing.T) {
 	if err := dialog.Dismiss(canceledDialogCtx); !errors.Is(err, context.Canceled) {
 		t.Fatalf("canceled dialog dismiss = %v", err)
 	}
+	downloadEvent := &fakeDownload{url: "https://example.com/receipt", suggestedFilename: "receipt.pdf"}
+	downloadSeen := false
+	page.OnDownload(func(d *Download) {
+		downloadSeen = d.URL() == "https://example.com/receipt" && d.SuggestedFilename() == "receipt.pdf"
+	})
+	fp.onDownload(downloadEvent)
+	if !downloadSeen {
+		t.Fatalf("download callback not wrapped")
+	}
+	actionDownload := &fakeDownload{url: "https://example.com/action", suggestedFilename: "action.txt"}
+	fp.download = actionDownload
+	downloadActionCalled := false
+	download, err := page.RunAndWaitForDownload(context.Background(), func() error {
+		downloadActionCalled = true
+		return nil
+	}, DownloadTimeout(1750*time.Millisecond))
+	if err != nil || !downloadActionCalled || download.URL() != "https://example.com/action" || fp.downloadOpts.Timeout != 1750*time.Millisecond {
+		t.Fatalf("download wait action=%t download=%#v opts=%#v err=%v", downloadActionCalled, download, fp.downloadOpts, err)
+	}
+	savePath := filepath.Join(t.TempDir(), "receipt.pdf")
+	if err := download.SaveAs(context.Background(), savePath); err != nil || actionDownload.savePath != savePath {
+		t.Fatalf("download save path=%q err=%v", actionDownload.savePath, err)
+	}
+	actionDownload.saveErr = errors.New("timeout while saving")
+	if err := download.SaveAs(context.Background(), savePath); !errors.Is(err, ErrTimeout) {
+		t.Fatalf("download save timeout = %v", err)
+	}
+	actionDownload.saveErr = nil
+	if err := download.Failure(context.Background()); err != nil {
+		t.Fatalf("download failure = %v", err)
+	}
+	actionDownload.failureErr = errors.New("failure details unavailable")
+	if err := download.Failure(context.Background()); !errors.Is(err, actionDownload.failureErr) {
+		t.Fatalf("download failure raw err = %v", err)
+	}
+	actionDownload.failureErr = nil
+	if err := download.Cancel(context.Background()); err != nil || actionDownload.cancelCalls != 1 {
+		t.Fatalf("download cancel calls=%d err=%v", actionDownload.cancelCalls, err)
+	}
+	actionDownload.cancelErr = errors.New("cancel failed")
+	if err := download.Cancel(context.Background()); !errors.Is(err, actionDownload.cancelErr) {
+		t.Fatalf("download cancel raw err = %v", err)
+	}
+	actionDownload.cancelErr = nil
+	if err := download.Delete(context.Background()); err != nil {
+		t.Fatalf("download delete = %v", err)
+	}
+	actionDownload.deleteErr = errors.New("delete failed")
+	if err := download.Delete(context.Background()); !errors.Is(err, actionDownload.deleteErr) {
+		t.Fatalf("download delete raw err = %v", err)
+	}
+	actionDownload.deleteErr = nil
+	canceledDownloadCtx, cancelDownload := context.WithCancel(context.Background())
+	cancelDownload()
+	if err := download.SaveAs(canceledDownloadCtx, savePath); !errors.Is(err, context.Canceled) {
+		t.Fatalf("canceled download save = %v", err)
+	}
+	if err := download.Failure(canceledDownloadCtx); !errors.Is(err, context.Canceled) {
+		t.Fatalf("canceled download failure = %v", err)
+	}
+	if err := download.Cancel(canceledDownloadCtx); !errors.Is(err, context.Canceled) {
+		t.Fatalf("canceled download cancel = %v", err)
+	}
+	if err := download.Delete(canceledDownloadCtx); !errors.Is(err, context.Canceled) {
+		t.Fatalf("canceled download delete = %v", err)
+	}
+	fp.downloadErr = context.DeadlineExceeded
+	if _, err := page.RunAndWaitForDownload(context.Background(), func() error { return nil }); !errors.Is(err, ErrTimeout) {
+		t.Fatalf("download wait timeout = %v", err)
+	}
+	fp.downloadErr = nil
 	if err := page.Wheel(context.Background(), 4, 8); err != nil || fp.wheelX != 4 || fp.wheelY != 8 {
 		t.Fatalf("wheel = %v deltas=%v/%v", err, fp.wheelX, fp.wheelY)
 	}
@@ -1559,6 +1642,8 @@ type fakePage struct {
 	backOpts         pwbridge.NavigateOptions
 	forwardOpts      pwbridge.NavigateOptions
 	reloadOpts       pwbridge.NavigateOptions
+	downloadOpts     pwbridge.DownloadOptions
+	download         pwbridge.Download
 	initScript       string
 	setContentHTML   string
 	setContentOpts   pwbridge.GotoOptions
@@ -1581,6 +1666,7 @@ type fakePage struct {
 	onPageError      func(error)
 	onConsole        func(pwbridge.ConsoleMessage)
 	onDialog         func(pwbridge.Dialog)
+	onDownload       func(pwbridge.Download)
 	wheelX           float64
 	wheelY           float64
 	wheelErr         error
@@ -1588,6 +1674,7 @@ type fakePage struct {
 	backErr          error
 	forwardErr       error
 	reloadErr        error
+	downloadErr      error
 	initErr          error
 	contentErr       error
 	setContentErr    error
@@ -1642,6 +1729,19 @@ func (p *fakePage) RunAndWaitForNavigation(action func() error, opts pwbridge.Na
 		return p.reloadErr
 	}
 	return nil
+}
+func (p *fakePage) RunAndWaitForDownload(action func() error, opts pwbridge.DownloadOptions) (pwbridge.Download, error) {
+	if err := action(); err != nil {
+		return nil, err
+	}
+	p.downloadOpts = opts
+	if p.downloadErr != nil {
+		return nil, p.downloadErr
+	}
+	if p.download != nil {
+		return p.download, nil
+	}
+	return &fakeDownload{url: "https://example.com/file", suggestedFilename: "file.txt"}, nil
 }
 func (p *fakePage) Evaluate(_ string, args ...any) (any, error) {
 	if len(args) > 0 {
@@ -1732,6 +1832,7 @@ func (p *fakePage) OnResponse(fn func(pwbridge.Response))      { p.onResponse = 
 func (p *fakePage) OnPageError(fn func(error))                 { p.onPageError = fn }
 func (p *fakePage) OnConsole(fn func(pwbridge.ConsoleMessage)) { p.onConsole = fn }
 func (p *fakePage) OnDialog(fn func(pwbridge.Dialog))          { p.onDialog = fn }
+func (p *fakePage) OnDownload(fn func(pwbridge.Download))      { p.onDownload = fn }
 func (p *fakePage) Wheel(deltaX, deltaY float64) error {
 	p.wheelX = deltaX
 	p.wheelY = deltaY
@@ -1758,6 +1859,30 @@ func (p *fakePage) resultResponse() pwbridge.Response {
 type fakeElement struct{}
 
 func (fakeElement) Raw() any { return nil }
+
+type fakeDownload struct {
+	url               string
+	suggestedFilename string
+	savePath          string
+	saveErr           error
+	failureErr        error
+	cancelErr         error
+	deleteErr         error
+	cancelCalls       int
+}
+
+func (d *fakeDownload) URL() string               { return d.url }
+func (d *fakeDownload) SuggestedFilename() string { return d.suggestedFilename }
+func (d *fakeDownload) SaveAs(path string) error {
+	d.savePath = path
+	return d.saveErr
+}
+func (d *fakeDownload) Failure() error { return d.failureErr }
+func (d *fakeDownload) Cancel() error {
+	d.cancelCalls++
+	return d.cancelErr
+}
+func (d *fakeDownload) Delete() error { return d.deleteErr }
 
 type fakeDialog struct {
 	typ          string

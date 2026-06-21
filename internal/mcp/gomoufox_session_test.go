@@ -213,6 +213,17 @@ func TestGomoufoxSessionBrowserOperations(t *testing.T) {
 	if strings.Join(page.locator.inputFiles, ",") != "a.txt" || page.locator.inputOptCount != 1 {
 		t.Fatalf("input files=%v opts=%d", page.locator.inputFiles, page.locator.inputOptCount)
 	}
+	page.download = &fakeGomoufoxDownload{url: "https://shop.example/receipt.pdf", suggestedFilename: "../../receipt.pdf"}
+	downloaded, err := session.DownloadFile(context.Background(), elementTarget{Selector: "a.receipt"}, downloadOptions{Path: filepath.Join(t.TempDir(), "receipt.pdf"), Timeout: 750 * time.Millisecond})
+	if err != nil {
+		t.Fatalf("download file: %v", err)
+	}
+	if page.waitDownloadCalls != 1 || page.locator.clicks != 4 {
+		t.Fatalf("download wait/click calls = %d/%d", page.waitDownloadCalls, page.locator.clicks)
+	}
+	if page.download.savePath == "" || downloaded.URL != "https://shop.example/receipt.pdf" || downloaded.SuggestedFilename != "../../receipt.pdf" {
+		t.Fatalf("download result=%#v savePath=%q", downloaded, page.download.savePath)
+	}
 
 	dialogPage := &fakeMCPPage{}
 	dialogSession := newGomoufoxSession(context.Background(), nil, nil, dialogPage, false)
@@ -1423,8 +1434,8 @@ func TestGomoufoxAdaptersAndLauncherSeams(t *testing.T) {
 	if got, err := (realGomoufoxLauncher{}).Launch(ctx, sessionOptions{}, false); err != nil || got == nil {
 		t.Fatalf("default launch = %#v err=%v", got, err)
 	}
-	if launchOptionCount != 1 {
-		t.Fatalf("default launch option count = %d, want only main-world eval so gomoufox keeps its node-direct runtime default", launchOptionCount)
+	if launchOptionCount != 2 {
+		t.Fatalf("default launch option count = %d, want main-world eval plus download policy while keeping gomoufox's node-direct runtime default", launchOptionCount)
 	}
 	launchOptionCount = 0
 	newGomoufoxForMCP = func(_ context.Context, opts ...gomoufox.Option) (*gomoufox.Browser, error) {
@@ -1435,8 +1446,8 @@ func TestGomoufoxAdaptersAndLauncherSeams(t *testing.T) {
 	if got, err := launcher.Launch(ctx, sessionOptions{os: "linux", locale: "en-US", proxy: "http://proxy.example:8080", profilePath: t.TempDir()}, true); err != nil || got == nil {
 		t.Fatalf("launch success = %#v err=%v", got, err)
 	}
-	if launchOptionCount != 7 {
-		t.Fatalf("launch option count = %d, want main-world eval, persona, proxy, profile, and allowlist options", launchOptionCount)
+	if launchOptionCount != 8 {
+		t.Fatalf("launch option count = %d, want main-world eval, download policy, persona, proxy, profile, and allowlist options", launchOptionCount)
 	}
 
 	sessionProxyBrowser := &fakeMCPBrowser{context: &fakeMCPContext{page: &fakeMCPPage{}}}
@@ -1447,8 +1458,8 @@ func TestGomoufoxAdaptersAndLauncherSeams(t *testing.T) {
 	if len(sessionProxyLauncher.calls) != 1 || !sessionProxyLauncher.calls[0].dedicated || sessionProxyLauncher.calls[0].opts.proxy != "http://proxy.example:8080" {
 		t.Fatalf("session proxy launcher calls = %#v", sessionProxyLauncher.calls)
 	}
-	if len(sessionProxyBrowser.contextOptionCounts) != 1 || sessionProxyBrowser.contextOptionCounts[0] != 0 {
-		t.Fatalf("session proxy became context option counts = %#v", sessionProxyBrowser.contextOptionCounts)
+	if len(sessionProxyBrowser.contextOptionCounts) != 1 || sessionProxyBrowser.contextOptionCounts[0] != 1 {
+		t.Fatalf("session proxy context option counts = %#v, want only download policy", sessionProxyBrowser.contextOptionCounts)
 	}
 }
 
@@ -1543,6 +1554,15 @@ func TestRealAdaptersWrapRootObjectsWithBridgeFakes(t *testing.T) {
 	if pwPage.waitNavigationCalls != 1 || pwPage.waitNavigationOptions.Timeout != 2*time.Second || pwPage.waitNavigationOptions.WaitUntil != "domcontentloaded" || pwPage.locator.clickOptions.Button != "middle" || pwPage.locator.clickOptions.ClickCount != 3 {
 		t.Fatalf("adapted navigation click calls=%d nav=%#v click=%#v", pwPage.waitNavigationCalls, pwPage.waitNavigationOptions, pwPage.locator.clickOptions)
 	}
+	pwDownload := &fakePWDownload{url: "https://download.example/receipt", suggestedFilename: "receipt.pdf"}
+	pwPage.download = pwDownload
+	downloaded, err := adaptedSession.DownloadFile(ctx, elementTarget{Selector: "a.receipt"}, downloadOptions{Path: filepath.Join(t.TempDir(), "receipt.pdf"), Timeout: 3 * time.Second})
+	if err != nil || downloaded.URL != "https://download.example/receipt" || downloaded.SuggestedFilename != "receipt.pdf" {
+		t.Fatalf("adapted download = %#v err=%v", downloaded, err)
+	}
+	if pwPage.waitDownloadCalls != 1 || pwPage.waitDownloadOptions.Timeout != 3*time.Second || pwDownload.savePath == "" || pwPage.locator.selector != "a.receipt" {
+		t.Fatalf("adapted download calls=%d opts=%#v save=%q selector=%q", pwPage.waitDownloadCalls, pwPage.waitDownloadOptions, pwDownload.savePath, pwPage.locator.selector)
+	}
 	if status, body, err := adaptedPage.FetchBytes(ctx, "https://api.example.com", "GET", nil, nil); err != nil || status != 200 || string(body) != "ok" {
 		t.Fatalf("adapted page FetchBytes status=%d body=%q err=%v", status, body, err)
 	}
@@ -1616,14 +1636,14 @@ func TestGomoufoxSessionErrorBranches(t *testing.T) {
 	if _, err := (&gomoufoxFactory{launcher: &fakeGomoufoxLauncher{browsers: []mcpBrowser{closeOnProbeErr}}}).NewBrowserSession(context.Background(), sessionOptions{os: "linux"}); !errors.Is(err, errInternalEvaluationUnavailable) || closeProbeErrPage.closeCalls != 1 || closeProbeErrContext.closeCalls != 1 || closeOnProbeErr.closeCalls != 1 {
 		t.Fatalf("dedicated probe err=%v pageClose=%d contextClose=%d browserClose=%d", err, closeProbeErrPage.closeCalls, closeProbeErrContext.closeCalls, closeOnProbeErr.closeCalls)
 	}
-	if _, err := contextOptions(sessionOptions{storageStatePath: filepath.Join(t.TempDir(), "missing.json")}); err == nil {
+	if _, err := contextOptions(sessionOptions{storageStatePath: filepath.Join(t.TempDir(), "missing.json")}, false); err == nil {
 		t.Fatal("missing storage state succeeded")
 	}
 	badState := filepath.Join(t.TempDir(), "bad.json")
 	if err := os.WriteFile(badState, []byte("{"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := contextOptions(sessionOptions{storageStatePath: badState}); err == nil {
+	if _, err := contextOptions(sessionOptions{storageStatePath: badState}, false); err == nil {
 		t.Fatal("bad storage state succeeded")
 	}
 	proxy, err := proxyConfig("http://proxy.example:8080")
@@ -1909,6 +1929,9 @@ type fakeMCPPage struct {
 	selectorMetrics       any
 	waitNavigationCalls   int
 	waitNavigationErr     error
+	waitDownloadCalls     int
+	waitDownloadErr       error
+	download              *fakeGomoufoxDownload
 	snapshot              any
 	patchPayload          any
 	probePayload          any
@@ -1951,6 +1974,20 @@ func (p *fakeMCPPage) RunAndWaitForNavigation(_ context.Context, action func() e
 		return p.waitNavigationErr
 	}
 	return nil
+}
+
+func (p *fakeMCPPage) RunAndWaitForDownload(_ context.Context, action func() error, _ ...gomoufox.DownloadOption) (*gomoufox.Download, error) {
+	p.waitDownloadCalls++
+	if err := action(); err != nil {
+		return nil, err
+	}
+	if p.waitDownloadErr != nil {
+		return nil, p.waitDownloadErr
+	}
+	if p.download == nil {
+		p.download = &fakeGomoufoxDownload{url: "https://download.example/file", suggestedFilename: "file.txt"}
+	}
+	return gomoufoxDownloadForTest(p.download), nil
 }
 
 func (p *fakeMCPPage) Title(context.Context) (string, error) {
@@ -2271,6 +2308,31 @@ func setField(target any, name string, value any) {
 	reflect.NewAt(field.Type(), unsafe.Pointer(field.UnsafeAddr())).Elem().Set(reflect.ValueOf(value))
 }
 
+type fakeGomoufoxDownload struct {
+	url               string
+	suggestedFilename string
+	savePath          string
+	saveErr           error
+}
+
+func gomoufoxDownloadForTest(raw pwbridge.Download) *gomoufox.Download {
+	download := &gomoufox.Download{}
+	setField(download, "raw", raw)
+	return download
+}
+
+func (d *fakeGomoufoxDownload) URL() string               { return d.url }
+func (d *fakeGomoufoxDownload) SuggestedFilename() string { return d.suggestedFilename }
+func (d *fakeGomoufoxDownload) SaveAs(path string) error {
+	d.savePath = path
+	return d.saveErr
+}
+func (d *fakeGomoufoxDownload) Failure() error { return nil }
+func (d *fakeGomoufoxDownload) Cancel() error  { return nil }
+func (d *fakeGomoufoxDownload) Delete() error  { return nil }
+
+type fakePWDownload = fakeGomoufoxDownload
+
 type fakePWBrowser struct {
 	context *fakePWContext
 	page    *fakePWPage
@@ -2329,6 +2391,9 @@ type fakePWPage struct {
 	initScript            string
 	waitNavigationCalls   int
 	waitNavigationOptions pwbridge.NavigateOptions
+	waitDownloadCalls     int
+	waitDownloadOptions   pwbridge.DownloadOptions
+	download              pwbridge.Download
 }
 
 func (p *fakePWPage) Goto(string, pwbridge.GotoOptions) (pwbridge.Response, error) {
@@ -2350,6 +2415,17 @@ func (p *fakePWPage) RunAndWaitForNavigation(action func() error, opts pwbridge.
 		return err
 	}
 	return nil
+}
+func (p *fakePWPage) RunAndWaitForDownload(action func() error, opts pwbridge.DownloadOptions) (pwbridge.Download, error) {
+	p.waitDownloadCalls++
+	p.waitDownloadOptions = opts
+	if err := action(); err != nil {
+		return nil, err
+	}
+	if p.download != nil {
+		return p.download, nil
+	}
+	return &fakePWDownload{url: "https://download.example/file", suggestedFilename: "file.txt"}, nil
 }
 func (p *fakePWPage) Evaluate(expression string, arg ...any) (any, error) {
 	if expression == mcpFetchExpression || (strings.Contains(expression, "fetch(url") && strings.Contains(expression, "maxBytes")) {
@@ -2384,10 +2460,14 @@ func (p *fakePWPage) OnResponse(func(pwbridge.Response))                    {}
 func (p *fakePWPage) OnPageError(func(error))                               {}
 func (p *fakePWPage) OnConsole(func(pwbridge.ConsoleMessage))               {}
 func (p *fakePWPage) OnDialog(func(pwbridge.Dialog))                        {}
+func (p *fakePWPage) OnDownload(func(pwbridge.Download))                    {}
 func (p *fakePWPage) Wheel(float64, float64) error                          { return nil }
-func (p *fakePWPage) Locator(string) pwbridge.Locator                       { return p.locator }
-func (p *fakePWPage) Close() error                                          { return nil }
-func (p *fakePWPage) Raw() any                                              { return p }
+func (p *fakePWPage) Locator(selector string) pwbridge.Locator {
+	p.locator.selector = selector
+	return p.locator
+}
+func (p *fakePWPage) Close() error { return nil }
+func (p *fakePWPage) Raw() any     { return p }
 
 type fakePWElement struct{}
 
@@ -2473,6 +2553,7 @@ func (d *fakeMCPDialog) Dismiss() error {
 }
 
 type fakePWLocator struct {
+	selector       string
 	clickOptions   pwbridge.LocatorClickOptions
 	typeOptions    pwbridge.LocatorTypeOptions
 	pressOptions   pwbridge.LocatorPressOptions

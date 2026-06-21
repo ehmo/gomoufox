@@ -44,6 +44,7 @@ func sidecarConfigFromLaunchConfig(cfg launchConfig) sidecar.Config {
 		EnableCache:     cfg.enableCache,
 		DisableCOOP:     cfg.disableCOOP,
 		ExtraEnv:        append([]string(nil), cfg.extraEnv...),
+		AcceptDownloads: cfg.acceptDownloads,
 	}
 	if cfg.proxy != nil {
 		sidecarCfg.Proxy = &sidecar.ProxyConfig{Server: cfg.proxy.Server, Username: cfg.proxy.Username, Password: cfg.proxy.Password}

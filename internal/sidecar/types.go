@@ -64,6 +64,7 @@ type Config struct {
 	EnableCache     bool
 	DisableCOOP     bool
 	ExtraEnv        []string
+	AcceptDownloads *bool
 }
 
 type ProxyConfig struct {

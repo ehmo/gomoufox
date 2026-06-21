@@ -42,6 +42,7 @@ type launchConfig struct {
 	disableCOOP     bool
 	extraEnv        []string
 	sidecarRuntime  SidecarRuntime
+	acceptDownloads *bool
 
 	connector pwbridge.Connector
 	sidecar   func(launchConfig) (sidecarHandle, error)
@@ -68,6 +69,7 @@ type contextConfig struct {
 	TimezoneID       string
 	ExtraHTTPHeaders map[string]string
 	HTTPCredentials  *HTTPCredentials
+	AcceptDownloads  *bool
 }
 
 // HTTPCredentials stores HTTP authentication credentials for a context.

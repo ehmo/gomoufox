@@ -13,6 +13,7 @@ func toPWBridgeContextOptions(cfg contextConfig) pwbridge.ContextOptions {
 		Locale:           cfg.Locale,
 		TimezoneID:       cfg.TimezoneID,
 		ExtraHTTPHeaders: cfg.ExtraHTTPHeaders,
+		AcceptDownloads:  cfg.AcceptDownloads,
 	}
 	if cfg.Viewport != nil {
 		out.Viewport = &pwbridge.Viewport{Width: cfg.Viewport.Width, Height: cfg.Viewport.Height}

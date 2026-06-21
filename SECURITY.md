@@ -13,8 +13,10 @@ Defaults:
 - MCP disables JavaScript evaluation unless the operator starts it with
   `--enable-eval`.
 - MCP caps input and response sizes.
-- Cookie values and session exports stay redacted unless the operator enables
-  the matching flag.
+- Cookie values, session exports, file uploads, and browser downloads stay
+  disabled unless the operator enables the matching flag.
+- Browser downloads can only write to paths confined under the configured MCP
+  `--session-dir`; browser-suggested filenames are returned as metadata only.
 - `gomoufox serve` requires an auth token for HTTP access.
 
 Useful checks:

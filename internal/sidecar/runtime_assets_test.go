@@ -88,6 +88,17 @@ func TestRuntimeLaunchServerDecodesBase64Payload(t *testing.T) {
 	}
 }
 
+func TestSameFileTreeComparesAbsolutePaths(t *testing.T) {
+	dir := t.TempDir()
+	same := filepath.Join(dir, "nested", "..")
+	if !sameFileTree(dir, same) {
+		t.Fatalf("sameFileTree(%q, %q) = false", dir, same)
+	}
+	if sameFileTree(dir, filepath.Join(dir, "other")) {
+		t.Fatalf("sameFileTree treated different paths as equal")
+	}
+}
+
 func TestResolveRuntimeAssetsRejectsStaleLaunchServer(t *testing.T) {
 	restorePlatform := overrideSidecarPlatform(t, "linux", "amd64")
 	defer restorePlatform()

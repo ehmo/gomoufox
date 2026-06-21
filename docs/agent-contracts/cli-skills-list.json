@@ -9,10 +9,10 @@
       "version": "0.1.0"
     },
     {
-      "bytes": 3023,
+      "bytes": 3177,
       "min_gomoufox": "0.1.0",
       "name": "mcp",
-      "sha256": "c388e12179179ce41d6fb9f1772d4c1e5b6b52c330ebb3f8cd8c18e00e70e34a",
+      "sha256": "7a71e15d7b31fc2663d7c009a815c9bc447d0e9e228a1783a096d348d907944a",
       "summary": "gomoufox MCP setup and browser-tool workflow for agents.",
       "version": "0.1.0"
     }

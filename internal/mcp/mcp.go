@@ -27,6 +27,8 @@ var (
 	errResponseTooLarge = errors.New("response too large")
 	fileRead            = os.ReadFile
 	fileStat            = os.Stat
+	fileRename          = os.Rename
+	fileRemove          = os.Remove
 	contentExtract      = content.Extract
 )
 
@@ -45,6 +47,8 @@ const (
 	maxUploadFiles                           = 8
 	maxUploadPathBytes                       = 4096
 	maxUploadFileBytes                 int64 = 50 * 1024 * 1024
+	maxDownloadPathBytes                     = 4096
+	maxDownloadFileBytes               int64 = 50 * 1024 * 1024
 	maxDialogPromptBytes                     = 1024
 	maxFormBatchActions                      = 20
 	maxScrollDelta                           = 100000
@@ -281,6 +285,16 @@ var toolRegistry = []toolDefinition{
 		RiskLevel:   toolRiskHigh,
 		Gates:       []string{"--allow-file-upload"},
 		Handle:      (*Server).browserUploadFile,
+	},
+	{
+		Name:        "browser_download",
+		Description: "Click an element and save the resulting browser download to a path confined under --session-dir; disabled unless --allow-file-download is set.",
+		Schema:      browserDownloadSchema,
+		Destructive: true,
+		OpenWorld:   true,
+		RiskLevel:   toolRiskHigh,
+		Gates:       []string{"--allow-file-download"},
+		Handle:      (*Server).browserDownload,
 	},
 	{
 		Name:        "browser_dialog",
@@ -1314,6 +1328,89 @@ func (s *Server) browserUploadFile(ctx context.Context, args json.RawMessage) Re
 			return mcpError("browser_error")
 		}
 		return ok(map[string]any{"uploaded": true, "file_count": len(resolved), "session_id": sessionID})
+	})
+}
+
+func (s *Server) browserDownload(ctx context.Context, args json.RawMessage) Response {
+	fields, fieldsOK := decodeObjectFields(args, "ref", "selector", "path", "overwrite", "timeout_ms", "session_id")
+	if !fieldsOK {
+		return mcpError("invalid_arguments")
+	}
+	var in struct {
+		Ref       string `json:"ref"`
+		Selector  string `json:"selector"`
+		Path      string `json:"path"`
+		Overwrite bool   `json:"overwrite"`
+		TimeoutMS int    `json:"timeout_ms"`
+		SessionID string `json:"session_id"`
+	}
+	if err := decode(args, &in); err != nil {
+		return mcpError("invalid_arguments")
+	}
+	target, targetOK := targetFromStrings(in.Ref, in.Selector)
+	if !targetOK || fields["path"] == nil || in.Path == "" || len(in.Path) > maxDownloadPathBytes {
+		return mcpError("invalid_arguments")
+	}
+	if !s.cfg.AllowFileDownload {
+		return mcpError("file_download_disabled")
+	}
+	if dir := filepath.Dir(in.Path); dir != "." {
+		if _, err := s.jail.ResolveDir(dir); err != nil {
+			return mcpError("path_rejected")
+		}
+	}
+	resolved, err := s.jail.ResolveWrite(in.Path, in.Overwrite)
+	if err != nil {
+		return mcpError("path_rejected")
+	}
+	responsePath, _ := s.jail.ConfinedPath(resolved)
+	timeout, timeoutOK := timeoutFromMS(in.TimeoutMS, 30*time.Second, 0, 120000)
+	if !timeoutOK {
+		return mcpError("invalid_arguments")
+	}
+	tmpDir, err := os.MkdirTemp(s.jail.Root, ".download-*")
+	if err != nil {
+		return mcpError("file_save_failed")
+	}
+	defer func() { _ = os.RemoveAll(tmpDir) }()
+	tmpPath := filepath.Join(tmpDir, "download.bin")
+	sessionID := defaultSession(in.SessionID)
+	return s.withBrowserSession(ctx, sessionID, nil, func(_ *sessionState, browser browserSession) Response {
+		result, err := browser.DownloadFile(ctx, target, downloadOptions{Path: tmpPath, Timeout: timeout})
+		if err != nil {
+			_ = fileRemove(tmpPath)
+			return mcpError("browser_error")
+		}
+		info, err := fileStat(tmpPath)
+		if err != nil || !info.Mode().IsRegular() {
+			_ = fileRemove(tmpPath)
+			return mcpError("file_save_failed")
+		}
+		if info.Size() > maxDownloadFileBytes {
+			_ = fileRemove(tmpPath)
+			return mcpError("file_too_large")
+		}
+		finalResolved, err := s.jail.ResolveWrite(in.Path, in.Overwrite)
+		if err != nil {
+			_ = fileRemove(tmpPath)
+			return mcpError("path_rejected")
+		}
+		if responsePath, err = s.jail.ConfinedPath(finalResolved); err != nil {
+			_ = fileRemove(tmpPath)
+			return mcpError("path_rejected")
+		}
+		if err := fileRename(tmpPath, finalResolved); err != nil {
+			_ = fileRemove(tmpPath)
+			return mcpError("file_save_failed")
+		}
+		return ok(withWebProvenance(map[string]any{
+			"saved":              true,
+			"path":               responsePath,
+			"url":                result.URL,
+			"suggested_filename": result.SuggestedFilename,
+			"bytes":              info.Size(),
+			"session_id":         sessionID,
+		}, result.URL))
 	})
 }
 
@@ -2391,6 +2488,17 @@ func browserUploadFileSchema() map[string]any {
 		"selector":   targetSelectorProp(),
 		"paths":      boundedStringArrayProp(maxUploadFiles, maxUploadPathBytes, "File paths under --session-dir."),
 		"timeout_ms": intProp(0, 120000, 10000),
+		"session_id": sessionIDProp(),
+	})
+}
+
+func browserDownloadSchema() map[string]any {
+	return objectSchema([]string{"path"}, map[string]any{
+		"ref":        targetRefProp(),
+		"selector":   targetSelectorProp(),
+		"path":       stringMaxProp(maxDownloadPathBytes, "Destination file path under --session-dir."),
+		"overwrite":  boolProp(false, "Allow replacing an existing regular file."),
+		"timeout_ms": intProp(0, 120000, 30000),
 		"session_id": sessionIDProp(),
 	})
 }

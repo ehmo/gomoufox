@@ -13,6 +13,7 @@ func TestContextAndNewPageOptionConversion(t *testing.T) {
 			Name: "k", Value: "v",
 		}}}},
 	}
+	acceptDownloads := false
 	opts := ContextOptions{
 		Viewport:         &Viewport{Width: 1200, Height: 800},
 		StorageState:     state,
@@ -21,6 +22,7 @@ func TestContextAndNewPageOptionConversion(t *testing.T) {
 		TimezoneID:       "Europe/Paris",
 		ExtraHTTPHeaders: map[string]string{"x-test": "1"},
 		HTTPCredentials:  &HTTPCredentials{Username: "user", Password: "pass"},
+		AcceptDownloads:  &acceptDownloads,
 	}
 	pw := toBrowserContextOptions(opts)
 	if pw.Viewport == nil || pw.Viewport.Width != 1200 || pw.Viewport.Height != 800 {
@@ -31,6 +33,9 @@ func TestContextAndNewPageOptionConversion(t *testing.T) {
 	}
 	if pw.ExtraHttpHeaders["x-test"] != "1" || pw.HttpCredentials.Username != "user" {
 		t.Fatalf("headers/creds = %#v/%#v", pw.ExtraHttpHeaders, pw.HttpCredentials)
+	}
+	if pw.AcceptDownloads == nil || *pw.AcceptDownloads {
+		t.Fatalf("accept downloads = %#v", pw.AcceptDownloads)
 	}
 	if pw.Proxy == nil || pw.Proxy.Server != "http://proxy.example:8080" || *pw.Proxy.Username != "u" || *pw.Proxy.Password != "p" {
 		t.Fatalf("proxy = %#v", pw.Proxy)

@@ -19,6 +19,7 @@ import (
 type gomoufoxFactory struct {
 	mu       sync.Mutex
 	launcher gomoufoxLauncher
+	policy   policy.Config
 	shared   mcpBrowser
 }
 
@@ -50,6 +51,7 @@ type mcpContext interface {
 type mcpPage interface {
 	Goto(context.Context, string, ...gomoufox.GotoOption) (*gomoufox.Response, error)
 	RunAndWaitForNavigation(context.Context, func() error, ...gomoufox.NavigateOption) error
+	RunAndWaitForDownload(context.Context, func() error, ...gomoufox.DownloadOption) (*gomoufox.Download, error)
 	Title(context.Context) (string, error)
 	URL() string
 	Content(context.Context) (string, error)
@@ -90,6 +92,7 @@ type contextAdapter struct {
 type pageAdapter struct {
 	gotoFunc         func(context.Context, string, ...gomoufox.GotoOption) (*gomoufox.Response, error)
 	waitNavigation   func(context.Context, func() error, ...gomoufox.NavigateOption) error
+	waitDownload     func(context.Context, func() error, ...gomoufox.DownloadOption) (*gomoufox.Download, error)
 	title            func(context.Context) (string, error)
 	url              func() string
 	content          func(context.Context) (string, error)
@@ -130,6 +133,7 @@ func (l realGomoufoxLauncher) Launch(ctx context.Context, opts sessionOptions, d
 	if opts.profilePath != "" {
 		launchOpts = append(launchOpts, gomoufox.WithPersistentContext(opts.profilePath))
 	}
+	launchOpts = append(launchOpts, gomoufox.WithBrowserAcceptDownloads(l.policy.AllowFileDownload))
 	if len(l.policy.AllowedOrigins) > 0 {
 		launchOpts = append(launchOpts, gomoufox.WithAllowedOrigins(l.policy.AllowedOrigins...))
 	}
@@ -184,6 +188,7 @@ func adaptPage(p *gomoufox.Page) mcpPage {
 	return pageAdapter{
 		gotoFunc:         p.Goto,
 		waitNavigation:   p.RunAndWaitForNavigation,
+		waitDownload:     p.RunAndWaitForDownload,
 		title:            p.Title,
 		url:              p.URL,
 		content:          p.Content,
@@ -234,6 +239,9 @@ func (p pageAdapter) Goto(ctx context.Context, u string, opts ...gomoufox.GotoOp
 func (p pageAdapter) RunAndWaitForNavigation(ctx context.Context, action func() error, opts ...gomoufox.NavigateOption) error {
 	return p.waitNavigation(ctx, action, opts...)
 }
+func (p pageAdapter) RunAndWaitForDownload(ctx context.Context, action func() error, opts ...gomoufox.DownloadOption) (*gomoufox.Download, error) {
+	return p.waitDownload(ctx, action, opts...)
+}
 func (p pageAdapter) Title(ctx context.Context) (string, error) { return p.title(ctx) }
 func (p pageAdapter) URL() string                               { return p.url() }
 func (p pageAdapter) Content(ctx context.Context) (string, error) {
@@ -279,7 +287,7 @@ func (p pageAdapter) OnDialog(fn func(gomoufox.Dialog))          { p.onDialog(fn
 func (p pageAdapter) Close() error                               { return p.close() }
 
 func newGomoufoxFactory(cfg policy.Config) *gomoufoxFactory {
-	return &gomoufoxFactory{launcher: realGomoufoxLauncher{policy: cfg}}
+	return &gomoufoxFactory{launcher: realGomoufoxLauncher{policy: cfg}, policy: cfg}
 }
 
 func (f *gomoufoxFactory) NewBrowserSession(ctx context.Context, opts sessionOptions) (browserSession, error) {
@@ -288,7 +296,7 @@ func (f *gomoufoxFactory) NewBrowserSession(ctx context.Context, opts sessionOpt
 	if err != nil {
 		return nil, err
 	}
-	contextOpts, err := contextOptions(opts)
+	contextOpts, err := contextOptions(opts, f.policy.AllowFileDownload)
 	if err != nil {
 		if closeBrowser {
 			_ = browser.Close()
@@ -570,6 +578,25 @@ func (s *gomoufoxSession) UploadFile(ctx context.Context, target elementTarget, 
 		return err
 	}
 	return locator.SetInputFiles(ctx, files, gomoufox.LocatorSetInputFilesTimeout(opts.Timeout))
+}
+
+func (s *gomoufoxSession) DownloadFile(ctx context.Context, target elementTarget, opts downloadOptions) (downloadResult, error) {
+	ctx, cancel := timeoutContext(ctx, opts.Timeout)
+	defer cancel()
+	locator, err := s.locator(ctx, target)
+	if err != nil {
+		return downloadResult{}, err
+	}
+	download, err := s.page.RunAndWaitForDownload(ctx, func() error {
+		return locator.Click(ctx, gomoufox.LocatorClickTimeout(opts.Timeout))
+	}, gomoufox.DownloadTimeout(opts.Timeout))
+	if err != nil {
+		return downloadResult{}, err
+	}
+	if err := download.SaveAs(ctx, opts.Path); err != nil {
+		return downloadResult{}, err
+	}
+	return downloadResult{URL: download.URL(), SuggestedFilename: download.SuggestedFilename()}, nil
 }
 
 func (s *gomoufoxSession) Dialog(_ context.Context, opts dialogOptions) (dialogResult, error) {
@@ -927,8 +954,8 @@ func screenshotWorkLimitBytes(maxBytes int) int64 {
 	return limit
 }
 
-func contextOptions(opts sessionOptions) ([]gomoufox.ContextOption, error) {
-	out := []gomoufox.ContextOption{}
+func contextOptions(opts sessionOptions, allowDownloads bool) ([]gomoufox.ContextOption, error) {
+	out := []gomoufox.ContextOption{gomoufox.WithAcceptDownloads(allowDownloads)}
 	if opts.locale != "" {
 		out = append(out, gomoufox.WithContextLocale(opts.locale))
 	}

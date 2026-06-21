@@ -317,14 +317,17 @@ MCP defaults:
 - `browser_snapshot` form values stay redacted unless you start MCP with
   `--allow-snapshot-values` and the tool call sets `include_values: true`.
 - Browser-context fetches, cookie values, cookie mutation, session export,
-  session import, session proxy use, and file upload stay disabled unless you
-  enable their matching operator flags.
+  session import, session proxy use, file upload, and file download stay
+  disabled unless you enable their matching operator flags.
 - To reuse a CLI login in MCP, save state with `gomoufox open --save-session`,
   place the file under `--session-dir`, start MCP with `--allow-session-import`,
   then call `session_create` with `storage_state_path` or `session_load` with
   `path`.
 - `browser_upload_file` requires `--allow-file-upload`; paths must resolve under
   `--session-dir`, and responses do not echo file paths.
+- `browser_download` requires `--allow-file-download`; destination paths must
+  resolve under `--session-dir`. Suggested filenames from the browser are
+  returned as metadata only and are never used as write paths.
 - `browser_fetch` requires `--allow-browser-fetch` plus at least one
   `--allowed-origins` or `--allowed-hosts` entry. It still uses gomoufox network
   policy, so private and metadata destinations stay blocked.

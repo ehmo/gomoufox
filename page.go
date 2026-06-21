@@ -21,6 +21,8 @@ type Page struct {
 
 type Dialog struct{ raw pwbridge.Dialog }
 
+type Download struct{ raw pwbridge.Download }
+
 func (d Dialog) Type() string         { return d.raw.Type() }
 func (d Dialog) Message() string      { return d.raw.Message() }
 func (d Dialog) DefaultValue() string { return d.raw.DefaultValue() }
@@ -35,6 +37,48 @@ func (d Dialog) Dismiss(ctx context.Context) error {
 		return err
 	}
 	return d.raw.Dismiss()
+}
+
+func (d Download) URL() string { return d.raw.URL() }
+
+func (d Download) SuggestedFilename() string { return d.raw.SuggestedFilename() }
+
+func (d Download) SaveAs(ctx context.Context, path string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	done := make(chan error, 1)
+	go func() {
+		done <- d.raw.SaveAs(path)
+	}()
+	select {
+	case err := <-done:
+		return mapDownloadError(err)
+	case <-ctx.Done():
+		_ = d.raw.Cancel()
+		return ctx.Err()
+	}
+}
+
+func (d Download) Failure(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return d.raw.Failure()
+}
+
+func (d Download) Cancel(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return d.raw.Cancel()
+}
+
+func (d Download) Delete(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return d.raw.Delete()
 }
 
 func (p *Page) Goto(ctx context.Context, url string, opts ...GotoOption) (*Response, error) {
@@ -91,6 +135,17 @@ func (p *Page) RunAndWaitForNavigation(ctx context.Context, action func() error,
 		return mapNavigationError(err)
 	}
 	return nil
+}
+
+func (p *Page) RunAndWaitForDownload(ctx context.Context, action func() error, opts ...DownloadOption) (*Download, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	download, err := p.raw.RunAndWaitForDownload(action, buildDownloadConfig(opts...).toBridge(ctx))
+	if err != nil {
+		return nil, mapDownloadError(err)
+	}
+	return &Download{raw: download}, nil
 }
 
 func (p *Page) Evaluate(ctx context.Context, expression string, arg ...any) (any, error) {
@@ -293,6 +348,12 @@ func (p *Page) OnConsole(handler func(ConsoleMessage)) {
 func (p *Page) OnDialog(handler func(Dialog)) {
 	p.raw.OnDialog(func(d pwbridge.Dialog) {
 		handler(Dialog{raw: d})
+	})
+}
+
+func (p *Page) OnDownload(handler func(*Download)) {
+	p.raw.OnDownload(func(d pwbridge.Download) {
+		handler(&Download{raw: d})
 	})
 }
 

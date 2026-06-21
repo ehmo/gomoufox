@@ -156,6 +156,7 @@ func TestLaunchArgsJSONIncludesPersonaOptionsAndSanitizesEnv(t *testing.T) {
 	t.Setenv("AWS_SECRET_ACCESS_KEY", "ambient-secret")
 	t.Setenv("GOMOUFOX_DAEMON_TOKEN", "ambient-token")
 	humanize := 1.25
+	acceptDownloads := false
 	raw, err := launchArgsJSON(Config{
 		Headless:        0,
 		LaunchProxy:     &ProxyConfig{Server: "http://127.0.0.1:4567", Username: "user", Password: "pass"},
@@ -180,6 +181,7 @@ func TestLaunchArgsJSONIncludesPersonaOptionsAndSanitizesEnv(t *testing.T) {
 		MainWorldEval:   true,
 		EnableCache:     true,
 		DisableCOOP:     true,
+		AcceptDownloads: &acceptDownloads,
 		ExtraEnv:        []string{"NO_EQUALS", "=blank", "EXPLICIT_TOKEN=explicit-secret"},
 	})
 	if err != nil {
@@ -209,6 +211,7 @@ func TestLaunchArgsJSONIncludesPersonaOptionsAndSanitizesEnv(t *testing.T) {
 		`"main_world_eval":true`,
 		`"enable_cache":true`,
 		`"disable_coop":true`,
+		`"accept_downloads":false`,
 		`"PUBLIC_FLAG":"kept"`,
 		`"EXPLICIT_TOKEN":"explicit-secret"`,
 	} {

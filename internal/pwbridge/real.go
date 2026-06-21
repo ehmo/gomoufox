@@ -249,6 +249,15 @@ func (p *realPage) RunAndWaitForNavigation(action func() error, opts NavigateOpt
 		Timeout: timeoutPtr(opts.Timeout),
 	})
 }
+func (p *realPage) RunAndWaitForDownload(action func() error, opts DownloadOptions) (Download, error) {
+	download, err := p.raw.ExpectDownload(action, playwright.PageExpectDownloadOptions{
+		Timeout: timeoutPtr(opts.Timeout),
+	})
+	if err != nil || download == nil {
+		return nil, err
+	}
+	return &realDownload{raw: download}, nil
+}
 func (p *realPage) Evaluate(expression string, arg ...any) (any, error) {
 	return p.raw.Evaluate(expression, arg...)
 }
@@ -323,6 +332,11 @@ func (p *realPage) OnDialog(fn func(Dialog)) {
 		fn(&realDialog{raw: dialog})
 	})
 }
+func (p *realPage) OnDownload(fn func(Download)) {
+	p.raw.OnDownload(func(download playwright.Download) {
+		fn(&realDownload{raw: download})
+	})
+}
 func (p *realPage) Wheel(deltaX, deltaY float64) error {
 	return p.raw.Mouse().Wheel(deltaX, deltaY)
 }
@@ -341,6 +355,15 @@ func (d *realDialog) Accept(promptText ...string) error {
 	return d.raw.Accept(promptText...)
 }
 func (d *realDialog) Dismiss() error { return d.raw.Dismiss() }
+
+type realDownload struct{ raw playwright.Download }
+
+func (d *realDownload) URL() string               { return d.raw.URL() }
+func (d *realDownload) SuggestedFilename() string { return d.raw.SuggestedFilename() }
+func (d *realDownload) SaveAs(path string) error  { return d.raw.SaveAs(path) }
+func (d *realDownload) Failure() error            { return d.raw.Failure() }
+func (d *realDownload) Cancel() error             { return d.raw.Cancel() }
+func (d *realDownload) Delete() error             { return d.raw.Delete() }
 
 type realElement struct{ raw playwright.ElementHandle }
 
@@ -495,6 +518,9 @@ func toBrowserContextOptions(opts ContextOptions) playwright.BrowserNewContextOp
 			Username: opts.HTTPCredentials.Username,
 			Password: opts.HTTPCredentials.Password,
 		}
+	}
+	if opts.AcceptDownloads != nil {
+		out.AcceptDownloads = playwright.Bool(*opts.AcceptDownloads)
 	}
 	if opts.StorageState != nil {
 		out.StorageState = toPWStorageState(opts.StorageState)

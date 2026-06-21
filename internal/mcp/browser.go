@@ -23,6 +23,7 @@ type browserSession interface {
 	SelectOption(context.Context, elementTarget, selectOptionOptions) ([]string, error)
 	SetChecked(context.Context, elementTarget, bool, checkedOptions) error
 	UploadFile(context.Context, elementTarget, []string, uploadOptions) error
+	DownloadFile(context.Context, elementTarget, downloadOptions) (downloadResult, error)
 	Dialog(context.Context, dialogOptions) (dialogResult, error)
 	WaitFor(context.Context, waitCondition) error
 	Screenshot(context.Context, screenshotOptions) (screenshotResult, error)
@@ -119,6 +120,16 @@ type checkedOptions struct {
 
 type uploadOptions struct {
 	Timeout time.Duration
+}
+
+type downloadOptions struct {
+	Path    string
+	Timeout time.Duration
+}
+
+type downloadResult struct {
+	URL               string
+	SuggestedFilename string
 }
 
 type dialogOptions struct {
