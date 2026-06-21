@@ -223,12 +223,22 @@ func TestEnsureRuntimeAssetsDownloadsCamoufoxBrowserWithoutPython(t *testing.T) 
 }
 
 func TestCamoufoxReleaseAssetURLAndDisabledFetch(t *testing.T) {
-	got, err := camoufoxReleaseAssetURL("v135.0.1-beta.24", "darwin", "arm64")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.HasSuffix(got, "/v135.0.1-beta.24/camoufox-135.0.1-beta.24-mac.arm64.zip") {
-		t.Fatalf("asset URL = %q", got)
+	for _, tc := range []struct {
+		goos, goarch, suffix string
+	}{
+		{"darwin", "arm64", "mac.arm64"},
+		{"darwin", "amd64", "mac.x86_64"},
+		{"linux", "amd64", "lin.x86_64"},
+		{"linux", "arm64", "lin.arm64"},
+	} {
+		got, err := camoufoxReleaseAssetURL("v135.0.1-beta.24", tc.goos, tc.goarch)
+		if err != nil {
+			t.Fatalf("%s/%s: %v", tc.goos, tc.goarch, err)
+		}
+		wantSuffix := "/v135.0.1-beta.24/camoufox-135.0.1-beta.24-" + tc.suffix + ".zip"
+		if !strings.HasSuffix(got, wantSuffix) {
+			t.Fatalf("%s/%s asset URL = %q, want suffix %q", tc.goos, tc.goarch, got, wantSuffix)
+		}
 	}
 	if _, err := camoufoxReleaseAssetURL("v1.2.3", "windows", "arm64"); !errors.Is(err, ErrNotInstalled) {
 		t.Fatalf("unsupported URL err = %v", err)
@@ -240,9 +250,117 @@ func TestCamoufoxReleaseAssetURLAndDisabledFetch(t *testing.T) {
 	userCacheDir = func() (string, error) { return filepath.Join(t.TempDir(), "user-cache"), nil }
 	defer func() { userCacheDir = origUserCache }()
 	t.Setenv("GOMOUFOX_SKIP_FETCH", "1")
-	err = installRuntimeCamoufoxBrowser(context.Background(), RuntimeAssetCacheRoot(t.TempDir(), "linux", "amd64"), InstallOptions{})
+	err := installRuntimeCamoufoxBrowser(context.Background(), RuntimeAssetCacheRoot(t.TempDir(), "linux", "amd64"), InstallOptions{})
 	if !errors.Is(err, ErrNotInstalled) || !strings.Contains(err.Error(), "fetch is disabled") {
 		t.Fatalf("disabled fetch err = %v", err)
+	}
+}
+
+func TestRuntimeBrowserDiscoveryAndZipRejections(t *testing.T) {
+	root := t.TempDir()
+	if _, err := discoverDirectBrowserDir(filepath.Join(root, "missing")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("missing direct browser err = %v", err)
+	}
+	plainFile := filepath.Join(root, "plain")
+	if err := os.WriteFile(plainFile, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := discoverDirectBrowserDir(plainFile); err == nil || !strings.Contains(err.Error(), "not a directory") {
+		t.Fatalf("plain non-executable err = %v", err)
+	}
+	exe := filepath.Join(root, "camoufox")
+	if err := os.WriteFile(exe, []byte("#!/bin/sh\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := discoverDirectBrowserDir(exe); err != nil || got != root {
+		t.Fatalf("executable direct browser = %q, %v", got, err)
+	}
+	nested := filepath.Join(t.TempDir(), "archive", "nested")
+	if err := os.MkdirAll(nested, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(nested, "camoufox"), []byte("#!/bin/sh\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := discoverDownloadedBrowserDir(filepath.Dir(nested)); err != nil || got != nested {
+		t.Fatalf("downloaded browser = %q, %v", got, err)
+	}
+	empty := t.TempDir()
+	if _, err := discoverDownloadedBrowserDir(empty); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("empty downloaded browser err = %v", err)
+	}
+
+	badZip := filepath.Join(t.TempDir(), "bad.zip")
+	out, err := os.Create(badZip)
+	if err != nil {
+		t.Fatal(err)
+	}
+	zw := zip.NewWriter(out)
+	if _, err := zw.Create("../escape"); err != nil {
+		t.Fatal(err)
+	}
+	if err := zw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := out.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := unzipRuntimeAsset(badZip, t.TempDir()); err == nil || !strings.Contains(err.Error(), "unsafe") {
+		t.Fatalf("unsafe zip err = %v", err)
+	}
+	if err := unzipRuntimeAsset(filepath.Join(t.TempDir(), "missing.zip"), t.TempDir()); err == nil || !strings.Contains(err.Error(), "open Camoufox browser archive") {
+		t.Fatalf("missing zip err = %v", err)
+	}
+}
+
+func TestDownloadRuntimeCamoufoxBrowserFailureBranches(t *testing.T) {
+	restorePlatform := overrideSidecarPlatform(t, "linux", "amd64")
+	defer restorePlatform()
+	origClient := runtimeAssetHTTPClient
+	origBase := camoufoxReleaseAssetBaseURL
+	defer func() {
+		runtimeAssetHTTPClient = origClient
+		camoufoxReleaseAssetBaseURL = origBase
+	}()
+	t.Setenv(EnvTrustUnverifiedCamoufoxPath, "1")
+
+	for _, tc := range []struct {
+		name string
+		body []byte
+		code int
+		want string
+	}{
+		{name: "http status", code: http.StatusInternalServerError, want: "HTTP 500"},
+		{name: "bad archive", code: http.StatusOK, body: []byte("not a zip"), want: "open Camoufox browser archive"},
+		{name: "empty archive", code: http.StatusOK, body: emptyRuntimeZipFixture(t), want: "downloaded Camoufox browser asset is unusable"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(tc.code)
+				_, _ = w.Write(tc.body)
+			}))
+			defer server.Close()
+			runtimeAssetHTTPClient = server.Client()
+			camoufoxReleaseAssetBaseURL = server.URL
+
+			root := RuntimeAssetCacheRoot(t.TempDir(), "linux", "amd64")
+			if err := os.MkdirAll(filepath.Dir(root.Root), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			err := downloadRuntimeCamoufoxBrowser(context.Background(), root, InstallOptions{})
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("download err = %v, want %q", err, tc.want)
+			}
+		})
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := downloadRuntimeCamoufoxBrowser(ctx, RuntimeAssetCacheRoot(t.TempDir(), "linux", "amd64"), InstallOptions{}); !errors.Is(err, context.Canceled) {
+		t.Fatalf("canceled download err = %v", err)
+	}
+	if err := installRuntimePlaywrightDriver(ctx, RuntimeAssetCacheRoot(t.TempDir(), "linux", "amd64"), InstallOptions{}); !errors.Is(err, context.Canceled) {
+		t.Fatalf("canceled driver err = %v", err)
 	}
 }
 
@@ -427,6 +545,27 @@ func runtimeBrowserZipFixture(t *testing.T) []byte {
 	if _, err := f.Write([]byte("#!/bin/sh\n")); err != nil {
 		t.Fatal(err)
 	}
+	if err := zw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := out.Close(); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(tmp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return data
+}
+
+func emptyRuntimeZipFixture(t *testing.T) []byte {
+	t.Helper()
+	tmp := filepath.Join(t.TempDir(), "empty.zip")
+	out, err := os.Create(tmp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	zw := zip.NewWriter(out)
 	if err := zw.Close(); err != nil {
 		t.Fatal(err)
 	}

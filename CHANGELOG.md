@@ -4,7 +4,7 @@
 
 - No changes yet.
 
-## v0.1.15
+## v0.1.16
 
 - Add native browser download support to the Go API and MCP server, including
   an opt-in `browser_download` tool that saves only under `--session-dir`.
