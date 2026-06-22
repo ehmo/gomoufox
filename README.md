@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/assets/gomoufox-banner.png" alt="gomoufox" width="900">
+</p>
+
 # gomoufox
 
 <p align="center">

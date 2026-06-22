@@ -47,6 +47,7 @@ FORBIDDEN_TEXT = {
 }
 
 TEXT_SUFFIXES = {".go", ".js", ".json", ".md", ".mod", ".sum", ".sh", ".py", ".rb", ".yml", ".yaml", ".txt"}
+BINARY_SUFFIXES = {".png"}
 TEXT_FILE_NAMES = {".gitignore", "LICENSE"}
 ALLOWED_DOT_PARTS = {".github", ".gitignore"}
 SOURCE_DIRS = {"camoufoxcfg", "cmd", "internal"}
@@ -281,6 +282,8 @@ def check(root: Path) -> list[str]:
             continue
         if not allowed_public_path(rel, required_files, required_script_assets, source_dirs):
             failures.append(f"unexpected public file: {rel.as_posix()}")
+            continue
+        if rel.suffix in BINARY_SUFFIXES:
             continue
         if rel.suffix and rel.suffix not in TEXT_SUFFIXES:
             failures.append(f"unexpected public file suffix {rel.suffix}: {rel.as_posix()}")
