@@ -24,7 +24,8 @@
     "docs/agent-contracts/mcp-tools-list.json",
     "docs/benchmarks/2026-06-03-full.json",
     "docs/benchmarks/2026-06-08-release-gate.json",
-    "docs/benchmarks/2026-06-09-node-direct-readiness.json"
+    "docs/benchmarks/2026-06-09-node-direct-readiness.json",
+    "docs/benchmarks/2026-06-24-node-direct-readiness.json"
   ],
   "scripts": [
     "audit-public-release.py",

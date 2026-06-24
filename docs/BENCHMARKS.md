@@ -1,6 +1,6 @@
 # Go/Python Benchmark
 
-- Generated: 2026-06-09T09:28:18.419144+00:00
+- Generated: 2026-06-24T02:35:42.219128+00:00
 - Mode: extended
 - Targets: 100
 - Loops: 1
@@ -77,21 +77,21 @@ generated persona can differ on a single local run.
 
 | Runtime | Passed | Blocked | Failed | Wall ms | Target ms | Peak RSS MiB | Peak CPU % |
 |---|---:|---:|---:|---:|---:|---:|---:|
-| gomoufox | 96 | 4 | 0 | 359,088 | 356,515 | 3,041.3 | 399.0 |
-| Python Camoufox | 95 | 5 | 0 | 357,093 | 355,622 | 3,256.4 | 482.1 |
+| gomoufox | 96 | 4 | 0 | 360,361 | 357,928 | 3,734.2 | 548.4 |
+| Python Camoufox | 95 | 5 | 0 | 373,637 | 372,333 | 3,863.5 | 567.9 |
 
 | Ratio | Go / Python |
 |---|---:|
-| Wall time | 1.006 |
-| Target duration | 1.003 |
-| Peak RSS | 0.934 |
-| Peak CPU | 0.828 |
-| Report tokens | 0.157 |
+| Wall time | 0.964 |
+| Target duration | 0.961 |
+| Peak RSS | 0.967 |
+| Peak CPU | 0.966 |
+| Report tokens | 0.163 |
 
 ## Go/Python Benchmark Readiness
 
-- Status: candidate
-- Candidate: yes
+- Status: blocked
+- Candidate: no
 - Note: Go/Python benchmark candidate means node-direct passed the extended comparison gate. Consumer no-Python readiness is recorded separately by scripts/no-python-consumer-canary.sh.
 
 | Criterion | Passed | Detail |
@@ -100,11 +100,11 @@ generated persona can differ on a single local run.
 | extended_target_matrix | yes | mode=extended targets=100 |
 | no_go_only_outcome_regressions | yes | go_only_regression_count=0 outcome_mismatch_count=1 |
 | no_runtime_failures | yes | go_failed=0 python_failed=0 |
-| wall_time_not_slower_than_python | yes | wall_time=1.005586779914476 max=1.05 |
-| target_duration_not_slower_than_python | yes | target_duration=1.002511093239451 max=1.05 |
-| peak_rss_beats_python | yes | peak_rss=0.9339564700011516 max=0.95 |
-| peak_cpu_beats_python | yes | peak_cpu=0.8276291225886744 max=0.95 |
-| report_tokens_beats_python | yes | report_tokens=0.15677069962469897 max=0.5 |
+| wall_time_not_slower_than_python | yes | wall_time=0.964468187037151 max=1.05 |
+| target_duration_not_slower_than_python | yes | target_duration=0.9613115141553394 max=1.05 |
+| peak_rss_beats_python | no | peak_rss=0.9665496517863643 max=0.95 |
+| peak_cpu_beats_python | no | peak_cpu=0.9656629688325411 max=0.95 |
+| report_tokens_beats_python | yes | report_tokens=0.16264183881291824 max=0.5 |
 
 ## Agent Output Footprint
 
@@ -112,8 +112,8 @@ Token estimates use `ceil(bytes / 4)`. They compare generated benchmark artifact
 
 | Runtime | JSON bytes | Markdown bytes | Estimated tokens |
 |---|---:|---:|---:|
-| gomoufox | 42,435 | 8,858 | 12,824 |
-| Python Camoufox | 318,295 | 8,906 | 81,801 |
+| gomoufox | 42,511 | 8,916 | 12,857 |
+| Python Camoufox | 307,259 | 8,943 | 79,051 |
 
 ## Outcome Classes
 
@@ -133,110 +133,110 @@ Token estimates use `ceil(bytes / 4)`. They compare generated benchmark artifact
 
 | Loop | Runtime | Passed | Blocked | Failed | Wall ms | Target ms | Peak RSS MiB | Peak CPU % | Mismatches |
 |---:|---|---:|---:|---:|---:|---:|---:|---:|---:|
-| 1 | gomoufox | 96 | 4 | 0 | 359,088 | 356,515 | 3,041.3 | 399.0 | 1 |
-| 1 | Python Camoufox | 95 | 5 | 0 | 357,093 | 355,622 | 3,256.4 | 482.1 | 1 |
+| 1 | gomoufox | 96 | 4 | 0 | 360,361 | 357,928 | 3,734.2 | 548.4 | 1 |
+| 1 | Python Camoufox | 95 | 5 | 0 | 373,637 | 372,333 | 3,863.5 | 567.9 | 1 |
 
 ## Target Outcomes
 
 | Target | Kind | Tags | Go | Python | Go ms | Python ms |
 |---|---|---|---:|---:|---:|---:|
-| adidas | marketplace | ecommerce, auth-entry, media-heavy, spa | passed | passed | 3,343 | 3,373 |
-| airbnb | travel-platform | ecommerce, auth-entry, media-heavy, spa | passed | passed | 3,525 | 3,506 |
-| akamai | cdn-security-vendor | cdn-security, media-heavy | passed | passed | 3,350 | 3,346 |
-| angular | framework-docs | docs, spa | passed | passed | 3,380 | 3,301 |
-| ansible | platform-docs | docs, media-heavy | passed | passed | 4,545 | 4,312 |
-| anthropic | ai-platform | auth-entry, media-heavy | passed | passed | 3,331 | 3,354 |
-| ap-news | news-site | media-heavy | passed | passed | 3,315 | 3,303 |
-| apple | tech-platform | media-heavy, spa | passed | passed | 3,272 | 3,292 |
-| astro | framework-docs | docs, static | passed | passed | 3,313 | 3,335 |
-| aws | cloud-platform | auth-entry, cloud-platform, media-heavy | passed | passed | 3,322 | 3,314 |
-| azure | cloud-platform | auth-entry, cloud-platform, docs, spa | passed | passed | 4,226 | 4,297 |
-| bbc | news-site | media-heavy | passed | passed | 3,342 | 3,299 |
-| bestbuy | marketplace | ecommerce, auth-entry, media-heavy | passed | passed | 4,504 | 3,892 |
-| booking | travel-platform | ecommerce, auth-entry, media-heavy | passed | passed | 3,511 | 3,532 |
-| chrome-dev | browser-docs | docs | passed | passed | 3,587 | 3,694 |
-| cloudflare-docs | cdn-security-docs | cloudflare, cdn-security, docs | passed | passed | 3,306 | 3,303 |
-| cloudflare-home | cloudflare-edge | cloudflare, cdn-security, spa | passed | passed | 3,658 | 3,523 |
-| cloudflare-radar | cdn-security-docs | cloudflare, cdn-security, docs, spa | passed | passed | 4,083 | 4,070 |
-| cnn | news-site | media-heavy, spa | passed | passed | 3,257 | 3,252 |
-| cohere | ai-platform | auth-entry, media-heavy, spa | passed | passed | 3,643 | 3,543 |
-| costco | marketplace | ecommerce, auth-entry, media-heavy | passed | passed | 3,398 | 3,385 |
-| crates | package-registry | docs | passed | passed | 3,340 | 3,341 |
-| creepjs | fingerprint-test | bot-detection, static | passed | passed | 3,260 | 3,230 |
-| datadome | bot-defense-vendor | bot-detection, cdn-security | passed | passed | 3,479 | 3,426 |
-| digitalocean | cloud-platform | auth-entry, cloud-platform, docs | passed | passed | 3,275 | 3,278 |
-| django | framework-docs | docs, static | passed | passed | 3,449 | 3,421 |
-| docker-docs | platform-docs | docs, spa | passed | passed | 3,302 | 3,308 |
-| docker-hub | package-registry | auth-entry, spa | passed | passed | 3,531 | 3,385 |
-| ebay | marketplace | ecommerce, auth-entry, media-heavy | passed | passed | 3,960 | 3,974 |
-| elastic | platform-docs | auth-entry, docs, spa | passed | passed | 3,287 | 3,379 |
-| etsy | marketplace | ecommerce, auth-entry, media-heavy | passed | passed | 3,654 | 3,669 |
-| example | reference-site | static | passed | passed | 3,245 | 3,284 |
-| fastly | cdn-security-vendor | cdn-security, media-heavy | passed | passed | 3,290 | 3,295 |
-| firebase | cloud-platform | cloud-platform, docs, spa | passed | passed | 3,943 | 3,588 |
-| flask | framework-docs | docs, static | passed | passed | 4,208 | 4,153 |
-| g2 | real-site-anti-bot | bot-detection, auth-entry, spa | blocked | blocked | 3,318 | 3,319 |
-| github | developer-platform | auth-entry, developer-platform, spa | passed | passed | 3,434 | 3,403 |
-| gitlab | developer-platform | auth-entry, developer-platform, spa | passed | passed | 4,180 | 4,230 |
-| go-dev | language-docs | docs, static | passed | passed | 3,381 | 3,443 |
-| google-cloud | cloud-platform | auth-entry, cloud-platform, docs, spa | passed | passed | 3,439 | 3,362 |
-| grafana | platform-docs | auth-entry, docs, spa | passed | passed | 3,323 | 3,322 |
-| guardian | news-site | media-heavy | passed | passed | 4,107 | 4,198 |
-| hacker-news | community-site | auth-entry, static | passed | passed | 3,288 | 3,316 |
-| huggingface | ai-platform | auth-entry, media-heavy, spa | passed | blocked | 3,290 | 3,232 |
-| ikea | marketplace | ecommerce, auth-entry, media-heavy | passed | passed | 3,584 | 3,426 |
-| imperva | bot-defense-vendor | bot-detection, cdn-security | passed | passed | 4,876 | 4,900 |
-| incolumitas | bot-fingerprint-test | bot-detection | passed | passed | 3,969 | 3,907 |
-| kubernetes | platform-docs | docs, spa | passed | passed | 3,296 | 3,288 |
-| linode | cloud-platform | auth-entry, cloud-platform, docs | passed | passed | 3,390 | 3,335 |
-| mdn | browser-docs | docs, media-heavy | passed | passed | 4,142 | 4,132 |
-| microsoft | tech-platform | auth-entry, media-heavy | passed | passed | 4,176 | 4,688 |
-| mistral-ai | ai-platform | auth-entry, media-heavy, spa | passed | passed | 3,366 | 3,398 |
-| mozilla | browser-platform | docs, media-heavy | passed | passed | 4,322 | 4,159 |
-| mysql | database-docs | docs, media-heavy | passed | passed | 3,299 | 3,339 |
-| netlify | cloud-platform | auth-entry, cloud-platform, docs, spa | passed | passed | 3,284 | 3,271 |
-| nextjs | framework-docs | docs, spa | passed | passed | 3,308 | 3,289 |
-| nginx | platform-docs | docs, static | passed | passed | 3,868 | 3,868 |
-| nike | marketplace | ecommerce, auth-entry, media-heavy, spa | passed | passed | 3,536 | 3,501 |
-| nodejs | language-docs | docs | passed | passed | 4,131 | 4,116 |
-| nowsecure-cloudflare | cloudflare-challenge-test | cloudflare, bot-detection | blocked | blocked | 4,202 | 4,259 |
-| npmjs | package-registry | auth-entry, spa | passed | passed | 3,293 | 3,289 |
-| npr | news-site | media-heavy | passed | passed | 3,323 | 3,378 |
-| openai | ai-platform | auth-entry, media-heavy, spa | passed | passed | 3,567 | 3,659 |
-| oracle-cloud | cloud-platform | auth-entry, cloud-platform, media-heavy | blocked | blocked | 3,349 | 3,400 |
-| paypal | payments-platform | ecommerce, auth-entry | passed | passed | 4,201 | 4,193 |
-| perplexity | ai-platform | auth-entry, media-heavy, spa | blocked | blocked | 3,272 | 3,278 |
-| pixelscan | bot-fingerprint-test | bot-detection | passed | passed | 4,081 | 4,325 |
-| pkg-go-dev | language-docs | docs, static | passed | passed | 3,368 | 3,404 |
-| playwright | browser-automation-docs | docs, static | passed | passed | 3,245 | 3,283 |
-| postgres | database-docs | docs, static | passed | passed | 3,448 | 3,422 |
-| prometheus | platform-docs | docs, static | passed | passed | 3,278 | 3,517 |
-| pypi | package-registry | docs, static | passed | passed | 3,247 | 3,232 |
-| python-org | language-docs | docs | passed | passed | 3,256 | 3,237 |
-| rails | framework-docs | docs, static | passed | passed | 3,265 | 3,232 |
-| react | framework-docs | docs, spa | passed | passed | 3,281 | 3,291 |
-| redis | database-docs | docs, spa | passed | passed | 3,427 | 3,504 |
-| reuters | news-site | media-heavy | passed | passed | 3,282 | 3,284 |
-| rubygems | package-registry | docs | passed | passed | 3,254 | 3,278 |
-| rust-lang | language-docs | docs, static | passed | passed | 4,188 | 4,114 |
-| sannysoft | bot-fingerprint-test | bot-detection | passed | passed | 3,309 | 3,349 |
-| selenium | browser-automation-docs | docs | passed | passed | 3,309 | 3,371 |
-| shopify | commerce-platform | ecommerce, auth-entry, spa | passed | passed | 3,288 | 3,320 |
-| spring | framework-docs | docs, spa | passed | passed | 3,358 | 3,343 |
-| sqlite | database-docs | docs, static | passed | passed | 3,512 | 3,492 |
-| stackoverflow | developer-platform | auth-entry, developer-platform | passed | passed | 4,165 | 4,317 |
-| stripe | payments-platform | ecommerce, auth-entry, media-heavy | passed | passed | 3,732 | 3,595 |
-| supabase | developer-platform | auth-entry, developer-platform, docs, spa | passed | passed | 3,317 | 3,296 |
-| svelte | framework-docs | docs, spa | passed | passed | 3,308 | 3,317 |
-| tailwind | framework-docs | docs, spa | passed | passed | 3,397 | 3,401 |
-| target | marketplace | ecommerce, auth-entry, media-heavy | passed | passed | 3,993 | 3,937 |
-| terraform | platform-docs | docs | passed | passed | 4,266 | 4,306 |
-| uniqlo | marketplace | ecommerce, auth-entry, media-heavy, spa | passed | passed | 3,547 | 3,370 |
-| vercel | cloud-platform | auth-entry, cloud-platform, docs, spa | passed | passed | 3,344 | 3,325 |
-| vite | framework-docs | docs, spa | passed | passed | 3,288 | 3,316 |
-| vue | framework-docs | docs, spa | passed | passed | 3,292 | 3,298 |
-| walmart | marketplace | ecommerce, auth-entry, media-heavy | passed | passed | 3,349 | 3,353 |
-| web-dev | browser-docs | docs, static | passed | passed | 3,655 | 3,537 |
-| wikipedia | reference-site | static, media-heavy | passed | passed | 3,298 | 3,312 |
-| yahoo-news | news-site | media-heavy, spa | passed | passed | 3,805 | 3,722 |
-| ycombinator | startup-platform | auth-entry, static | passed | passed | 3,415 | 3,367 |
+| adidas | marketplace | ecommerce, auth-entry, media-heavy, spa | passed | passed | 3,415 | 3,411 |
+| airbnb | travel-platform | ecommerce, auth-entry, media-heavy, spa | passed | passed | 3,599 | 3,536 |
+| akamai | cdn-security-vendor | cdn-security, media-heavy | passed | passed | 3,317 | 3,407 |
+| angular | framework-docs | docs, spa | passed | passed | 3,408 | 3,341 |
+| ansible | platform-docs | docs, media-heavy | passed | passed | 4,359 | 4,295 |
+| anthropic | ai-platform | auth-entry, media-heavy | passed | passed | 3,389 | 3,322 |
+| ap-news | news-site | media-heavy | passed | passed | 3,362 | 3,324 |
+| apple | tech-platform | media-heavy, spa | passed | passed | 3,313 | 3,310 |
+| astro | framework-docs | docs, static | passed | passed | 3,310 | 3,353 |
+| aws | cloud-platform | auth-entry, cloud-platform, media-heavy | passed | passed | 3,323 | 3,385 |
+| azure | cloud-platform | auth-entry, cloud-platform, docs, spa | passed | passed | 4,265 | 4,381 |
+| bbc | news-site | media-heavy | passed | passed | 3,360 | 3,347 |
+| bestbuy | marketplace | ecommerce, auth-entry, media-heavy | passed | passed | 3,846 | 6,122 |
+| booking | travel-platform | ecommerce, auth-entry, media-heavy | passed | passed | 3,521 | 3,992 |
+| chrome-dev | browser-docs | docs | passed | passed | 3,641 | 3,691 |
+| cloudflare-docs | cdn-security-docs | cloudflare, cdn-security, docs | passed | passed | 3,364 | 3,348 |
+| cloudflare-home | cloudflare-edge | cloudflare, cdn-security, spa | passed | passed | 3,549 | 3,555 |
+| cloudflare-radar | cdn-security-docs | cloudflare, cdn-security, docs, spa | passed | passed | 4,599 | 4,897 |
+| cnn | news-site | media-heavy, spa | passed | passed | 3,294 | 3,285 |
+| cohere | ai-platform | auth-entry, media-heavy, spa | passed | passed | 3,589 | 3,616 |
+| costco | marketplace | ecommerce, auth-entry, media-heavy | passed | passed | 3,605 | 3,465 |
+| crates | package-registry | docs | passed | passed | 3,327 | 3,329 |
+| creepjs | fingerprint-test | bot-detection, static | passed | passed | 3,375 | 3,244 |
+| datadome | bot-defense-vendor | bot-detection, cdn-security | passed | passed | 3,367 | 4,161 |
+| digitalocean | cloud-platform | auth-entry, cloud-platform, docs | passed | passed | 3,305 | 3,298 |
+| django | framework-docs | docs, static | passed | passed | 3,418 | 3,430 |
+| docker-docs | platform-docs | docs, spa | passed | passed | 3,316 | 3,334 |
+| docker-hub | package-registry | auth-entry, spa | passed | passed | 3,389 | 3,410 |
+| ebay | marketplace | ecommerce, auth-entry, media-heavy | passed | passed | 4,102 | 3,890 |
+| elastic | platform-docs | auth-entry, docs, spa | passed | passed | 3,750 | 3,303 |
+| etsy | marketplace | ecommerce, auth-entry, media-heavy | passed | passed | 3,641 | 3,677 |
+| example | reference-site | static | passed | passed | 3,269 | 3,327 |
+| fastly | cdn-security-vendor | cdn-security, media-heavy | passed | passed | 3,279 | 3,280 |
+| firebase | cloud-platform | cloud-platform, docs, spa | passed | passed | 3,516 | 3,800 |
+| flask | framework-docs | docs, static | passed | passed | 4,142 | 4,178 |
+| g2 | real-site-anti-bot | bot-detection, auth-entry, spa | blocked | blocked | 3,555 | 3,319 |
+| github | developer-platform | auth-entry, developer-platform, spa | passed | passed | 3,422 | 3,443 |
+| gitlab | developer-platform | auth-entry, developer-platform, spa | passed | passed | 4,284 | 4,201 |
+| go-dev | language-docs | docs, static | passed | passed | 3,598 | 3,436 |
+| google-cloud | cloud-platform | auth-entry, cloud-platform, docs, spa | passed | passed | 3,460 | 3,437 |
+| grafana | platform-docs | auth-entry, docs, spa | passed | passed | 3,354 | 3,367 |
+| guardian | news-site | media-heavy | passed | passed | 4,170 | 4,213 |
+| hacker-news | community-site | auth-entry, static | passed | passed | 3,284 | 3,298 |
+| huggingface | ai-platform | auth-entry, media-heavy, spa | passed | blocked | 3,276 | 3,252 |
+| ikea | marketplace | ecommerce, auth-entry, media-heavy | passed | passed | 3,609 | 3,538 |
+| imperva | bot-defense-vendor | bot-detection, cdn-security | passed | passed | 3,574 | 3,277 |
+| incolumitas | bot-fingerprint-test | bot-detection | passed | passed | 4,007 | 3,905 |
+| kubernetes | platform-docs | docs, spa | passed | passed | 3,297 | 3,315 |
+| linode | cloud-platform | auth-entry, cloud-platform, docs | passed | passed | 3,537 | 3,779 |
+| mdn | browser-docs | docs, media-heavy | passed | passed | 4,119 | 4,113 |
+| microsoft | tech-platform | auth-entry, media-heavy | passed | passed | 4,442 | 4,390 |
+| mistral-ai | ai-platform | auth-entry, media-heavy, spa | passed | passed | 3,359 | 3,373 |
+| mozilla | browser-platform | docs, media-heavy | passed | passed | 4,387 | 4,407 |
+| mysql | database-docs | docs, media-heavy | passed | passed | 3,300 | 3,883 |
+| netlify | cloud-platform | auth-entry, cloud-platform, docs, spa | passed | passed | 3,287 | 3,282 |
+| nextjs | framework-docs | docs, spa | passed | passed | 3,322 | 3,343 |
+| nginx | platform-docs | docs, static | passed | passed | 3,875 | 3,858 |
+| nike | marketplace | ecommerce, auth-entry, media-heavy, spa | passed | passed | 3,727 | 13,132 |
+| nodejs | language-docs | docs | passed | passed | 4,204 | 4,231 |
+| nowsecure-cloudflare | cloudflare-challenge-test | cloudflare, bot-detection | blocked | blocked | 4,227 | 4,297 |
+| npmjs | package-registry | auth-entry, spa | passed | passed | 3,316 | 3,332 |
+| npr | news-site | media-heavy | passed | passed | 3,446 | 3,380 |
+| openai | ai-platform | auth-entry, media-heavy, spa | passed | passed | 3,622 | 3,632 |
+| oracle-cloud | cloud-platform | auth-entry, cloud-platform, media-heavy | blocked | blocked | 3,389 | 3,642 |
+| paypal | payments-platform | ecommerce, auth-entry | passed | passed | 4,261 | 4,189 |
+| perplexity | ai-platform | auth-entry, media-heavy, spa | blocked | blocked | 3,310 | 3,290 |
+| pixelscan | bot-fingerprint-test | bot-detection | passed | passed | 4,140 | 4,124 |
+| pkg-go-dev | language-docs | docs, static | passed | passed | 3,372 | 3,416 |
+| playwright | browser-automation-docs | docs, static | passed | passed | 3,369 | 3,276 |
+| postgres | database-docs | docs, static | passed | passed | 3,472 | 3,536 |
+| prometheus | platform-docs | docs, static | passed | passed | 3,332 | 3,305 |
+| pypi | package-registry | docs, static | passed | passed | 3,243 | 3,240 |
+| python-org | language-docs | docs | passed | passed | 3,275 | 3,266 |
+| rails | framework-docs | docs, static | passed | passed | 3,363 | 3,253 |
+| react | framework-docs | docs, spa | passed | passed | 3,340 | 3,313 |
+| redis | database-docs | docs, spa | passed | passed | 3,412 | 3,488 |
+| reuters | news-site | media-heavy | passed | passed | 3,388 | 3,378 |
+| rubygems | package-registry | docs | passed | passed | 3,284 | 3,263 |
+| rust-lang | language-docs | docs, static | passed | passed | 4,150 | 4,144 |
+| sannysoft | bot-fingerprint-test | bot-detection | passed | passed | 3,328 | 3,282 |
+| selenium | browser-automation-docs | docs | passed | passed | 3,429 | 3,336 |
+| shopify | commerce-platform | ecommerce, auth-entry, spa | passed | passed | 3,322 | 3,352 |
+| spring | framework-docs | docs, spa | passed | passed | 3,325 | 3,334 |
+| sqlite | database-docs | docs, static | passed | passed | 3,530 | 3,512 |
+| stackoverflow | developer-platform | auth-entry, developer-platform | passed | passed | 4,237 | 4,246 |
+| stripe | payments-platform | ecommerce, auth-entry, media-heavy | passed | passed | 3,563 | 3,433 |
+| supabase | developer-platform | auth-entry, developer-platform, docs, spa | passed | passed | 3,357 | 3,319 |
+| svelte | framework-docs | docs, spa | passed | passed | 3,324 | 3,327 |
+| tailwind | framework-docs | docs, spa | passed | passed | 3,360 | 3,326 |
+| target | marketplace | ecommerce, auth-entry, media-heavy | passed | passed | 4,041 | 4,000 |
+| terraform | platform-docs | docs | passed | passed | 4,261 | 4,266 |
+| uniqlo | marketplace | ecommerce, auth-entry, media-heavy, spa | passed | passed | 3,586 | 3,694 |
+| vercel | cloud-platform | auth-entry, cloud-platform, docs, spa | passed | passed | 3,307 | 3,346 |
+| vite | framework-docs | docs, spa | passed | passed | 3,289 | 3,396 |
+| vue | framework-docs | docs, spa | passed | passed | 3,292 | 3,322 |
+| walmart | marketplace | ecommerce, auth-entry, media-heavy | passed | passed | 3,333 | 4,849 |
+| web-dev | browser-docs | docs, static | passed | passed | 3,600 | 3,755 |
+| wikipedia | reference-site | static, media-heavy | passed | passed | 3,287 | 3,299 |
+| yahoo-news | news-site | media-heavy, spa | passed | passed | 3,946 | 3,919 |
+| ycombinator | startup-platform | auth-entry, static | passed | passed | 3,427 | 3,420 |

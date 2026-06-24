@@ -419,6 +419,9 @@ func openRealBrowser(ctx context.Context, req LocalCommandRequest) (localStorage
 
 func contextOptionsForLocal(req LocalCommandRequest, base []gomoufox.ContextOption) ([]gomoufox.ContextOption, error) {
 	opts := append([]gomoufox.ContextOption(nil), base...)
+	if locale := flagString(req, "locale", ""); locale != "" {
+		opts = append(opts, gomoufox.WithContextLocale(locale))
+	}
 	if path := flagString(req, "cookies_file", ""); path != "" {
 		state, err := readStorageStateFile(path)
 		if err != nil {
@@ -536,7 +539,11 @@ func (b realLocalBrowser) Close() error { return b.b.Close() }
 func browserOptions(req LocalCommandRequest) ([]gomoufox.Option, error) {
 	opts := []gomoufox.Option{}
 	if req.Profile != "" {
-		opts = append(opts, gomoufox.WithPersistentContext(req.Profile))
+		profile, err := localProfilePath(req.Profile)
+		if err != nil {
+			return nil, err
+		}
+		opts = append(opts, gomoufox.WithPersistentContext(profile))
 	}
 	if req.Command == "open" || localBool(req, "headful") {
 		opts = append(opts, gomoufox.WithHeadless(camoufoxcfg.HeadlessFalse))
@@ -580,7 +587,14 @@ func browserOptions(req LocalCommandRequest) ([]gomoufox.Option, error) {
 }
 
 func localCommandNeedsPythonRuntime(req LocalCommandRequest, humanizeEnabled bool) bool {
-	return req.Profile != "" || flagString(req, "locale", "") != "" || humanizeEnabled
+	return humanizeEnabled
+}
+
+func localProfilePath(profile string) (string, error) {
+	if profile == "" {
+		return "", nil
+	}
+	return filepath.Abs(profile)
 }
 
 func humanizeForLocal(req LocalCommandRequest) (bool, time.Duration, error) {

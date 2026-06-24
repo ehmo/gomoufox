@@ -2068,14 +2068,38 @@ func TestLocalOptionAndFileHelperEdges(t *testing.T) {
 		t.Fatal(err)
 	}
 	opts, err := contextOptionsForLocal(
-		LocalCommandRequest{Flags: map[string]any{"cookies_file": statePath}},
+		LocalCommandRequest{Flags: map[string]any{"cookies_file": statePath, "locale": "en-US"}},
 		[]gomoufox.ContextOption{gomoufox.WithViewport(10, 20)},
 	)
-	if err != nil || len(opts) != 2 {
+	if err != nil || len(opts) != 3 {
 		t.Fatalf("context opts len=%d err=%v", len(opts), err)
 	}
 	if _, err := contextOptionsForLocal(LocalCommandRequest{Flags: map[string]any{"cookies_file": filepath.Join(t.TempDir(), "missing.json")}}, nil); err == nil {
 		t.Fatal("missing cookies file succeeded")
+	}
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	profileRoot := t.TempDir()
+	if err := os.Chdir(profileRoot); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := os.Chdir(cwd); err != nil {
+			t.Fatalf("restore cwd: %v", err)
+		}
+	})
+	profile, err := localProfilePath(filepath.Join("profiles", "amazon"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	profileRootAbs, err := filepath.Abs(".")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := filepath.Join(profileRootAbs, "profiles", "amazon"); profile != want {
+		t.Fatalf("profile path = %q, want %q", profile, want)
 	}
 
 	cfg, err := proxyConfig("http://user:pass@proxy.example:8080")
@@ -2111,11 +2135,11 @@ func TestLocalOptionAndFileHelperEdges(t *testing.T) {
 	if err != nil || len(browserOpts) != 3 {
 		t.Fatalf("open browser opts len=%d err=%v", len(browserOpts), err)
 	}
-	if !localCommandNeedsPythonRuntime(LocalCommandRequest{Profile: "/profile"}, false) {
-		t.Fatal("profile should select python runtime")
+	if localCommandNeedsPythonRuntime(LocalCommandRequest{Profile: "/profile"}, false) {
+		t.Fatal("profile should keep default runtime")
 	}
-	if !localCommandNeedsPythonRuntime(LocalCommandRequest{Flags: map[string]any{"locale": "en-US"}}, false) {
-		t.Fatal("locale should select python runtime")
+	if localCommandNeedsPythonRuntime(LocalCommandRequest{Flags: map[string]any{"locale": "en-US"}}, false) {
+		t.Fatal("locale should keep default runtime")
 	}
 	if !localCommandNeedsPythonRuntime(LocalCommandRequest{}, true) {
 		t.Fatal("humanize should select python runtime")

@@ -4,6 +4,16 @@
 
 - No changes yet.
 
+## v0.1.17
+
+- Fix node-direct MCP sessions that use persistent profiles, OS persona, or
+  browser-context locale options, preventing `browser_start_failed` on the
+  first navigation.
+- Normalize CLI `--profile` paths before launch so relative profiles no longer
+  reach Playwright as invalid `userDataDir` values.
+- Refresh bundled Python requirement locks used by the legacy sidecar release
+  gate.
+
 ## v0.1.16
 
 - Add native browser download support to the Go API and MCP server, including

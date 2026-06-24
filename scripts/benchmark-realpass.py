@@ -159,6 +159,7 @@ def main() -> int:
                 python_out / "report.json",
                 go_wall_ms=go_wall_ms,
                 python_wall_ms=python_wall_ms,
+                target_metadata=target_metadata,
                 run_order=run_order,
             )
         )

@@ -107,13 +107,14 @@ Homebrew build still has that command.
 | Path | Status | Use it when |
 |---|---|---|
 | `gomoufox install` | ![default](https://img.shields.io/badge/default-no%20Python-2ea44f) | You want the Go-managed node-direct runtime. |
-| `gomoufox install --runtime python` | ![legacy](https://img.shields.io/badge/legacy-explicit-f97316) | You need BrowserForge, geoip, persistent profiles, locale/humanize launch options, or the legacy Python sidecar. |
+| `gomoufox install --runtime python` | ![legacy](https://img.shields.io/badge/legacy-explicit-f97316) | You need BrowserForge, geoip, humanize launch options, or the legacy Python sidecar. |
 | `GOMOUFOX_CAMOUFOX_PATH=/path/to/browser` | ![custom](https://img.shields.io/badge/custom-local%20browser-64748b) | You already have a compatible Camoufox browser directory. |
 
 Default Go, CLI, and MCP flows use the Go-managed node-direct runtime. The
 default install fetches Playwright's Node driver, gomoufox's launch server, and
-the pinned Camoufox browser archive. Profile, locale, and humanize flows still
-use the Python sidecar because they require Camoufox launch options.
+the pinned Camoufox browser archive. Persistent profiles and browser-context
+locale settings use the node-direct runtime; geoip and humanize launch options
+still require the Python sidecar.
 
 Use `gomoufox install --runtime python` only for the explicit legacy
 Python-sidecar path. That path uses hash-locked wheels and fails closed on a
@@ -348,13 +349,13 @@ Camoufox without producing Go-only failures?
 Latest checked evidence:
 [docs/BENCHMARKS.md](docs/BENCHMARKS.md),
 [Python-sidecar artifact](docs/benchmarks/2026-06-08-release-gate.json), and
-[node-direct artifact](docs/benchmarks/2026-06-09-node-direct-readiness.json).
+[node-direct artifact](docs/benchmarks/2026-06-24-node-direct-readiness.json).
 
 | Runtime | Passed | Blocked | Failed | Wall ms | Peak RSS MiB | Peak CPU % | Report tokens |
 |---|---:|---:|---:|---:|---:|---:|---:|
-| Python Camoufox | 95 | 5 | **0** | **357,093** | 3,256.4 | 482.1 | 81,801 |
+| Python Camoufox | 95 | 5 | **0** | 373,637 | 3,863.5 | 567.9 | 79,051 |
 | gomoufox, Python sidecar | 95 | 5 | **0** | 366,338 | **2,765.3** | 569.9 | 13,059 |
-| gomoufox, node-direct Go | **96** | **4** | **0** | 359,088 | 3,041.3 | **399.0** | **12,824** |
+| gomoufox, node-direct Go | **96** | **4** | **0** | **360,361** | 3,734.2 | **548.4** | **12,857** |
 
 Bold means best in that column. The sidecar row comes from the previous extended
 release-gate artifact; node-direct comes from the readiness artifact.
@@ -366,14 +367,14 @@ no screenshots, reused browser, compact Go report, 0s extra load-state wait, and
 gomoufox passed 96, blocked 4, failed 0. Python Camoufox passed 95, blocked 5,
 failed 0. The run had 0 Go-only regressions and 1 Python-only outcome
 difference. See
-[docs/benchmarks/2026-06-09-node-direct-readiness.json](docs/benchmarks/2026-06-09-node-direct-readiness.json).
+[docs/benchmarks/2026-06-24-node-direct-readiness.json](docs/benchmarks/2026-06-24-node-direct-readiness.json).
 
 | Ratio | node-direct Go / Python Camoufox |
 |---|---:|
-| Wall time | 1.006 |
-| Peak RSS | 0.934 |
-| Peak CPU | 0.828 |
-| Report tokens | 0.157 |
+| Wall time | 0.964 |
+| Peak RSS | 0.967 |
+| Peak CPU | 0.966 |
+| Report tokens | 0.163 |
 
 Wall time stayed at parity. Node-direct used less RSS, less CPU, and produced a
 much smaller agent report. Treat a report-token ratio above 0.50 as a regression.
@@ -447,7 +448,7 @@ python3 scripts/audit-public-release.py \
 ### Where is Python still used?
 
 Default install and ordinary node-direct flows do not need Python at runtime.
-Python remains for explicit legacy Python-sidecar mode, profile/locale/humanize
+Python remains for explicit legacy Python-sidecar mode, geoip/humanize
 launch-option flows, upstream Python Camoufox comparison benchmarks, and
 maintainer release/dev scripts listed in `scripts/python-tooling-policy.json`.
 

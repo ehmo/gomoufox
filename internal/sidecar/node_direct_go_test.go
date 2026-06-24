@@ -218,13 +218,37 @@ func TestBuildNodeDirectSpecGoGeneratedPayloadMatchesPythonShapeLive(t *testing.
 }
 
 func TestBuildNodeDirectSpecGoFailsClosedForUnsupportedOptions(t *testing.T) {
-	_, err := buildNodeDirectSpecGo(Config{Persistent: true, BlockWebGL: true, Fingerprint: explicitCompleteFingerprintForTest()})
-	if !errors.Is(err, errGoLaunchPlanUnsupported) {
-		t.Fatalf("persistent err = %v", err)
-	}
-	_, err = buildNodeDirectSpecGo(Config{GeoIP: true, BlockWebGL: true, Fingerprint: explicitCompleteFingerprintForTest()})
+	_, err := buildNodeDirectSpecGo(Config{GeoIP: true, BlockWebGL: true, Fingerprint: explicitCompleteFingerprintForTest()})
 	if !errors.Is(err, errGoLaunchPlanUnsupported) {
 		t.Fatalf("geoip err = %v", err)
+	}
+	delay := 250.0
+	_, err = buildNodeDirectSpecGo(Config{Humanize: &delay, BlockWebGL: true, Fingerprint: explicitCompleteFingerprintForTest()})
+	if !errors.Is(err, errGoLaunchPlanUnsupported) {
+		t.Fatalf("humanize err = %v", err)
+	}
+}
+
+func TestBuildNodeDirectSpecGoSupportsPersistentProfile(t *testing.T) {
+	venv := fakeNodeDirectRuntime(t)
+	cache := t.TempDir()
+	replaceUserCacheDir(t, cache, nil)
+	fakeCachedBrowser(t, filepath.Join(cache, "camoufox"))
+	profile := t.TempDir()
+
+	spec, err := buildNodeDirectSpecGo(Config{
+		VenvDir:     venv,
+		Persistent:  true,
+		UserDataDir: profile,
+		BlockWebGL:  true,
+		Fingerprint: explicitCompleteFingerprintForTest(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload := decodeNodeDirectPayloadForTest(t, spec.StdinBase64)
+	if payload["_userDataDir"] != profile || payload["_sharedBrowser"] != true {
+		t.Fatalf("persistent payload = %#v", payload)
 	}
 }
 

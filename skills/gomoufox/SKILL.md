@@ -29,7 +29,7 @@ Use `gomoufox get` for capped page text or Markdown, `gomoufox screenshot` for v
 
 For human login, run `gomoufox open <url> --save-session <state.json> --wait`, have the operator complete login, then wait for them to close the browser window. Reuse that state with `--cookies-file <state.json>` on `get`, `fetch`, `screenshot`, or `eval`; use `--profile <dir>` only when the operator wants a full persistent Firefox profile instead of portable cookies/localStorage.
 
-Prefer `--json` when another tool or agent will parse the output. Keep response caps low with `--max-bytes` on large pages. If `open` fails with `go node-direct launch plan unsupported: dynamic locale/geo/humanize`, retry with `--humanize=false` or use a current gomoufox build; profile, locale, and humanize flows require the Python sidecar.
+Prefer `--json` when another tool or agent will parse the output. Keep response caps low with `--max-bytes` on large pages. If `open` fails with `go node-direct launch plan unsupported: dynamic geo/humanize`, retry with `--humanize=false` or use a current gomoufox build; profile and browser-context locale flows work on node-direct, while enabled humanize still requires the Python sidecar.
 
 ## Safety
 

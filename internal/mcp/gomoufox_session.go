@@ -120,9 +120,6 @@ func (l realGomoufoxLauncher) Launch(ctx context.Context, opts sessionOptions, d
 	if opts.os != "" {
 		launchOpts = append(launchOpts, gomoufox.WithOS(camoufoxcfg.OS(opts.os)))
 	}
-	if opts.locale != "" {
-		launchOpts = append(launchOpts, gomoufox.WithLocale(opts.locale))
-	}
 	if opts.proxy != "" && dedicated {
 		proxy, err := proxyConfig(opts.proxy)
 		if err != nil {

@@ -23,11 +23,8 @@ var cachePrefs = map[string]any{
 }
 
 func buildNodeDirectSpecGo(cfg Config) (nodeDirectSpec, error) {
-	if cfg.Persistent {
-		return nodeDirectSpec{}, fmt.Errorf("%w: persistent contexts still require Camoufox launch_options", errGoLaunchPlanUnsupported)
-	}
-	if cfg.GeoIP || cfg.Humanize != nil || len(cfg.Locale) > 0 {
-		return nodeDirectSpec{}, fmt.Errorf("%w: dynamic locale/geo/humanize options still require Camoufox launch_options", errGoLaunchPlanUnsupported)
+	if cfg.GeoIP || cfg.Humanize != nil {
+		return nodeDirectSpec{}, fmt.Errorf("%w: dynamic geo/humanize options still require Camoufox launch_options", errGoLaunchPlanUnsupported)
 	}
 	root, _, err := ResolveRuntimeAssets(cfg.VenvDir)
 	if err != nil {
@@ -113,6 +110,13 @@ func buildNodeDirectSpecGo(cfg Config) (nodeDirectSpec, error) {
 		"env":              env,
 		"firefoxUserPrefs": prefs,
 		"headless":         cfg.Headless != 1,
+	}
+	if cfg.Persistent {
+		if cfg.UserDataDir == "" {
+			return nodeDirectSpec{}, fmt.Errorf("%w: persistent context requires user data dir", ErrSidecarStart)
+		}
+		payload["_userDataDir"] = cfg.UserDataDir
+		payload["_sharedBrowser"] = true
 	}
 	if cfg.LaunchProxy != nil {
 		proxy := map[string]any{"server": cfg.LaunchProxy.Server}

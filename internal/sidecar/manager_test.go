@@ -933,7 +933,7 @@ func TestNodeDirectSpecValidationAndBuildErrors(t *testing.T) {
 	}
 
 	pythonOnlyConfig := Config{GeoIP: true}
-	if _, err := buildNodeDirectSpec(context.Background(), filepath.Join(t.TempDir(), "missing-python"), pythonOnlyConfig); !errors.Is(err, errGoLaunchPlanUnsupported) || !strings.Contains(err.Error(), "dynamic locale/geo/humanize") {
+	if _, err := buildNodeDirectSpec(context.Background(), filepath.Join(t.TempDir(), "missing-python"), pythonOnlyConfig); !errors.Is(err, errGoLaunchPlanUnsupported) || !strings.Contains(err.Error(), "dynamic geo/humanize") {
 		t.Fatalf("unsupported Go plan err = %v", err)
 	}
 
