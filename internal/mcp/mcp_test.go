@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -503,6 +504,7 @@ func TestNewDefaultBrowserFactoryCarriesNetworkPolicy(t *testing.T) {
 	cfg := Config{Policy: policy.DefaultConfig(), SessionDir: t.TempDir()}
 	cfg.Policy.AllowedOrigins = []string{"https://example.com", "https://api.example.com:8443"}
 	cfg.Policy.AllowedHosts = []string{"example.com", ".example.org"}
+	cfg.Policy.AllowLocalhost = true
 	server, err := New(cfg)
 	if err != nil {
 		t.Fatal(err)
@@ -518,7 +520,7 @@ func TestNewDefaultBrowserFactoryCarriesNetworkPolicy(t *testing.T) {
 	if strings.Join(launcher.policy.AllowedOrigins, ",") != "https://example.com,https://api.example.com:8443" || strings.Join(launcher.policy.AllowedHosts, ",") != "example.com,.example.org" {
 		t.Fatalf("launcher policy = %#v", launcher.policy)
 	}
-	if strings.Join(launcher.policy.AllowedSchemes, ",") != "http,https" || launcher.policy.AllowPrivateIPs {
+	if strings.Join(launcher.policy.AllowedSchemes, ",") != "http,https" || launcher.policy.AllowPrivateIPs || !launcher.policy.AllowLocalhost {
 		t.Fatalf("launcher policy floors = %#v", launcher.policy)
 	}
 }
@@ -547,6 +549,25 @@ func TestURLValidationBeforeNavigateAndFetch(t *testing.T) {
 	if resp.IsError || resp.Payload["url"] != "http://93.184.216.34" {
 		t.Fatalf("fetch response = %#v", resp)
 	}
+	cfg.Policy.AllowLocalhost = true
+	cfg.Policy.AllowedHosts = []string{"localhost", "127.0.0.1", "93.184.216.34", "10.0.0.1", "metadata.google.internal", "rebind.example"}
+	cfg.Validator = netguard.NewValidator(cfg.Policy, mcpFakeResolver{
+		"localhost":                {"127.0.0.1"},
+		"rebind.example":           {"127.0.0.1"},
+		"metadata.google.internal": {"169.254.169.254"},
+	})
+	server = newTestServer(t, cfg)
+	resp = server.Handle(context.Background(), "browser_navigate", raw(`{"url":"http://localhost:3000","session_id":"local"}`))
+	if resp.IsError || resp.Payload["session_id"] != "local" {
+		t.Fatalf("localhost navigate response = %#v", resp)
+	}
+	resp = server.Handle(context.Background(), "browser_fetch", raw(`{"url":"http://localhost:3000/api","navigate_first":"http://127.0.0.1:3000"}`))
+	if resp.IsError || resp.Payload["url"] != "http://localhost:3000/api" {
+		t.Fatalf("localhost fetch response = %#v", resp)
+	}
+	assertError(t, server.Handle(context.Background(), "browser_fetch", raw(`{"url":"http://10.0.0.1"}`)), "url_blocked")
+	assertError(t, server.Handle(context.Background(), "browser_fetch", raw(`{"url":"http://metadata.google.internal/computeMetadata/v1/"}`)), "url_blocked")
+	assertError(t, server.Handle(context.Background(), "browser_fetch", raw(`{"url":"http://93.184.216.34","navigate_first":"http://rebind.example"}`)), "url_blocked")
 
 	fake := &fakeValidator{}
 	cfg = defaultTestConfig(t)
@@ -2529,6 +2550,17 @@ type fakeValidator struct {
 func (f *fakeValidator) Validate(context.Context, string) (netguard.Decision, error) {
 	f.calls++
 	return netguard.Decision{}, nil
+}
+
+type mcpFakeResolver map[string][]string
+
+func (f mcpFakeResolver) LookupIPAddr(ctx context.Context, host string) ([]net.IPAddr, error) {
+	values := f[host]
+	out := make([]net.IPAddr, 0, len(values))
+	for _, value := range values {
+		out = append(out, net.IPAddr{IP: net.ParseIP(value)})
+	}
+	return out, nil
 }
 
 type fakeBrowserFactory struct {

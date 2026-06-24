@@ -445,6 +445,7 @@ func TestSidecarManagerReceivesLaunchOptions(t *testing.T) {
 	WithBrowserAcceptDownloads(false)(&cfg)
 	WithAllowedOrigins("https://example.com", "https://api.example.com:8443")(&cfg)
 	WithAllowedHosts("example.com", ".example.org")(&cfg)
+	WithAllowLocalhost(true)(&cfg)
 	handle, err := newSidecarManager(cfg)
 	if err != nil {
 		t.Fatal(err)
@@ -473,7 +474,7 @@ func TestSidecarManagerReceivesLaunchOptions(t *testing.T) {
 	if scfg.AcceptDownloads == nil || *scfg.AcceptDownloads {
 		t.Fatalf("accept downloads not mapped: %#v", scfg.AcceptDownloads)
 	}
-	if strings.Join(scfg.Policy.AllowedOrigins, ",") != "https://example.com,https://api.example.com:8443" || strings.Join(scfg.Policy.AllowedHosts, ",") != "example.com,.example.org" {
+	if strings.Join(scfg.Policy.AllowedOrigins, ",") != "https://example.com,https://api.example.com:8443" || strings.Join(scfg.Policy.AllowedHosts, ",") != "example.com,.example.org" || !scfg.Policy.AllowLocalhost {
 		t.Fatalf("network policy not mapped: %#v", scfg.Policy)
 	}
 	WithSidecarRuntime(SidecarRuntimeNodeDirect)(&cfg)

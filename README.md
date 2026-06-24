@@ -206,8 +206,8 @@ Automation tips:
 - Use `open --save-session` for human login, then reuse the state with
   `--cookies-file`.
 - Use `--profile <dir>` when a workflow needs full persistent browser state.
-- Keep the default URL policy for normal work. Use `--allow-private-ips` only
-  when you need local or private network targets.
+- Keep the default URL policy for normal work. For CLI browser commands only,
+  use `--allow-private-ips` when you need local or private network targets.
 
 ## Skills
 
@@ -306,6 +306,10 @@ MCP defaults:
   The default `full` toolset keeps diagnostics, eval, fetch, cookies, storage,
   upload, and other gated tools available.
 - `file://`, private IP ranges, link-local addresses, and metadata hosts are
+  blocked.
+- `gomoufox mcp --allow-localhost` permits explicit loopback HTTP(S) targets
+  (`localhost`, `127.0.0.0/8`, `::1`) for local app testing while keeping
+  broader private networks, metadata hosts, DNS rebinding, and unsafe redirects
   blocked.
 - JavaScript evaluation is disabled unless you start MCP with `--enable-eval`.
 - Response sizes are capped.

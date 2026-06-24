@@ -62,6 +62,13 @@ func WithAllowedHosts(hosts ...string) Option {
 	return func(c *launchConfig) { c.policy.AllowedHosts = append([]string(nil), hosts...) }
 }
 
+// WithAllowLocalhost permits explicit localhost and loopback HTTP(S) targets
+// through gomoufox's browser filtering proxy without allowing broader private
+// network or metadata destinations.
+func WithAllowLocalhost(enabled bool) Option {
+	return func(c *launchConfig) { c.policy.AllowLocalhost = enabled }
+}
+
 func WithAddons(paths ...string) Option {
 	return func(c *launchConfig) { c.addons = append([]string(nil), paths...) }
 }

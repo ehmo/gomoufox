@@ -70,6 +70,42 @@ func TestValidateAllowPrivateIPsIsExplicit(t *testing.T) {
 	}
 }
 
+func TestValidateAllowLocalhostOnlyAllowsExplicitLoopbackTargets(t *testing.T) {
+	cfg := policy.DefaultConfig()
+	cfg.AllowLocalhost = true
+	v := NewValidator(cfg, fakeResolver{
+		"localhost":                {"127.0.0.1", "::1"},
+		"rebind.example":           {"127.0.0.1"},
+		"private.example":          {"10.0.0.1"},
+		"linklocal.example":        {"169.254.1.1"},
+		"metadata.google.internal": {"169.254.169.254"},
+	})
+	allowed := []string{
+		"http://localhost:3000/",
+		"http://127.0.0.1:8080/",
+		"http://127.42.0.1/",
+		"http://[::1]:8080/",
+	}
+	for _, raw := range allowed {
+		if _, err := v.Validate(context.Background(), raw); err != nil {
+			t.Fatalf("expected %s allowed with localhost opt-in: %v", raw, err)
+		}
+	}
+	blocked := []string{
+		"file:///tmp/secret",
+		"http://rebind.example/",
+		"http://private.example/",
+		"http://linklocal.example/",
+		"http://metadata.google.internal/",
+		"http://169.254.169.254/latest/meta-data/",
+	}
+	for _, raw := range blocked {
+		if _, err := v.Validate(context.Background(), raw); !errors.Is(err, ErrBlocked) {
+			t.Fatalf("expected %s blocked with localhost opt-in, got %v", raw, err)
+		}
+	}
+}
+
 func TestValidateRejectsMalformedAndUserinfoAndDNSErrors(t *testing.T) {
 	v := NewValidator(policy.DefaultConfig(), fakeResolver{
 		"empty.example": {"not-an-ip"},

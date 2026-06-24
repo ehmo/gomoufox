@@ -92,6 +92,9 @@ func (v Validator) Validate(ctx context.Context, rawURL string) (Decision, error
 	}
 	if !v.Config.AllowPrivateIPs {
 		for _, addr := range addrs {
+			if v.Config.AllowLocalhost && isExplicitLocalhostTarget(host, addr) {
+				continue
+			}
 			if IsBlockedAddr(addr) {
 				return Decision{}, fmt.Errorf("%w: resolved address %s is blocked", ErrBlocked, addr)
 			}
@@ -189,6 +192,20 @@ func IsBlockedAddr(addr netip.Addr) bool {
 		return true
 	}
 	return false
+}
+
+func isExplicitLocalhostTarget(host string, addr netip.Addr) bool {
+	if !addr.Unmap().IsLoopback() {
+		return false
+	}
+	if host == "localhost" {
+		return true
+	}
+	literal, err := netip.ParseAddr(host)
+	if err != nil {
+		return false
+	}
+	return literal.Unmap().IsLoopback()
 }
 
 func canonicalHost(host string) string {

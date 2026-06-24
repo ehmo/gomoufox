@@ -1,4 +1,8 @@
 {
+  "cli_guardrail_overrides": [
+    "--allow-schemes <csv>",
+    "--allow-private-ips"
+  ],
   "commands": [
     {
       "name": "setup",
@@ -77,9 +81,7 @@
     "--os <windows|macos|linux>",
     "--headless|--headful",
     "--server <url>",
-    "--server-token <token>",
-    "--allow-schemes <csv>",
-    "--allow-private-ips"
+    "--server-token <token>"
   ],
   "usage": "gomoufox <command> [flags]"
 }

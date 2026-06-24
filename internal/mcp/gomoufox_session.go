@@ -137,6 +137,9 @@ func (l realGomoufoxLauncher) Launch(ctx context.Context, opts sessionOptions, d
 	if len(l.policy.AllowedHosts) > 0 {
 		launchOpts = append(launchOpts, gomoufox.WithAllowedHosts(l.policy.AllowedHosts...))
 	}
+	if l.policy.AllowLocalhost {
+		launchOpts = append(launchOpts, gomoufox.WithAllowLocalhost(true))
+	}
 	browser, err := newGomoufoxForMCP(ctx, launchOpts...)
 	if err != nil {
 		return nil, err

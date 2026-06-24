@@ -318,11 +318,12 @@ type commandHelp struct {
 }
 
 type helpCatalog struct {
-	Usage     string        `json:"usage,omitempty"`
-	Global    []string      `json:"global,omitempty"`
-	Commands  []commandHelp `json:"commands,omitempty"`
-	Discovery []string      `json:"discovery,omitempty"`
-	MCPTools  []string      `json:"mcp_tools,omitempty"`
+	Usage                 string        `json:"usage,omitempty"`
+	Global                []string      `json:"global,omitempty"`
+	CLIGuardrailOverrides []string      `json:"cli_guardrail_overrides,omitempty"`
+	Commands              []commandHelp `json:"commands,omitempty"`
+	Discovery             []string      `json:"discovery,omitempty"`
+	MCPTools              []string      `json:"mcp_tools,omitempty"`
 }
 
 func runHelp(global globalFlags, args []string, streams Streams) int {
@@ -382,7 +383,7 @@ func helpFields(raw string) (map[string]bool, error) {
 	out := map[string]bool{}
 	for _, field := range splitCSV(raw) {
 		switch field {
-		case "usage", "global", "commands", "discovery", "mcp_tools":
+		case "usage", "global", "cli_guardrail_overrides", "commands", "discovery", "mcp_tools":
 			out[field] = true
 		default:
 			return nil, fmt.Errorf("unknown help field: %s", field)
@@ -418,9 +419,10 @@ func normalizeShortAliases(args []string) []string {
 
 func buildHelpCatalog(opts helpOptions) helpCatalog {
 	all := helpCatalog{
-		Usage:    "gomoufox <command> [flags]",
-		Global:   globalHelpFlags(),
-		Commands: commandHelpIndex(),
+		Usage:                 "gomoufox <command> [flags]",
+		Global:                globalHelpFlags(),
+		CLIGuardrailOverrides: cliGuardrailOverrideFlags(),
+		Commands:              commandHelpIndex(),
 		Discovery: []string{
 			"gomoufox help --json",
 			"gomoufox help <command> --json",
@@ -433,6 +435,9 @@ func buildHelpCatalog(opts helpOptions) helpCatalog {
 	if opts.Command != "" {
 		doc, _ := helpForCommand(opts.Command)
 		all.Commands = []commandHelp{doc}
+		if !commandAcceptsURLGuardrailOverrides(opts.Command) {
+			all.CLIGuardrailOverrides = nil
+		}
 	}
 	if opts.Full && opts.Command == "" {
 		all.Commands = commandHelps()
@@ -451,6 +456,9 @@ func buildHelpCatalog(opts helpOptions) helpCatalog {
 	}
 	if opts.Fields["global"] {
 		catalog.Global = all.Global
+	}
+	if opts.Fields["cli_guardrail_overrides"] {
+		catalog.CLIGuardrailOverrides = all.CLIGuardrailOverrides
 	}
 	if opts.Fields["commands"] {
 		catalog.Commands = all.Commands
@@ -525,6 +533,11 @@ func printHelpText(w io.Writer, command string) {
 			flag = "-v, --version"
 		}
 		_, _ = fmt.Fprintf(w, "  %s\n", flag)
+	}
+	_, _ = fmt.Fprintln(w)
+	_, _ = fmt.Fprintln(w, "CLI URL guardrail overrides")
+	for _, flag := range cliGuardrailOverrideFlags() {
+		_, _ = fmt.Fprintf(w, "  %s  (browser CLI commands only; rejected by mcp and serve)\n", flag)
 	}
 	_, _ = fmt.Fprintln(w)
 	_, _ = fmt.Fprintln(w, "Discovery")
@@ -626,8 +639,22 @@ func globalHelpFlags() []string {
 		"--headless|--headful",
 		"--server <url>",
 		"--server-token <token>",
+	}
+}
+
+func cliGuardrailOverrideFlags() []string {
+	return []string{
 		"--allow-schemes <csv>",
 		"--allow-private-ips",
+	}
+}
+
+func commandAcceptsURLGuardrailOverrides(command string) bool {
+	switch command {
+	case "open", "get", "screenshot", "fetch", "eval":
+		return true
+	default:
+		return false
 	}
 }
 
@@ -729,6 +756,7 @@ func commandHelps() []commandHelp {
 				"--session-dir",
 				"--allowed-origins",
 				"--allowed-hosts",
+				"--allow-localhost",
 				"--max-input-bytes",
 				"--max-response-bytes",
 				"--session-ttl",
@@ -1482,6 +1510,7 @@ func (r Runner) runMCP(ctx context.Context, global globalFlags, args []string, s
 	cfg.AllowSessionProxy = parsed.bool("allow-session-proxy")
 	cfg.AllowFileUpload = parsed.bool("allow-file-upload")
 	cfg.AllowFileDownload = parsed.bool("allow-file-download")
+	cfg.AllowLocalhost = parsed.bool("allow-localhost")
 	cfg.AllowedOrigins = splitCSV(parsed.value("allowed-origins"))
 	cfg.AllowedHosts = splitCSV(parsed.value("allowed-hosts"))
 	req := MCPRequest{
@@ -1803,6 +1832,7 @@ func mcpFlagSpecs() map[string]flagSpec {
 		"auth-token":            {Kind: flagValue},
 		"allowed-origins":       {Kind: flagValue},
 		"allowed-hosts":         {Kind: flagValue},
+		"allow-localhost":       {Kind: flagBool},
 		"enable-eval":           {Kind: flagBool},
 		"no-content-warning":    {Kind: flagBool},
 		"allow-browser-fetch":   {Kind: flagBool},

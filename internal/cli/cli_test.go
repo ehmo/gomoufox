@@ -304,6 +304,17 @@ func TestMCPHTTPRequiresTokenAndRejectsGuardrailOverrides(t *testing.T) {
 	if code != ExitUsage {
 		t.Fatalf("code = %d stderr=%q", code, stderr.String())
 	}
+	stderr.Reset()
+	runner := Runner{Hooks: Hooks{MCP: func(ctx context.Context, req MCPRequest) error {
+		if !req.Config.Policy.AllowLocalhost || req.Config.Policy.AllowPrivateIPs {
+			t.Fatalf("localhost/private policy = %#v", req.Config.Policy)
+		}
+		return nil
+	}}}
+	code = runner.Run(context.Background(), []string{"mcp", "--allow-localhost"}, Streams{Stderr: &stderr})
+	if code != ExitOK {
+		t.Fatalf("allow-localhost code = %d stderr=%q", code, stderr.String())
+	}
 }
 
 func TestMainCLIAndMCPDoNotExposeUnsafeDirectNetwork(t *testing.T) {
@@ -712,6 +723,9 @@ func TestVersionAndUnknownCommand(t *testing.T) {
 	if !strings.Contains(stdout.String(), "Start here") || !strings.Contains(stdout.String(), "gomoufox setup") || !strings.Contains(stdout.String(), "Discovery") {
 		t.Fatalf("help stdout = %q", stdout.String())
 	}
+	if got := stdout.String(); !strings.Contains(got, "CLI URL guardrail overrides") || !strings.Contains(got, "rejected by mcp and serve") {
+		t.Fatalf("help stdout missing scoped guardrail overrides = %q", got)
+	}
 	stdout.Reset()
 	if code := (Runner{}).Run(context.Background(), []string{"-h"}, Streams{Stdout: &stdout}); code != ExitOK || !strings.Contains(stdout.String(), "Start here") {
 		t.Fatalf("-h code/stdout = %d %q", code, stdout.String())
@@ -726,7 +740,7 @@ func TestAgentOptimizedHelpDiscovery(t *testing.T) {
 	if code := (Runner{}).Run(context.Background(), []string{"mcp", "--help"}, Streams{Stdout: &stdout, Stderr: &stderr}); code != ExitOK {
 		t.Fatalf("mcp help code=%d stderr=%q", code, stderr.String())
 	}
-	if got := stdout.String(); !strings.Contains(got, "Usage\n  gomoufox mcp") || !strings.Contains(got, "Tools\n  browser_navigate") || !strings.Contains(got, "--toolset") || !strings.Contains(got, "--max-response-bytes") || !strings.Contains(got, "--allowed-origins") {
+	if got := stdout.String(); !strings.Contains(got, "Usage\n  gomoufox mcp") || !strings.Contains(got, "Tools\n  browser_navigate") || !strings.Contains(got, "--toolset") || !strings.Contains(got, "--max-response-bytes") || !strings.Contains(got, "--allowed-origins") || !strings.Contains(got, "--allow-localhost") {
 		t.Fatalf("mcp help = %q", got)
 	}
 
@@ -837,23 +851,28 @@ func TestAgentOptimizedHelpDiscovery(t *testing.T) {
 	if err := json.Unmarshal(stdout.Bytes(), &catalog); err != nil {
 		t.Fatalf("fielded help json = %q err=%v", stdout.String(), err)
 	}
-	if len(catalog.Commands) < 11 || catalog.Usage != "" || len(catalog.Global) != 0 || len(catalog.Discovery) != 0 {
+	if len(catalog.Commands) < 11 || catalog.Usage != "" || len(catalog.Global) != 0 || len(catalog.CLIGuardrailOverrides) != 0 || len(catalog.Discovery) != 0 {
 		t.Fatalf("fielded catalog = %#v", catalog)
 	}
-	if bytes.Contains(stdout.Bytes(), []byte("global")) || bytes.Contains(stdout.Bytes(), []byte("discovery")) {
+	if bytes.Contains(stdout.Bytes(), []byte("global")) || bytes.Contains(stdout.Bytes(), []byte("cli_guardrail_overrides")) || bytes.Contains(stdout.Bytes(), []byte("discovery")) {
 		t.Fatalf("fielded output included unrequested fields = %q", stdout.String())
 	}
 
 	stdout.Reset()
-	if code := (Runner{}).Run(context.Background(), []string{"--json", "help", "mcp", "--fields", "usage,global,discovery,mcp_tools"}, Streams{Stdout: &stdout, Stderr: &stderr}); code != ExitOK {
+	if code := (Runner{}).Run(context.Background(), []string{"--json", "help", "mcp", "--fields", "usage,global,cli_guardrail_overrides,discovery,mcp_tools"}, Streams{Stdout: &stdout, Stderr: &stderr}); code != ExitOK {
 		t.Fatalf("mcp fielded help code=%d stderr=%q", code, stderr.String())
 	}
 	catalog = helpCatalog{}
 	if err := json.Unmarshal(stdout.Bytes(), &catalog); err != nil {
 		t.Fatalf("mcp fielded help json = %q err=%v", stdout.String(), err)
 	}
-	if catalog.Usage == "" || len(catalog.Global) == 0 || len(catalog.Discovery) == 0 || len(catalog.MCPTools) == 0 || len(catalog.Commands) != 0 {
+	if catalog.Usage == "" || len(catalog.Global) == 0 || len(catalog.CLIGuardrailOverrides) != 0 || len(catalog.Discovery) == 0 || len(catalog.MCPTools) == 0 || len(catalog.Commands) != 0 {
 		t.Fatalf("mcp fielded catalog = %#v", catalog)
+	}
+	for _, flag := range catalog.Global {
+		if strings.Contains(flag, "allow-private-ips") || strings.Contains(flag, "allow-schemes") {
+			t.Fatalf("mcp global help exposed CLI-only guardrail override %q in %#v", flag, catalog.Global)
+		}
 	}
 
 	stdout.Reset()
@@ -1501,7 +1520,7 @@ func TestMCPHookReceivesParsedRuntimeRequest(t *testing.T) {
 		if req.Transport != "http" || req.Port != 3888 || req.AuthToken != "tok" {
 			t.Fatalf("request = %#v", req)
 		}
-		if req.Config.SessionDir == "" || req.Config.Toolset != mcpserver.ToolsetCore || !req.Config.Policy.EnableEval || !req.Config.Policy.AllowBrowserFetch || !req.Config.Policy.AllowCookieValues || !req.Config.Policy.AllowCookieMutation || !req.Config.Policy.AllowSnapshotValues || !req.Config.Policy.AllowSessionExport || !req.Config.Policy.AllowSessionImport || !req.Config.Policy.AllowSessionProxy || !req.Config.Policy.AllowFileUpload {
+		if req.Config.SessionDir == "" || req.Config.Toolset != mcpserver.ToolsetCore || !req.Config.Policy.EnableEval || !req.Config.Policy.AllowBrowserFetch || !req.Config.Policy.AllowCookieValues || !req.Config.Policy.AllowCookieMutation || !req.Config.Policy.AllowSnapshotValues || !req.Config.Policy.AllowSessionExport || !req.Config.Policy.AllowSessionImport || !req.Config.Policy.AllowSessionProxy || !req.Config.Policy.AllowFileUpload || !req.Config.Policy.AllowLocalhost {
 			t.Fatalf("config = %#v", req.Config)
 		}
 		if req.Config.Policy.ContentWarning || req.Config.Policy.MaxInputBytes != 1024 || req.Config.Policy.MaxResponseBytes != 2048 || req.Config.Policy.MaxSessions != 3 || req.Config.Policy.SessionTTL != 45*time.Minute {
@@ -1529,6 +1548,7 @@ func TestMCPHookReceivesParsedRuntimeRequest(t *testing.T) {
 		"--allow-session-import",
 		"--allow-session-proxy",
 		"--allow-file-upload",
+		"--allow-localhost",
 		"--allowed-origins", "https://example.com",
 		"--allowed-hosts", ".example.com",
 		"--max-input-bytes", "1024",

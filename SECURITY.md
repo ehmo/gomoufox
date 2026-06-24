@@ -9,7 +9,9 @@ server as tools that run with your local user permissions.
 Defaults:
 
 - MCP blocks `file://`, private IPs, link-local addresses, and cloud metadata
-  hosts.
+  hosts. `gomoufox mcp --allow-localhost` only permits explicit loopback
+  HTTP(S) targets for local app testing; other private and metadata destinations
+  stay blocked.
 - MCP disables JavaScript evaluation unless the operator starts it with
   `--enable-eval`.
 - MCP caps input and response sizes.

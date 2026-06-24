@@ -1442,12 +1442,12 @@ func TestGomoufoxAdaptersAndLauncherSeams(t *testing.T) {
 		launchOptionCount = len(opts)
 		return &gomoufox.Browser{}, nil
 	}
-	launcher := realGomoufoxLauncher{policy: policy.Config{AllowedOrigins: []string{"https://example.com"}, AllowedHosts: []string{"example.com"}}}
+	launcher := realGomoufoxLauncher{policy: policy.Config{AllowedOrigins: []string{"https://example.com"}, AllowedHosts: []string{"example.com"}, AllowLocalhost: true}}
 	if got, err := launcher.Launch(ctx, sessionOptions{os: "linux", locale: "en-US", proxy: "http://proxy.example:8080", profilePath: t.TempDir()}, true); err != nil || got == nil {
 		t.Fatalf("launch success = %#v err=%v", got, err)
 	}
-	if launchOptionCount != 7 {
-		t.Fatalf("launch option count = %d, want main-world eval, download policy, persona, proxy, profile, and allowlist options", launchOptionCount)
+	if launchOptionCount != 8 {
+		t.Fatalf("launch option count = %d, want main-world eval, download policy, persona, proxy, profile, allowlist options, and localhost policy", launchOptionCount)
 	}
 
 	sessionProxyBrowser := &fakeMCPBrowser{context: &fakeMCPContext{page: &fakeMCPPage{}}}

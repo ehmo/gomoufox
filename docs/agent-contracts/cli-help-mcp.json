@@ -15,6 +15,7 @@
         "--session-dir",
         "--allowed-origins",
         "--allowed-hosts",
+        "--allow-localhost",
         "--max-input-bytes",
         "--max-response-bytes",
         "--session-ttl",
@@ -56,9 +57,7 @@
     "--os <windows|macos|linux>",
     "--headless|--headful",
     "--server <url>",
-    "--server-token <token>",
-    "--allow-schemes <csv>",
-    "--allow-private-ips"
+    "--server-token <token>"
   ],
   "mcp_tools": [
     "browser_navigate",

@@ -2,7 +2,13 @@
 
 ## Unreleased
 
-- No changes yet.
+No changes yet.
+
+## v0.1.18
+
+- Add `gomoufox mcp --allow-localhost` for explicit loopback HTTP(S) targets
+  while preserving private-network, metadata, DNS-rebinding, and redirect
+  guardrails.
 
 ## v0.1.17
 

@@ -50,6 +50,36 @@ func TestFilteringProxyPinsAllowedHTTPDialTarget(t *testing.T) {
 	}
 }
 
+func TestFilteringProxyAllowLocalhostDoesNotAllowRebinding(t *testing.T) {
+	local := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte("local ok"))
+	}))
+	defer local.Close()
+	cfg := policy.DefaultConfig()
+	cfg.AllowLocalhost = true
+	dialer := &routingDialer{routes: map[string]string{"127.0.0.1:80": local.Listener.Addr().String()}}
+	proxy := FilteringProxy{
+		Validator: NewValidator(cfg, fakeResolver{
+			"localhost":      {"127.0.0.1"},
+			"rebind.example": {"127.0.0.1"},
+		}),
+		Dial: dialer.DialContext,
+	}
+	rr := httptest.NewRecorder()
+	proxy.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "http://localhost/path", nil))
+	if rr.Code != http.StatusOK || rr.Body.String() != "local ok" {
+		t.Fatalf("localhost response code=%d body=%q", rr.Code, rr.Body.String())
+	}
+	rr = httptest.NewRecorder()
+	proxy.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "http://rebind.example/path", nil))
+	if rr.Code != http.StatusForbidden {
+		t.Fatalf("rebind response code=%d body=%q", rr.Code, rr.Body.String())
+	}
+	if got := strings.Join(dialer.addresses, ","); got != "127.0.0.1:80" {
+		t.Fatalf("dial addresses = %s", got)
+	}
+}
+
 func TestFilteringProxyHTTPUpstreamAfterValidation(t *testing.T) {
 	var upstreamCalls int
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -78,6 +108,38 @@ func TestFilteringProxyHTTPUpstreamAfterValidation(t *testing.T) {
 	proxy.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "http://private.example/path", nil))
 	if rr.Code != http.StatusForbidden || upstreamCalls != 1 {
 		t.Fatalf("blocked upstream code=%d calls=%d", rr.Code, upstreamCalls)
+	}
+}
+
+func TestFilteringProxyAllowLocalhostStillBlocksUnsafeRedirects(t *testing.T) {
+	local := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "http://10.0.0.1/landing", http.StatusFound)
+	}))
+	defer local.Close()
+	cfg := policy.DefaultConfig()
+	cfg.AllowLocalhost = true
+	dialer := &routingDialer{routes: map[string]string{"127.0.0.1:80": local.Listener.Addr().String()}}
+	proxy := FilteringProxy{
+		Validator: NewValidator(cfg, fakeResolver{"localhost": {"127.0.0.1"}}),
+		Dial:      dialer.DialContext,
+	}
+	proxyServer := httptest.NewServer(proxy)
+	defer proxyServer.Close()
+	proxyURL, err := url.Parse(proxyServer.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	client := &http.Client{Transport: &http.Transport{Proxy: http.ProxyURL(proxyURL)}}
+	resp, err := client.Get("http://localhost/redirect-private")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("redirect final status = %d", resp.StatusCode)
+	}
+	if got := strings.Join(dialer.addresses, ","); got != "127.0.0.1:80" {
+		t.Fatalf("redirect dials = %#v", dialer.addresses)
 	}
 }
 

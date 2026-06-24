@@ -27,6 +27,7 @@ const (
 type Config struct {
 	AllowedSchemes      []string
 	AllowPrivateIPs     bool
+	AllowLocalhost      bool
 	EnableEval          bool
 	MaxResponseBytes    int
 	MaxInputBytes       int
