@@ -18,6 +18,11 @@
 - Assemble the pinned Playwright 1.57 driver from checksum-verified official
   npm and Node.js artifacts after the legacy Playwright driver CDN was retired,
   and share that managed driver between node-direct and Python runtimes.
+- Build with Go 1.26.5 to incorporate the standard-library fix for
+  `GO-2026-5856` (`CVE-2026-42505`).
+- Upgrade `golang.org/x/net` to v0.56.0 and
+  `github.com/go-jose/go-jose/v3` to v3.0.5 so the release does not retain
+  dormant vulnerable module versions.
 
 ## v0.1.18
 

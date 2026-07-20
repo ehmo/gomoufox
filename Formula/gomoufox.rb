@@ -7,7 +7,7 @@ class Gomoufox < Formula
   on_macos do
     if Hardware::CPU.arm?
       url "https://github.com/ehmo/gomoufox/releases/download/v0.1.20/gomoufox_0.1.20_darwin_arm64.tar.gz"
-      sha256 "0872b8244a55492330b7be049d9d4210ebf304a8793a68d4c041e41575da8c8c"
+      sha256 "5aba6b9f6a3e49b9202b5cd436a94750e922c507b3da02525486c74e26dcc4f5"
     else
       odie "gomoufox Homebrew requires Apple Silicon because pinned Camoufox has no supported macOS Intel browser binary"
     end
@@ -18,7 +18,7 @@ class Gomoufox < Formula
       odie "gomoufox Homebrew requires Linux amd64 because pinned Camoufox has no supported Linux ARM browser binary"
     else
       url "https://github.com/ehmo/gomoufox/releases/download/v0.1.20/gomoufox_0.1.20_linux_amd64.tar.gz"
-      sha256 "0ab011467ec376c41eff03bcfa212ff4ef0282b11f961cf681103ffb67dc7ed0"
+      sha256 "9dd8d020de7560052cce8b4381d20f7d91fcd7460d327446676a38749303c87c"
     end
   end
 
