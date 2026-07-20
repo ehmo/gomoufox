@@ -403,8 +403,9 @@ func TestInstallRuntimePlaywrightDriverUsesPinnedOfficialSources(t *testing.T) {
 	restoreSources := replacePinnedPlaywrightSources(t, server, coreArchive, nodeFilename, nodeArchive)
 	defer restoreSources()
 
-	root := RuntimeAssetCacheRoot(t.TempDir(), "linux", "amd64")
-	if err := installRuntimePlaywrightDriver(context.Background(), root, InstallOptions{}); err != nil {
+	cacheDir := t.TempDir()
+	root := RuntimeAssetCacheRoot(cacheDir, "linux", "amd64")
+	if err := EnsureManagedPlaywrightDriver(context.Background(), InstallOptions{VenvDir: cacheDir}); err != nil {
 		t.Fatalf("install pinned Playwright driver: %v", err)
 	}
 	if err := verifyPinnedPlaywrightDriver(context.Background(), root.PlaywrightDriverDir); err != nil {
@@ -425,6 +426,12 @@ func TestInstallRuntimePlaywrightDriverUsesPinnedOfficialSources(t *testing.T) {
 	}
 	if requests["/playwright-core.tgz"] != 1 || requests["/v"+playwrightDriverNodeVersion+"/"+nodeFilename] != 1 {
 		t.Fatalf("verified driver unexpectedly downloaded again: %#v", requests)
+	}
+	if err := installRuntimePlaywrightDriver(context.Background(), root, InstallOptions{ForceReinstall: true}); err != nil {
+		t.Fatalf("replace pinned Playwright driver: %v", err)
+	}
+	if requests["/playwright-core.tgz"] != 2 || requests["/v"+playwrightDriverNodeVersion+"/"+nodeFilename] != 2 {
+		t.Fatalf("forced reinstall source requests = %#v", requests)
 	}
 }
 
@@ -542,6 +549,60 @@ func TestInstallRuntimePlaywrightDriverFailsClosed(t *testing.T) {
 			mutateDigests: func() {},
 			want:          "installed playwright-core 0.0.0",
 		},
+		{
+			name:          "invalid core archive",
+			core:          []byte("not a gzip archive"),
+			node:          validNode,
+			mutateDigests: func() {},
+			want:          "read playwright-core archive",
+		},
+		{
+			name: "missing core file",
+			core: playwrightCoreArchiveFixture(t, map[string]string{
+				"package/cli.js": "// fixture cli\n",
+			}),
+			node:          validNode,
+			mutateDigests: func() {},
+			want:          "missing package/package.json",
+		},
+		{
+			name: "invalid package metadata",
+			core: playwrightCoreArchiveFixture(t, map[string]string{
+				"package/cli.js":       "// fixture cli\n",
+				"package/package.json": `{`,
+			}),
+			node:          validNode,
+			mutateDigests: func() {},
+			want:          "decode pinned playwright-core package",
+		},
+		{
+			name:          "invalid node archive",
+			core:          validCore,
+			node:          []byte("not a gzip archive"),
+			mutateDigests: func() {},
+			want:          "read Playwright Node.js archive",
+		},
+		{
+			name:          "missing node binary",
+			core:          validCore,
+			node:          playwrightNodeArchiveFixture(t, "other-node.tar.gz", "#!/bin/sh\nexit 0\n"),
+			mutateDigests: func() {},
+			want:          "archive missing " + strings.TrimSuffix(nodeFilename, ".tar.gz") + "/bin/node",
+		},
+		{
+			name:          "driver command failure",
+			core:          validCore,
+			node:          playwrightNodeArchiveFixture(t, nodeFilename, "#!/bin/sh\nexit 1\n"),
+			mutateDigests: func() {},
+			want:          "run pinned Playwright CLI",
+		},
+		{
+			name:          "unexpected cli version",
+			core:          validCore,
+			node:          playwrightNodeArchiveFixture(t, nodeFilename, "#!/bin/sh\nprintf 'Version 0.0.0\\n'\n"),
+			mutateDigests: func() {},
+			want:          "reported an unexpected version",
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -578,22 +639,116 @@ func TestInstallRuntimePlaywrightDriverFailsClosed(t *testing.T) {
 	}
 }
 
+func TestInstallRuntimePlaywrightDriverRejectsUnavailableSources(t *testing.T) {
+	restorePlatform := overrideSidecarPlatform(t, "linux", "amd64")
+	defer restorePlatform()
+	root := RuntimeAssetCacheRoot(t.TempDir(), "linux", "amd64")
+	if err := installRuntimePlaywrightDriver(context.Background(), root, InstallOptions{SkipBinaryFetch: true}); !errors.Is(err, ErrNotInstalled) || !strings.Contains(err.Error(), "fetch is disabled") {
+		t.Fatalf("skip-fetch err = %v", err)
+	}
+
+	restorePlatform()
+	restorePlatform = overrideSidecarPlatform(t, "freebsd", "arm64")
+	if err := installRuntimePlaywrightDriver(context.Background(), RuntimeAssetCacheRoot(t.TempDir(), "freebsd", "arm64"), InstallOptions{}); !errors.Is(err, ErrNotInstalled) || !strings.Contains(err.Error(), "no pinned Playwright Node.js asset") {
+		t.Fatalf("unsupported-platform err = %v", err)
+	}
+	restorePlatform()
+	restorePlatform = overrideSidecarPlatform(t, "linux", "amd64")
+
+	coreArchive := playwrightCoreArchiveFixture(t, map[string]string{
+		"package/cli.js":       "// fixture cli\n",
+		"package/package.json": `{"version":"` + RequiredPlaywright + `"}`,
+	})
+	nodeFilename := "node-v" + playwrightDriverNodeVersion + "-linux-x64.tar.gz"
+	nodeArchive := playwrightNodeArchiveFixture(t, nodeFilename, "#!/bin/sh\nprintf 'Version "+RequiredPlaywright+"\\n'\n")
+	for _, failingPath := range []string{"/playwright-core.tgz", "/v" + playwrightDriverNodeVersion + "/" + nodeFilename} {
+		t.Run(failingPath, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path == failingPath {
+					http.Error(w, "unavailable", http.StatusServiceUnavailable)
+					return
+				}
+				if r.URL.Path == "/playwright-core.tgz" {
+					_, _ = w.Write(coreArchive)
+					return
+				}
+				_, _ = w.Write(nodeArchive)
+			}))
+			defer server.Close()
+			restoreSources := replacePinnedPlaywrightSources(t, server, coreArchive, nodeFilename, nodeArchive)
+			defer restoreSources()
+			err := installRuntimePlaywrightDriver(context.Background(), RuntimeAssetCacheRoot(t.TempDir(), "linux", "amd64"), InstallOptions{})
+			if !errors.Is(err, ErrNotInstalled) || !strings.Contains(err.Error(), "HTTP 503") {
+				t.Fatalf("source failure err = %v", err)
+			}
+		})
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/playwright-core.tgz" {
+			_, _ = w.Write(coreArchive)
+			return
+		}
+		_, _ = w.Write(nodeArchive)
+	}))
+	defer server.Close()
+	restoreSources := replacePinnedPlaywrightSources(t, server, coreArchive, nodeFilename, nodeArchive)
+	defer restoreSources()
+	blockingFile := filepath.Join(t.TempDir(), "not-a-directory")
+	if err := os.WriteFile(blockingFile, []byte("file"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	badRoot := RuntimeAssetCacheRoot(t.TempDir(), "linux", "amd64")
+	badRoot.PlaywrightDriverDir = filepath.Join(blockingFile, "driver")
+	if err := installRuntimePlaywrightDriver(context.Background(), badRoot, InstallOptions{}); err == nil {
+		t.Fatal("driver install through non-directory parent succeeded")
+	}
+}
+
+func TestEnsureManagedPlaywrightDriverDefaultCacheAndLockFailure(t *testing.T) {
+	restorePlatform := overrideSidecarPlatform(t, "linux", "amd64")
+	defer restorePlatform()
+	cacheHome := t.TempDir()
+	t.Setenv("XDG_CACHE_HOME", cacheHome)
+	if err := EnsureManagedPlaywrightDriver(context.Background(), InstallOptions{SkipBinaryFetch: true}); !errors.Is(err, ErrNotInstalled) {
+		t.Fatalf("default-cache skip-fetch err = %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(cacheHome, "gomoufox", "venv", ".gomoufox-install.lock")); err != nil {
+		t.Fatalf("default-cache install lock missing: %v", err)
+	}
+
+	origTryLock := tryInstallFileLockForAcquire
+	defer func() { tryInstallFileLockForAcquire = origTryLock }()
+	tryInstallFileLockForAcquire = func(*os.File) error { return errors.New("lock failed") }
+	if err := EnsureManagedPlaywrightDriver(context.Background(), InstallOptions{VenvDir: t.TempDir()}); err == nil || !strings.Contains(err.Error(), "lock failed") {
+		t.Fatalf("lock failure err = %v", err)
+	}
+	if got := playwrightNodeSource("unsupported", "platform"); got != "" {
+		t.Fatalf("unsupported node source = %q", got)
+	}
+}
+
 func TestDownloadRuntimeAssetBytesBoundsAndStatus(t *testing.T) {
 	origClient := runtimeAssetHTTPClient
 	defer func() { runtimeAssetHTTPClient = origClient }()
 	for _, tc := range []struct {
-		name string
-		body string
-		code int
-		max  int64
-		want string
+		name   string
+		body   string
+		code   int
+		max    int64
+		stream bool
+		want   string
 	}{
 		{name: "status", code: http.StatusNotFound, max: 8, want: "HTTP 404"},
 		{name: "body cap", code: http.StatusOK, body: "123456789", max: 8, want: "exceeds 8-byte limit"},
+		{name: "streamed body cap", code: http.StatusOK, body: "123456789", max: 8, stream: true, want: "exceeds 8-byte limit"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 				w.WriteHeader(tc.code)
+				if tc.stream {
+					w.(http.Flusher).Flush()
+				}
 				_, _ = w.Write([]byte(tc.body))
 			}))
 			defer server.Close()
@@ -602,6 +757,160 @@ func TestDownloadRuntimeAssetBytesBoundsAndStatus(t *testing.T) {
 				t.Fatalf("download err = %v, want %q", err, tc.want)
 			}
 		})
+	}
+
+	if _, err := downloadRuntimeAssetBytes(context.Background(), "://invalid", 8); err == nil {
+		t.Fatal("invalid asset URL succeeded")
+	}
+	runtimeAssetHTTPClient = &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+		return nil, errors.New("transport failed")
+	})}
+	if _, err := downloadRuntimeAssetBytes(context.Background(), "https://example.invalid/asset", 8); err == nil || !strings.Contains(err.Error(), "transport failed") {
+		t.Fatalf("transport err = %v", err)
+	}
+	runtimeAssetHTTPClient = &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+		return &http.Response{StatusCode: http.StatusOK, Status: "200 OK", ContentLength: -1, Body: failingReadCloser{}}, nil
+	})}
+	if _, err := downloadRuntimeAssetBytes(context.Background(), "https://example.invalid/asset", 8); err == nil || !strings.Contains(err.Error(), "read failed") {
+		t.Fatalf("body read err = %v", err)
+	}
+}
+
+func TestPlaywrightArchiveExtractionRejectsUnsafeShapes(t *testing.T) {
+	validCore := []tarFixtureEntry{
+		{Name: "package/cli.js", Body: "// cli\n", Mode: 0o644, Typeflag: tar.TypeReg},
+		{Name: "package/package.json", Body: `{"version":"` + RequiredPlaywright + `"}`, Mode: 0o644, Typeflag: tar.TypeReg},
+	}
+	withDirectory := append([]tarFixtureEntry{{Name: "package/lib", Mode: 0o755, Typeflag: tar.TypeDir}}, validCore...)
+	if err := extractPlaywrightCoreArchive(tarArchiveFixture(t, withDirectory), t.TempDir()); err != nil {
+		t.Fatalf("extract core archive with directory entry: %v", err)
+	}
+	tooMany := make([]tarFixtureEntry, 0, playwrightCoreMaxEntries+1)
+	for i := 0; i <= playwrightCoreMaxEntries; i++ {
+		tooMany = append(tooMany, tarFixtureEntry{Name: fmt.Sprintf("package/file-%d", i), Typeflag: tar.TypeReg})
+	}
+	for _, tc := range []struct {
+		name    string
+		archive []byte
+		want    string
+	}{
+		{name: "invalid gzip", archive: []byte("invalid"), want: "read playwright-core archive"},
+		{name: "invalid tar", archive: gzipFixture(t, []byte("invalid tar")), want: "read playwright-core archive"},
+		{name: "symlink", archive: tarArchiveFixture(t, append(validCore, tarFixtureEntry{Name: "package/link", Typeflag: tar.TypeSymlink})), want: "unsupported playwright-core archive member"},
+		{name: "duplicate", archive: tarArchiveFixture(t, append(validCore, validCore[0])), want: "file exists"},
+		{name: "truncated file", archive: truncatedTarArchiveFixture(t, "package/cli.js", 16, "short"), want: "unexpected EOF"},
+		{name: "too many entries", archive: tarArchiveFixture(t, tooMany), want: "too many entries"},
+	} {
+		t.Run("core "+tc.name, func(t *testing.T) {
+			err := extractPlaywrightCoreArchive(tc.archive, t.TempDir())
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("extract err = %v, want %q", err, tc.want)
+			}
+		})
+	}
+
+	nodeFilename := "node-v" + playwrightDriverNodeVersion + "-linux-x64.tar.gz"
+	nodePath := strings.TrimSuffix(nodeFilename, ".tar.gz") + "/bin/node"
+	for _, tc := range []struct {
+		name    string
+		archive []byte
+		want    string
+	}{
+		{name: "invalid gzip", archive: []byte("invalid"), want: "read Playwright Node.js archive"},
+		{name: "invalid tar", archive: gzipFixture(t, []byte("invalid tar")), want: "read Playwright Node.js archive"},
+		{name: "missing", archive: tarArchiveFixture(t, []tarFixtureEntry{{Name: "other/bin/node", Body: "node", Mode: 0o755, Typeflag: tar.TypeReg}}), want: "archive missing"},
+		{name: "non-regular", archive: tarArchiveFixture(t, []tarFixtureEntry{{Name: nodePath, Typeflag: tar.TypeDir}}), want: "not a regular file"},
+		{name: "empty", archive: tarArchiveFixture(t, []tarFixtureEntry{{Name: nodePath, Typeflag: tar.TypeReg}}), want: "invalid size"},
+		{name: "truncated file", archive: truncatedTarArchiveFixture(t, nodePath, 16, "short"), want: "unexpected EOF"},
+	} {
+		t.Run("node "+tc.name, func(t *testing.T) {
+			err := extractPlaywrightNodeArchive(tc.archive, nodeFilename, t.TempDir())
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("extract err = %v, want %q", err, tc.want)
+			}
+		})
+	}
+
+	dst := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dst, nodeExecutableName()), []byte("existing"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	archive := playwrightNodeArchiveFixture(t, nodeFilename, "#!/bin/sh\nexit 0\n")
+	if err := extractPlaywrightNodeArchive(archive, nodeFilename, dst); err == nil || !strings.Contains(err.Error(), "file exists") {
+		t.Fatalf("existing node err = %v", err)
+	}
+}
+
+func TestVerifyPinnedPlaywrightDriverFailureBranches(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("fixture Node.js executable is a shell script")
+	}
+	for _, tc := range []struct {
+		name        string
+		node        string
+		packageJSON string
+		writeCLI    bool
+		want        string
+	}{
+		{name: "missing package", node: "#!/bin/sh\nexit 0\n", want: "read pinned playwright-core package"},
+		{name: "invalid package", node: "#!/bin/sh\nexit 0\n", packageJSON: `{`, writeCLI: true, want: "decode pinned playwright-core package"},
+		{name: "missing cli", node: "#!/bin/sh\nexit 0\n", packageJSON: `{"version":"` + RequiredPlaywright + `"}`, want: "Playwright CLI is unavailable"},
+		{name: "command failure", node: "#!/bin/sh\nexit 1\n", packageJSON: `{"version":"` + RequiredPlaywright + `"}`, writeCLI: true, want: "run pinned Playwright CLI"},
+		{name: "unexpected version", node: "#!/bin/sh\nprintf 'Version 0.0.0\\n'\n", packageJSON: `{"version":"` + RequiredPlaywright + `"}`, writeCLI: true, want: "reported an unexpected version"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			driverDir := t.TempDir()
+			if err := os.WriteFile(filepath.Join(driverDir, nodeExecutableName()), []byte(tc.node), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if tc.packageJSON != "" {
+				packageDir := filepath.Join(driverDir, "package")
+				if err := os.MkdirAll(packageDir, 0o700); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(filepath.Join(packageDir, "package.json"), []byte(tc.packageJSON), 0o600); err != nil {
+					t.Fatal(err)
+				}
+				if tc.writeCLI {
+					if err := os.WriteFile(filepath.Join(packageDir, "cli.js"), []byte("// cli\n"), 0o600); err != nil {
+						t.Fatal(err)
+					}
+				}
+			}
+			err := verifyPinnedPlaywrightDriver(context.Background(), driverDir)
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("verify err = %v, want %q", err, tc.want)
+			}
+		})
+	}
+}
+
+func TestReplaceRuntimeDirectoryRollsBackPreviousDriver(t *testing.T) {
+	parent := t.TempDir()
+	target := filepath.Join(parent, "driver")
+	if err := os.MkdirAll(target, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	marker := filepath.Join(target, "keep")
+	if err := os.WriteFile(marker, []byte("previous"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := replaceRuntimeDirectory(filepath.Join(parent, "missing-source"), target); err == nil {
+		t.Fatal("replacement with missing source succeeded")
+	}
+	if raw, err := os.ReadFile(marker); err != nil || string(raw) != "previous" {
+		t.Fatalf("previous driver was not restored: %q, %v", raw, err)
+	}
+	if backups, err := filepath.Glob(filepath.Join(parent, ".playwright-backup-*")); err != nil || len(backups) != 0 {
+		t.Fatalf("rollback backups = %v, %v", backups, err)
+	}
+
+	blockingFile := filepath.Join(parent, "not-a-directory")
+	if err := os.WriteFile(blockingFile, []byte("file"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := replaceRuntimeDirectory(filepath.Join(parent, "source"), filepath.Join(blockingFile, "driver")); err == nil {
+		t.Fatal("replacement through non-directory target succeeded")
 	}
 }
 
@@ -767,6 +1076,92 @@ func replaceRuntimeAssetInstallers(t *testing.T) func() {
 		installPlaywrightDriverForRuntime = origDriver
 		installCamoufoxBrowserForRuntime = origBrowser
 	}
+}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
+	return f(req)
+}
+
+type failingReadCloser struct{}
+
+func (failingReadCloser) Read([]byte) (int, error) {
+	return 0, errors.New("read failed")
+}
+
+func (failingReadCloser) Close() error { return nil }
+
+type tarFixtureEntry struct {
+	Name     string
+	Body     string
+	Mode     int64
+	Typeflag byte
+}
+
+func gzipFixture(t *testing.T, body []byte) []byte {
+	t.Helper()
+	var raw bytes.Buffer
+	gz := gzip.NewWriter(&raw)
+	if _, err := gz.Write(body); err != nil {
+		t.Fatal(err)
+	}
+	if err := gz.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return raw.Bytes()
+}
+
+func tarArchiveFixture(t *testing.T, entries []tarFixtureEntry) []byte {
+	t.Helper()
+	var raw bytes.Buffer
+	gz := gzip.NewWriter(&raw)
+	tw := tar.NewWriter(gz)
+	for _, entry := range entries {
+		mode := entry.Mode
+		if mode == 0 {
+			mode = 0o644
+		}
+		typeflag := entry.Typeflag
+		if typeflag == 0 {
+			typeflag = tar.TypeReg
+		}
+		size := int64(0)
+		if typeflag == tar.TypeReg || typeflag == tar.TypeRegA {
+			size = int64(len(entry.Body))
+		}
+		header := &tar.Header{Name: entry.Name, Mode: mode, Size: size, Typeflag: typeflag}
+		if err := tw.WriteHeader(header); err != nil {
+			t.Fatal(err)
+		}
+		if size > 0 {
+			if _, err := tw.Write([]byte(entry.Body)); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	if err := tw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := gz.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return raw.Bytes()
+}
+
+func truncatedTarArchiveFixture(t *testing.T, name string, declaredSize int64, body string) []byte {
+	t.Helper()
+	var tarRaw bytes.Buffer
+	tw := tar.NewWriter(&tarRaw)
+	if err := tw.WriteHeader(&tar.Header{Name: name, Mode: 0o755, Size: declaredSize, Typeflag: tar.TypeReg}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tw.Write([]byte(body)); err != nil {
+		t.Fatal(err)
+	}
+	// Deliberately do not close the tar writer: closing would pad the declared
+	// body, while this fixture needs the extractor to observe a truncated file.
+	return gzipFixture(t, tarRaw.Bytes())
 }
 
 func replacePinnedPlaywrightSources(t *testing.T, server *httptest.Server, core []byte, nodeFilename string, node []byte) func() {
