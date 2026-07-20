@@ -29,6 +29,7 @@ func EnsureInstalled(ctx context.Context, opts InstallOptions) error {
 	if venvDir == "" {
 		venvDir = DefaultCacheDir()
 	}
+	opts.VenvDir = venvDir
 	lock, err := acquireInstallLock(ctx, venvDir)
 	if err != nil {
 		return err

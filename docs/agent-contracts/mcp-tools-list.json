@@ -2,7 +2,7 @@
   "_meta": {
     "gomoufox/agent_hint": "use core for lower-token browser control; use full for diagnostics or gated tools",
     "gomoufox/core_command": "gomoufox mcp --toolset core",
-    "gomoufox/tool_count": 29,
+    "gomoufox/tool_count": 32,
     "gomoufox/toolset": "full"
   },
   "tools": [
@@ -1088,6 +1088,136 @@
     {
       "_meta": {
         "gomoufox/risk": {
+          "gates": [
+            "--allow-browser-fetch",
+            "--allow-browser-file-fetch",
+            "--allowed-origins/--allowed-hosts",
+            "network_policy",
+            "--session-dir"
+          ],
+          "level": "high",
+          "untrusted": true
+        }
+      },
+      "annotations": {
+        "destructiveHint": true,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": false
+      },
+      "description": "Execute a browser-context multipart/form-data request with files from --session-dir; requires --allow-browser-fetch, --allow-browser-file-fetch, and an explicit target scope.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "description": "Sends multipart/form-data from browser context using transient file inputs. At least one file is required; file bytes are not accepted inline.",
+        "properties": {
+          "fields": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "name": {
+                  "description": "Multipart field name.",
+                  "maxLength": 256,
+                  "type": "string"
+                },
+                "value": {
+                  "description": "Multipart text field value. Responses do not echo it unless the remote server returns it.",
+                  "maxLength": 1048576,
+                  "type": "string"
+                }
+              },
+              "required": [
+                "name",
+                "value"
+              ],
+              "type": "object"
+            },
+            "maxItems": 100,
+            "type": "array"
+          },
+          "files": {
+            "description": "Multipart files selected from paths under --session-dir. Responses do not echo file paths.",
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "name": {
+                  "description": "Multipart file field name.",
+                  "maxLength": 256,
+                  "type": "string"
+                },
+                "path": {
+                  "description": "File path under --session-dir. The response does not echo paths.",
+                  "maxLength": 4096,
+                  "type": "string"
+                }
+              },
+              "required": [
+                "name",
+                "path"
+              ],
+              "type": "object"
+            },
+            "maxItems": 8,
+            "minItems": 1,
+            "type": "array"
+          },
+          "headers": {
+            "additionalProperties": {
+              "maxLength": 4096,
+              "type": "string"
+            },
+            "description": "Request headers. Do not include Content-Type; the browser generates the multipart/form-data boundary.",
+            "maxProperties": 100,
+            "type": "object"
+          },
+          "max_bytes": {
+            "default": 524288,
+            "maximum": 524288,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "method": {
+            "default": "POST",
+            "enum": [
+              "POST",
+              "PUT",
+              "PATCH",
+              "DELETE"
+            ],
+            "type": "string"
+          },
+          "navigate_first": {
+            "description": "Navigate to this URL before fetch.",
+            "pattern": "^https?://",
+            "type": "string"
+          },
+          "session_id": {
+            "default": "default",
+            "description": "Session name.",
+            "type": "string"
+          },
+          "timeout_ms": {
+            "default": 10000,
+            "maximum": 120000,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "url": {
+            "description": "URL to fetch. Must use http:// or https:// scheme. Requires --allow-browser-fetch, --allow-browser-file-fetch, and --allowed-origins or --allowed-hosts.",
+            "pattern": "^https?://",
+            "type": "string"
+          }
+        },
+        "required": [
+          "url",
+          "files"
+        ],
+        "type": "object"
+      },
+      "name": "browser_fetch_form"
+    },
+    {
+      "_meta": {
+        "gomoufox/risk": {
           "level": "medium",
           "untrusted": true
         }
@@ -1349,7 +1479,7 @@
         "openWorldHint": false,
         "readOnlyHint": false
       },
-      "description": "Replace the named non-persistent session context from a confined storage_state file or inline state.",
+      "description": "Replace non-persistent session storage_state; stop HAR first.",
       "inputSchema": {
         "additionalProperties": false,
         "description": "Exactly one of path or state must be provided.",
@@ -1434,6 +1564,121 @@
         "type": "object"
       },
       "name": "session_create"
+    },
+    {
+      "_meta": {
+        "gomoufox/risk": {
+          "gates": [
+            "--allow-har-recording",
+            "--allow-har-sensitive-values"
+          ],
+          "level": "high"
+        }
+      },
+      "annotations": {
+        "destructiveHint": true,
+        "idempotentHint": false,
+        "openWorldHint": false,
+        "readOnlyHint": false
+      },
+      "description": "Start a gated named HAR recording; metadata remains sensitive.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "capture": {
+            "default": "metadata",
+            "enum": [
+              "metadata",
+              "full"
+            ],
+            "type": "string"
+          },
+          "duration_ms": {
+            "default": 300000,
+            "maximum": 1800000,
+            "minimum": 1000,
+            "type": "integer"
+          },
+          "locale": {
+            "type": "string"
+          },
+          "max_bytes": {
+            "default": 67108864,
+            "maximum": 268435456,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "os": {
+            "enum": [
+              "windows",
+              "macos",
+              "linux"
+            ],
+            "type": "string"
+          },
+          "overwrite": {
+            "default": false,
+            "type": "boolean"
+          },
+          "path": {
+            "description": "Path under --session-dir; leased through HAR stop.",
+            "maxLength": 4096,
+            "type": "string"
+          },
+          "proxy": {
+            "description": "Proxy URL; requires proxy gate.",
+            "type": "string"
+          },
+          "session_id": {
+            "type": "string"
+          },
+          "storage_state_path": {
+            "description": "Storage state under --session-dir; requires import gate.",
+            "type": "string"
+          },
+          "url_filter": {
+            "maxLength": 2048,
+            "type": "string"
+          }
+        },
+        "required": [
+          "session_id",
+          "path"
+        ],
+        "type": "object"
+      },
+      "name": "browser_har_start"
+    },
+    {
+      "_meta": {
+        "gomoufox/risk": {
+          "gates": [
+            "--allow-har-recording"
+          ],
+          "level": "high",
+          "untrusted": true
+        }
+      },
+      "annotations": {
+        "destructiveHint": true,
+        "idempotentHint": false,
+        "openWorldHint": false,
+        "readOnlyHint": false
+      },
+      "description": "Finalize a HAR recording and return bounded untrusted routes.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "session_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "session_id"
+        ],
+        "type": "object"
+      },
+      "name": "browser_har_stop"
     },
     {
       "_meta": {

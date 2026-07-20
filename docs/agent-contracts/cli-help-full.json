@@ -60,6 +60,25 @@
     },
     {
       "examples": [
+        "gomoufox record https://example.com --out capture.har",
+        "gomoufox record https://example.com --out capture.har --capture full --url-filter '**/api/**'"
+      ],
+      "flags": [
+        "--out",
+        "--capture",
+        "--url-filter",
+        "--max-bytes",
+        "--overwrite",
+        "--cookies-file",
+        "--save-session",
+        "--humanize"
+      ],
+      "name": "record",
+      "summary": "record an interactive browser workflow as a private HAR artifact",
+      "usage": "gomoufox record <url> --out <path> [--capture metadata|full] [--cookies-file <state>]"
+    },
+    {
+      "examples": [
         "gomoufox --json get https://example.com --text"
       ],
       "flags": [
@@ -221,12 +240,15 @@
         "--enable-eval",
         "--no-content-warning",
         "--allow-browser-fetch",
+        "--allow-browser-file-fetch",
         "--allow-cookie-values",
         "--allow-cookie-mutation",
         "--allow-snapshot-values",
         "--allow-session-export",
         "--allow-session-import",
         "--allow-session-proxy",
+        "--allow-har-recording",
+        "--allow-har-sensitive-values",
         "--allow-file-upload",
         "--allow-file-download"
       ],

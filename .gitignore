@@ -13,6 +13,10 @@
 *.storage-state.json
 session*.json
 
+# HAR exports may contain credentials, cookies, bodies, PII, and signed URLs
+*.har
+.gomoufox-har-*
+
 # OS and editor
 .DS_Store
 *.swp

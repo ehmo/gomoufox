@@ -205,3 +205,12 @@ func WithHTTPCredentials(username, password string) ContextOption {
 func WithAcceptDownloads(enabled bool) ContextOption {
 	return func(c *contextConfig) { c.AcceptDownloads = &enabled }
 }
+
+// WithHARRecording records browser-context traffic into a HAR artifact. The
+// artifact is finalized when the context (or an owning page) closes.
+func WithHARRecording(options HAROptions) ContextOption {
+	return func(c *contextConfig) {
+		copy := options
+		c.HAR = &copy
+	}
+}

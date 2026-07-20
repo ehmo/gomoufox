@@ -266,6 +266,7 @@ func TestDefaultMCPSkillDocumentsHighRiskGates(t *testing.T) {
 	}
 	for _, text := range []string{
 		"--allow-browser-fetch",
+		"--allow-browser-file-fetch",
 		"--allow-cookie-values",
 		"--allow-cookie-mutation",
 		"--allow-snapshot-values",
@@ -273,6 +274,8 @@ func TestDefaultMCPSkillDocumentsHighRiskGates(t *testing.T) {
 		"--allow-session-import",
 		"--allow-session-proxy",
 		"--allow-file-upload",
+		"--allow-har-recording",
+		"--allow-har-sensitive-values",
 		"--allowed-origins",
 		"--allowed-hosts",
 		"--session-dir",
@@ -281,6 +284,28 @@ func TestDefaultMCPSkillDocumentsHighRiskGates(t *testing.T) {
 	} {
 		if !strings.Contains(skill.Body, text) {
 			t.Fatalf("mcp skill missing %q:\n%s", text, skill.Body)
+		}
+	}
+}
+
+func TestDefaultSkillsDocumentHARWorkflow(t *testing.T) {
+	core, err := DefaultRegistry().Resolve("core", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, text := range []string{"`gomoufox record <url> --out <path.har>`", "metadata mode", "full capture"} {
+		if !strings.Contains(core.Body, text) {
+			t.Fatalf("core skill missing %q:\n%s", text, core.Body)
+		}
+	}
+
+	mcpSkill, err := DefaultRegistry().Resolve("mcp", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, text := range []string{"`browser_har_start`", "`browser_har_stop`", "HAR routes", "inspect them before sharing"} {
+		if !strings.Contains(mcpSkill.Body, text) {
+			t.Fatalf("mcp skill missing %q:\n%s", text, mcpSkill.Body)
 		}
 	}
 }

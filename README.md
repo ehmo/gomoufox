@@ -45,6 +45,7 @@ alone unless you pass `--force`.
 |---|---|
 | Go browser automation | `github.com/ehmo/gomoufox` |
 | Shell automation | `gomoufox get`, `gomoufox screenshot`, `gomoufox fetch` |
+| Interactive traffic capture | `gomoufox record` |
 | Agent browser tools | `gomoufox mcp` |
 | Guided setup | `gomoufox setup`, `gomoufox agents install` |
 | Release evidence | [docs/BENCHMARKS.md](docs/BENCHMARKS.md) |
@@ -111,14 +112,17 @@ Homebrew build still has that command.
 | `GOMOUFOX_CAMOUFOX_PATH=/path/to/browser` | ![custom](https://img.shields.io/badge/custom-local%20browser-64748b) | You already have a compatible Camoufox browser directory. |
 
 Default Go, CLI, and MCP flows use the Go-managed node-direct runtime. The
-default install fetches Playwright's Node driver, gomoufox's launch server, and
-the pinned Camoufox browser archive. Persistent profiles and browser-context
-locale settings use the node-direct runtime; geoip and humanize launch options
-still require the Python sidecar.
+default install assembles the exact Playwright 1.57 driver from checksum-pinned
+official `playwright-core` npm and Node.js artifacts, then fetches gomoufox's
+launch server and the pinned Camoufox browser archive. Persistent profiles and
+browser-context locale settings use the node-direct runtime; geoip and humanize
+launch options still require the Python sidecar.
 
 Use `gomoufox install --runtime python` only for the explicit legacy
-Python-sidecar path. That path uses hash-locked wheels and fails closed on a
-missing wheel or hash mismatch.
+Python-sidecar path. That path uses hash-locked wheels and the same exact-tag,
+manifest-verified browser tree and checksum-pinned Playwright driver as
+node-direct. It does not use Camoufox's moving global browser download, and
+fails closed on a missing package or hash mismatch.
 
 Homebrew installs on macOS Apple Silicon and Linux amd64, because those are the
 hosts where the pinned browser has an upstream binary. Other Go archives still
@@ -170,6 +174,36 @@ Use the library when your program owns the browser lifecycle. Use the CLI when a
 shell script needs a page snapshot, screenshot, or browser-context fetch. Use MCP
 when an agent needs browser tools over stdio or HTTP.
 
+HAR recording is a context option and finalizes on `Context.Close` (or when its
+owning page closes):
+
+```go
+recording, err := browser.NewContext(ctx, gomoufox.WithHARRecording(gomoufox.HAROptions{
+	Path:    "capture.har",
+	Capture: gomoufox.HARCaptureMetadata,
+}))
+if err != nil {
+	panic(err)
+}
+defer recording.Abort() // discards an unfinished capture on an early return
+page, err := recording.NewPage(ctx)
+if err != nil {
+	panic(err)
+}
+if _, err := page.Goto(ctx, "https://example.com"); err != nil {
+	panic(err)
+}
+if err := recording.Close(); err != nil {
+	panic(err)
+}
+result, ok := recording.HARResult()
+```
+
+Check `ok` before using `result`. Metadata capture is the default and redacts
+standard value-bearing fields while dropping unknown fields; it is still
+sensitive. `HARCaptureFull` preserves request and response content. A successful
+`Close` makes the deferred `Abort` a no-op.
+
 ## CLI
 
 ```bash
@@ -178,11 +212,19 @@ gomoufox screenshot https://example.com --out page.png --full-page
 gomoufox fetch https://api.example.com/me --navigate-first https://example.com
 gomoufox open https://app.example.com --save-session state.json --wait
 gomoufox fetch https://app.example.com/api/me --cookies-file state.json
+gomoufox record https://app.example.com --out capture.har
 ```
 
 Fetch responses are read through a bounded browser stream. `gomoufox fetch`
 defaults to 512 KiB, reports truncation in JSON output, and cancels the reader
 when the cap is reached.
+
+`gomoufox record` opens a headful browser and records the operator's workflow
+until the window closes. The default `metadata` capture removes bodies and
+redacts header, cookie, query, and form values, but the resulting HAR is still
+sensitive. `--capture full` preserves request and response content and prints a
+warning; use a narrow `--url-filter`, keep the file private, and inspect it
+before sharing.
 
 Agent-friendly discovery:
 
@@ -328,6 +370,13 @@ MCP defaults:
 - Browser-context fetches, cookie values, cookie mutation, session export,
   session import, session proxy use, file upload, and file download stay
   disabled unless you enable their matching operator flags.
+- HAR recording stays disabled unless MCP starts with `--allow-har-recording`.
+  Call `browser_har_start` before using its named session and
+  `browser_har_stop` to finalize it. Pass `storage_state_path` at start rather
+  than calling `session_load` on an active recording; each destination remains
+  exclusively reserved until finalization returns. Full capture also requires
+  `--allow-har-sensitive-values`; even metadata HAR files remain sensitive and
+  returned routes are untrusted website-controlled data.
 - To reuse a CLI login in MCP, save state with `gomoufox open --save-session`,
   place the file under `--session-dir`, start MCP with `--allow-session-import`,
   then call `session_create` with `storage_state_path` or `session_load` with
@@ -353,32 +402,32 @@ Camoufox without producing Go-only failures?
 Latest checked evidence:
 [docs/BENCHMARKS.md](docs/BENCHMARKS.md),
 [Python-sidecar artifact](docs/benchmarks/2026-06-08-release-gate.json), and
-[node-direct artifact](docs/benchmarks/2026-06-24-node-direct-readiness.json).
+[node-direct artifact](docs/benchmarks/2026-07-20-node-direct-readiness.json).
 
 | Runtime | Passed | Blocked | Failed | Wall ms | Peak RSS MiB | Peak CPU % | Report tokens |
 |---|---:|---:|---:|---:|---:|---:|---:|
-| Python Camoufox | 95 | 5 | **0** | 373,637 | 3,863.5 | 567.9 | 79,051 |
-| gomoufox, Python sidecar | 95 | 5 | **0** | 366,338 | **2,765.3** | 569.9 | 13,059 |
-| gomoufox, node-direct Go | **96** | **4** | **0** | **360,361** | 3,734.2 | **548.4** | **12,857** |
+| Python Camoufox | 95 | 5 | **0** | **347,645** | 3,196.3 | 504.8 | 85,222 |
+| gomoufox, Python sidecar | 95 | 5 | **0** | 366,338 | 2,765.3 | 569.9 | 13,059 |
+| gomoufox, node-direct Go | **96** | **4** | **0** | 351,590 | **2,703.4** | **349.6** | **12,941** |
 
 Bold means best in that column. The sidecar row comes from the previous extended
 release-gate artifact; node-direct comes from the readiness artifact.
 Use the table for direction, not single-run timing claims.
 
-Latest extended validation: 100 targets, 60s timeout, `commit` wait, 3s settle,
+Latest extended validation: 100 targets, 45s timeout, `commit` wait, 3s settle,
 no screenshots, reused browser, compact Go report, 0s extra load-state wait, and
 250,000-byte classification cap.
 gomoufox passed 96, blocked 4, failed 0. Python Camoufox passed 95, blocked 5,
 failed 0. The run had 0 Go-only regressions and 1 Python-only outcome
 difference. See
-[docs/benchmarks/2026-06-24-node-direct-readiness.json](docs/benchmarks/2026-06-24-node-direct-readiness.json).
+[docs/benchmarks/2026-07-20-node-direct-readiness.json](docs/benchmarks/2026-07-20-node-direct-readiness.json).
 
 | Ratio | node-direct Go / Python Camoufox |
 |---|---:|
-| Wall time | 0.964 |
-| Peak RSS | 0.967 |
-| Peak CPU | 0.966 |
-| Report tokens | 0.163 |
+| Wall time | 1.011 |
+| Peak RSS | 0.846 |
+| Peak CPU | 0.693 |
+| Report tokens | 0.152 |
 
 Wall time stayed at parity. Node-direct used less RSS, less CPU, and produced a
 much smaller agent report. Treat a report-token ratio above 0.50 as a regression.
@@ -520,8 +569,9 @@ gomoufox pins the browser stack. Upgrade these pieces together.
 |---|---|---|---|---|
 | v0.1.x | v0.5700.1 | 1.57.0 | 0.4.11 | v135.0.1-beta.24 |
 
-Auto-fetch support is verified for macOS arm64. Other platforms may work with a
-pre-provisioned browser directory through `GOMOUFOX_CAMOUFOX_PATH`.
+Auto-fetch support is verified for macOS arm64 and Linux amd64. Other platforms
+may work with a pre-provisioned browser directory through
+`GOMOUFOX_CAMOUFOX_PATH`.
 
 Headful Linux runs need an existing display or `GOMOUFOX_AUTO_DISPLAY=1`.
 

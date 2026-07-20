@@ -58,7 +58,7 @@ CONTRACTS = {
     },
 }
 
-CLI_MCP_DOC_BUDGET = 91000
+CLI_MCP_DOC_BUDGET = 95000
 SKILL_DOC_BUDGET = 16000
 SKILL_SCAN_SKIP_DIRS = {".beads", ".git", ".dolt", "dist", "public", "team" + "reports"}
 POSITIONING_OVERCLAIMS = {

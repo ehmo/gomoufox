@@ -1,8 +1,23 @@
 # Changelog
 
-## Unreleased
+## v0.1.20
 
-No changes yet.
+- Add native HAR recording across the Go API, interactive `gomoufox record`
+  CLI, and gated MCP `browser_har_start`/`browser_har_stop` tools. Metadata
+  capture allowlists standard fields, redacts their values, and drops unknown
+  fields by default, but remains sensitive. Full capture requires explicit
+  opt-in and preserves request and response content.
+- Add `browser_fetch_form`, a gated MCP multipart upload tool that sends files
+  from `--session-dir` through the browser context without inline file bytes,
+  plus binary-safe response encoding and stricter fetch header redaction.
+- Refresh bundled Python requirement locks used by the legacy sidecar release
+  gate.
+- Pin the legacy Python sidecar and Python parity runner to gomoufox's
+  manifest-verified v135 browser tree instead of Camoufox's moving global
+  download.
+- Assemble the pinned Playwright 1.57 driver from checksum-verified official
+  npm and Node.js artifacts after the legacy Playwright driver CDN was retired,
+  and share that managed driver between node-direct and Python runtimes.
 
 ## v0.1.18
 

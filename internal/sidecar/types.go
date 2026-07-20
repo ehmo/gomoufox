@@ -34,6 +34,7 @@ type Config struct {
 	PythonBin       string
 	VenvDir         string
 	Runtime         string
+	ExecutablePath  string
 	ConnectTimeout  time.Duration
 	Headless        int
 	Persistent      bool

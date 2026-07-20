@@ -25,26 +25,29 @@ const (
 )
 
 type Config struct {
-	AllowedSchemes      []string
-	AllowPrivateIPs     bool
-	AllowLocalhost      bool
-	EnableEval          bool
-	MaxResponseBytes    int
-	MaxInputBytes       int
-	MaxSessions         int
-	SessionTTL          time.Duration
-	AllowBrowserFetch   bool
-	AllowCookieValues   bool
-	AllowCookieMutation bool
-	AllowSnapshotValues bool
-	AllowSessionExport  bool
-	AllowSessionImport  bool
-	AllowSessionProxy   bool
-	AllowFileUpload     bool
-	AllowFileDownload   bool
-	ContentWarning      bool
-	AllowedOrigins      []string
-	AllowedHosts        []string
+	AllowedSchemes          []string
+	AllowPrivateIPs         bool
+	AllowLocalhost          bool
+	EnableEval              bool
+	MaxResponseBytes        int
+	MaxInputBytes           int
+	MaxSessions             int
+	SessionTTL              time.Duration
+	AllowBrowserFetch       bool
+	AllowBrowserFileFetch   bool
+	AllowCookieValues       bool
+	AllowCookieMutation     bool
+	AllowSnapshotValues     bool
+	AllowSessionExport      bool
+	AllowSessionImport      bool
+	AllowSessionProxy       bool
+	AllowHARRecording       bool
+	AllowHARSensitiveValues bool
+	AllowFileUpload         bool
+	AllowFileDownload       bool
+	ContentWarning          bool
+	AllowedOrigins          []string
+	AllowedHosts            []string
 }
 
 func DefaultConfig() Config {
@@ -63,6 +66,9 @@ func HasExplicitTargetScope(cfg Config) bool {
 }
 
 func ValidateConfig(cfg Config) (Config, error) {
+	if cfg.AllowHARSensitiveValues && !cfg.AllowHARRecording {
+		return Config{}, fmt.Errorf("allow HAR sensitive values requires HAR recording")
+	}
 	if len(cfg.AllowedSchemes) == 0 {
 		cfg.AllowedSchemes = []string{"http", "https"}
 	}

@@ -11,6 +11,7 @@ var mcpScripts embed.FS
 
 var (
 	mcpFetchExpression                 = mustMCPBrowserScript("fetch.js")
+	mcpFormFetchExpression             = mustMCPBrowserScript("form_fetch.js")
 	boundedContentExpression           = mustMCPBrowserScript("bounded_content.js")
 	viewportMetricsExpression          = mustMCPBrowserScript("viewport_metrics.js")
 	mcpInternalProbePatchExpression    = mustMCPBrowserScript("internal_probe_patch.js")

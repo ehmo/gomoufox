@@ -46,6 +46,15 @@ type ContextOptions struct {
 	ExtraHTTPHeaders map[string]string
 	HTTPCredentials  *HTTPCredentials
 	AcceptDownloads  *bool
+	HAR              *HAROptions
+}
+
+type HAROptions struct {
+	Path               string
+	Mode               string
+	Content            string
+	OmitRequestContent bool
+	URLFilter          string
 }
 
 type Viewport struct {

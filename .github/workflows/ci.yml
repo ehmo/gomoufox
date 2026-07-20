@@ -90,7 +90,9 @@ jobs:
           go-version-file: go.mod
           cache: true
       - name: Install managed Camoufox stack
-        run: go run ./cmd/gomoufox install
+        run: |
+          go run ./cmd/gomoufox install
+          go run ./cmd/gomoufox install --runtime python
       - name: Benchmark Go versus Python
         env:
           BENCHMARK_LOOPS: ${{ inputs.benchmark_loops }}

@@ -34,10 +34,7 @@ func New(ctx context.Context, opts ...Option) (*Browser, error) {
 }
 
 func configureConnectorForRuntime(cfg *launchConfig) {
-	if installRuntime(cfg.sidecarRuntime) != SidecarRuntimeNodeDirect {
-		return
-	}
-	driverDir := nodeDirectPlaywrightDriverDir(cfg.venvDir)
+	driverDir := managedPlaywrightDriverDir(cfg.venvDir)
 	switch connector := cfg.connector.(type) {
 	case pwbridge.RealConnector:
 		if connector.DriverDirectory == "" {
@@ -54,7 +51,7 @@ func configureConnectorForRuntime(cfg *launchConfig) {
 func newBrowser(ctx context.Context, cfg launchConfig) (*Browser, error) {
 	manager, err := cfg.sidecar(cfg)
 	if err != nil {
-		return nil, err
+		return nil, mapSidecarError(err)
 	}
 	prepareCh, cancelPrepare := prepareConnector(ctx, cfg.connector)
 	defer cancelPrepare()

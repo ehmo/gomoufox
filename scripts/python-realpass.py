@@ -3,6 +3,7 @@ import argparse
 import json
 import os
 import pathlib
+import platform
 import subprocess
 import sys
 import threading
@@ -11,9 +12,14 @@ from datetime import datetime, timezone
 from urllib.parse import urlparse
 
 from camoufox.sync_api import Camoufox
+from camoufox.addons import DefaultAddons
+import camoufox.pkgman as camoufox_pkgman
+import camoufox.utils as camoufox_utils
+from camoufox.utils import launch_options
 
 
 CATALOG_PATH = pathlib.Path(__file__).with_name("realpass-targets.json")
+CAMOUFOX_BINARY_VERSION = "v135.0.1-beta.24"
 
 FINGERPRINT_DETECTOR_EXPRESSION = r"""() => {
 const canvas = document.createElement("canvas");
@@ -97,6 +103,7 @@ def main() -> int:
     parser.add_argument("--content-max-bytes", type=int, default=0, help="maximum HTML bytes fetched for classification; 0 fetches full content")
     parser.add_argument("--sample-interval", type=float, default=0.5)
     parser.add_argument("--headful", action="store_true")
+    parser.add_argument("--executable-path", default="", help="pinned Camoufox executable; defaults to gomoufox's managed runtime cache")
     parser.add_argument("--screenshots", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--reuse-browser", action="store_true", help="reuse one browser process across targets; each target still gets a fresh page context")
     parser.add_argument("--list-targets", action="store_true")
@@ -110,6 +117,11 @@ def main() -> int:
     if args.list_targets:
         print(json.dumps(catalog_targets(catalog, args.target_tier), separators=(",", ":")))
         return 0
+
+    try:
+        executable_path = managed_camoufox_executable(args.executable_path)
+    except ValueError as exc:
+        parser.error(str(exc))
 
     targets = [parse_target(raw) for raw in args.target] if args.target else catalog_targets(catalog, args.target_tier)
     out_dir = pathlib.Path(args.out)
@@ -140,16 +152,16 @@ def main() -> int:
     }
 
     if args.reuse_browser:
-        with Camoufox(headless=not args.headful) as browser:
+        with managed_camoufox(executable_path, not args.headful) as browser:
             for target in targets:
                 print(f"python-realpass: {target['name']} -> {target['url']}", file=sys.stderr, flush=True)
-                result = run_target(target, args, shot_dir, browser)
+                result = run_target(target, args, shot_dir, executable_path, browser)
                 report["results"].append(result)
                 append_result_jsonl(out_dir, result)
     else:
         for target in targets:
             print(f"python-realpass: {target['name']} -> {target['url']}", file=sys.stderr, flush=True)
-            result = run_target(target, args, shot_dir, None)
+            result = run_target(target, args, shot_dir, executable_path, None)
             report["results"].append(result)
             append_result_jsonl(out_dir, result)
 
@@ -161,7 +173,7 @@ def main() -> int:
     return 0
 
 
-def run_target(target, args, shot_dir, browser=None):
+def run_target(target, args, shot_dir, executable_path, browser=None):
     started = time.time()
     result = {
         "name": target["name"],
@@ -177,7 +189,7 @@ def run_target(target, args, shot_dir, browser=None):
     page = None
     try:
         if browser is None:
-            with Camoufox(headless=not args.headful) as owned_browser:
+            with managed_camoufox(executable_path, not args.headful) as owned_browser:
                 run_page_probe(owned_browser, target, args, shot_dir, result)
         else:
             run_page_probe(browser, target, args, shot_dir, result)
@@ -188,6 +200,61 @@ def run_target(target, args, shot_dir, browser=None):
         result["duration_ms"] = int((time.time() - started) * 1000)
         result["resources"] = monitor.stop()
     return result
+
+
+def managed_camoufox_executable(override=""):
+    if override:
+        candidate = pathlib.Path(override).expanduser()
+        if not candidate.is_file() or not os.access(candidate, os.X_OK):
+            raise ValueError("--executable-path must name an executable regular file")
+        return candidate.resolve()
+
+    machine = platform.machine().lower()
+    arch = {"x86_64": "amd64", "amd64": "amd64", "aarch64": "arm64", "arm64": "arm64"}.get(machine)
+    goos = {"darwin": "darwin", "linux": "linux", "win32": "windows"}.get(sys.platform)
+    if not goos or not arch:
+        raise ValueError(f"gomoufox has no managed Camoufox runtime for {sys.platform}/{machine}")
+    browser_root = (
+        pathlib.Path(sys.prefix)
+        / "runtime"
+        / "v1"
+        / CAMOUFOX_BINARY_VERSION
+        / f"{goos}-{arch}"
+        / "camoufox"
+        / "browser"
+    )
+    preferred = (
+        "Camoufox.app/Contents/MacOS/camoufox",
+        "Camoufox.app/Contents/MacOS/firefox",
+        "camoufox",
+        "firefox",
+        "camoufox.exe",
+        "firefox.exe",
+    )
+    for relative in preferred:
+        candidate = browser_root / relative
+        if candidate.is_file() and os.access(candidate, os.X_OK):
+            return candidate.resolve()
+    raise ValueError(
+        "pinned gomoufox Camoufox browser is not installed; run `gomoufox install --runtime python`"
+    )
+
+
+def managed_camoufox(executable_path, headless):
+    executable = pathlib.Path(executable_path).resolve()
+    managed_root = executable.parents[3] if sys.platform == "darwin" else executable.parent
+    # Keep every Camoufox package lookup on gomoufox's verified tree. Version
+    # 0.4.11 otherwise consults (and may update) its separate global cache.
+    camoufox_pkgman.INSTALL_DIR = managed_root
+    camoufox_pkgman.camoufox_path = lambda download_if_missing=True: managed_root
+    camoufox_utils.installed_verstr = lambda: CAMOUFOX_BINARY_VERSION.removeprefix("v")
+    options = launch_options(
+        headless=headless,
+        exclude_addons=[DefaultAddons.UBO],
+    )
+    if os.path.realpath(options.get("executable_path", "")) != os.path.realpath(executable):
+        raise RuntimeError("Camoufox resolved an unexpected managed browser executable")
+    return Camoufox(from_options=options)
 
 
 def run_page_probe(browser, target, args, shot_dir, result):

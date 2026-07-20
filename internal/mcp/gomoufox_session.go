@@ -2,6 +2,7 @@ package mcp
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -17,10 +18,13 @@ import (
 )
 
 type gomoufoxFactory struct {
-	mu       sync.Mutex
-	launcher gomoufoxLauncher
-	policy   policy.Config
-	shared   mcpBrowser
+	mu        sync.Mutex
+	launcher  gomoufoxLauncher
+	policy    policy.Config
+	shared    mcpBrowser
+	closed    bool
+	closeOnce sync.Once
+	closeErr  error
 }
 
 type gomoufoxLauncher interface {
@@ -87,6 +91,8 @@ type contextAdapter struct {
 	clearCookies func(context.Context) error
 	storageState func(context.Context, string) (*gomoufox.StorageState, error)
 	close        func() error
+	abort        func() error
+	harResult    func() (gomoufox.HARResult, bool)
 }
 
 type pageAdapter struct {
@@ -181,6 +187,8 @@ func adaptContext(c *gomoufox.Context) mcpContext {
 		clearCookies: c.ClearCookies,
 		storageState: c.StorageState,
 		close:        c.Close,
+		abort:        c.Abort,
+		harResult:    c.HARResult,
 	}
 }
 
@@ -232,6 +240,18 @@ func (c contextAdapter) StorageState(ctx context.Context, path string) (*gomoufo
 	return c.storageState(ctx, path)
 }
 func (c contextAdapter) Close() error { return c.close() }
+func (c contextAdapter) Abort() error {
+	if c.abort != nil {
+		return c.abort()
+	}
+	return c.close()
+}
+func (c contextAdapter) HARResult() (gomoufox.HARResult, bool) {
+	if c.harResult == nil {
+		return gomoufox.HARResult{}, false
+	}
+	return c.harResult()
+}
 
 func (p pageAdapter) Goto(ctx context.Context, u string, opts ...gomoufox.GotoOption) (*gomoufox.Response, error) {
 	return p.gotoFunc(ctx, u, opts...)
@@ -313,17 +333,16 @@ func (f *gomoufoxFactory) NewBrowserSession(ctx context.Context, opts sessionOpt
 		}
 		page, err := browserContext.NewPage(ctx)
 		if err != nil {
-			_ = browserContext.Close()
+			err = errors.Join(err, abortMCPContext(browserContext))
 			if closeBrowser {
-				_ = browser.Close()
+				err = errors.Join(err, browser.Close())
 			}
 			return nil, err
 		}
 		if err := verifyMCPInternalEvaluation(ctx, page); err != nil {
-			_ = page.Close()
-			_ = browserContext.Close()
+			err = errors.Join(err, page.Close(), abortMCPContext(browserContext))
 			if closeBrowser {
-				_ = browser.Close()
+				err = errors.Join(err, browser.Close())
 			}
 			return nil, err
 		}
@@ -338,17 +357,16 @@ func (f *gomoufoxFactory) NewBrowserSession(ctx context.Context, opts sessionOpt
 	}
 	page, err := browserContext.NewPage(ctx)
 	if err != nil {
-		_ = browserContext.Close()
+		err = errors.Join(err, abortMCPContext(browserContext))
 		if closeBrowser {
-			_ = browser.Close()
+			err = errors.Join(err, browser.Close())
 		}
 		return nil, err
 	}
 	if err := verifyMCPInternalEvaluation(ctx, page); err != nil {
-		_ = page.Close()
-		_ = browserContext.Close()
+		err = errors.Join(err, page.Close(), abortMCPContext(browserContext))
 		if closeBrowser {
-			_ = browser.Close()
+			err = errors.Join(err, browser.Close())
 		}
 		return nil, err
 	}
@@ -357,11 +375,20 @@ func (f *gomoufoxFactory) NewBrowserSession(ctx context.Context, opts sessionOpt
 
 func (f *gomoufoxFactory) browser(ctx context.Context, opts sessionOptions, dedicated bool) (mcpBrowser, bool, error) {
 	if dedicated {
+		f.mu.Lock()
+		closed := f.closed
+		f.mu.Unlock()
+		if closed {
+			return nil, true, errBrowserUnavailable
+		}
 		browser, err := f.launcher.Launch(ctx, opts, true)
 		return browser, true, err
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.closed {
+		return nil, false, errBrowserUnavailable
+	}
 	if f.shared == nil {
 		browser, err := f.launcher.Launch(ctx, sessionOptions{}, false)
 		if err != nil {
@@ -370,6 +397,30 @@ func (f *gomoufoxFactory) browser(ctx context.Context, opts sessionOptions, dedi
 		f.shared = browser
 	}
 	return f.shared, false, nil
+}
+
+func (f *gomoufoxFactory) Close() error {
+	if f == nil {
+		return nil
+	}
+	f.closeOnce.Do(func() {
+		f.mu.Lock()
+		f.closed = true
+		browser := f.shared
+		f.shared = nil
+		f.mu.Unlock()
+		if browser != nil {
+			f.closeErr = browser.Close()
+		}
+	})
+	return f.closeErr
+}
+
+func abortMCPContext(browserContext mcpContext) error {
+	if abortable, ok := browserContext.(interface{ Abort() error }); ok {
+		return abortable.Abort()
+	}
+	return browserContext.Close()
 }
 
 type gomoufoxSession struct {
@@ -382,6 +433,7 @@ type gomoufoxSession struct {
 	dialogMu     sync.Mutex
 	dialogPolicy string
 	dialogPrompt string
+	harResult    *gomoufox.HARResult
 }
 
 func newGomoufoxSession(ctx context.Context, browser mcpBrowser, browserContext mcpContext, page mcpPage, closeBrowser bool) *gomoufoxSession {
@@ -781,6 +833,96 @@ func (s *gomoufoxSession) Fetch(ctx context.Context, opts fetchOptions) (fetchRe
 	return fetchResult{URL: payload.URL, Status: payload.Status, Headers: payload.Headers, Body: []byte(payload.Body), Truncated: payload.Truncated}, nil
 }
 
+func (s *gomoufoxSession) FetchForm(ctx context.Context, opts fetchFormOptions) (fetchResult, error) {
+	if opts.NavigateFirst != "" {
+		if _, err := s.Navigate(ctx, opts.NavigateFirst, navigateOptions{WaitUntil: "domcontentloaded", Timeout: 30 * time.Second}); err != nil {
+			return fetchResult{}, err
+		}
+	}
+	inputID := fmt.Sprintf("gomoufox-mcp-file-%d", time.Now().UnixNano())
+	inputSelector := "#" + inputID
+	createResult, err := s.page.EvaluateInternal(ctx, `({inputID, multiple}) => {
+  const input = document.createElement("input");
+  input.type = "file";
+  input.id = inputID;
+  if (multiple) input.multiple = true;
+  input.setAttribute("data-gomoufox-mcp-transient", "true");
+  input.style.position = "fixed";
+  input.style.left = "-10000px";
+  input.style.top = "-10000px";
+  input.style.width = "1px";
+  input.style.height = "1px";
+  input.style.opacity = "0";
+  input.style.pointerEvents = "none";
+  document.documentElement.appendChild(input);
+  return {ok: true};
+}`, map[string]any{"inputID": inputID, "multiple": len(opts.Files) > 1})
+	if err != nil {
+		return fetchResult{}, err
+	}
+	var createPayload struct {
+		OK bool `json:"ok"`
+	}
+	if err := decodeJSONValue(createResult, &createPayload); err != nil {
+		return fetchResult{}, err
+	}
+	if !createPayload.OK {
+		return fetchResult{}, ErrInvalidCall
+	}
+	defer func() {
+		_, _ = s.page.EvaluateInternal(context.Background(), `({inputID}) => {
+  const input = document.getElementById(inputID);
+  if (input) input.remove();
+  return {ok: true};
+}`, map[string]any{"inputID": inputID})
+	}()
+	paths := make([]string, 0, len(opts.Files))
+	files := make([]map[string]any, 0, len(opts.Files))
+	for _, file := range opts.Files {
+		paths = append(paths, file.Path)
+		files = append(files, map[string]any{"name": file.Name})
+	}
+	if err := s.page.Locator(inputSelector).SetInputFiles(ctx, paths, gomoufox.LocatorSetInputFilesTimeout(opts.Timeout)); err != nil {
+		return fetchResult{}, err
+	}
+	fields := make([]map[string]any, 0, len(opts.Fields))
+	for _, field := range opts.Fields {
+		fields = append(fields, map[string]any{"name": field.Name, "value": field.Value})
+	}
+	result, err := s.page.EvaluateInternal(ctx, mcpFormFetchExpression, map[string]any{
+		"url":           opts.URL,
+		"method":        opts.Method,
+		"headers":       fetchHeadersForEvaluation(opts.Headers),
+		"fields":        fields,
+		"files":         files,
+		"inputSelector": inputSelector,
+		"maxBytes":      opts.MaxBytes,
+	})
+	if err != nil {
+		return fetchResult{}, err
+	}
+	var payload struct {
+		OK         bool              `json:"ok"`
+		URL        string            `json:"url"`
+		Status     int               `json:"status"`
+		Headers    map[string]string `json:"headers"`
+		BodyBase64 string            `json:"body_base64"`
+		Message    string            `json:"message"`
+		Truncated  bool              `json:"truncated"`
+	}
+	if err := decodeJSONValue(result, &payload); err != nil {
+		return fetchResult{}, err
+	}
+	if !payload.OK {
+		return fetchResult{}, errors.New(payload.Message)
+	}
+	body, err := base64.StdEncoding.DecodeString(payload.BodyBase64)
+	if err != nil {
+		return fetchResult{}, err
+	}
+	return fetchResult{URL: payload.URL, Status: payload.Status, Headers: payload.Headers, Body: body, Truncated: payload.Truncated}, nil
+}
+
 func (s *gomoufoxSession) Cookies(ctx context.Context, opts cookieOptions) (cookieResult, error) {
 	if s.context == nil {
 		return cookieResult{}, ErrInvalidCall
@@ -844,19 +986,31 @@ func (s *gomoufoxSession) Close() error {
 		s.observations.resetAll()
 	}
 	if s.page != nil {
-		err = s.page.Close()
+		err = errors.Join(err, s.page.Close())
 	}
 	if s.context != nil {
-		if cerr := s.context.Close(); err == nil {
-			err = cerr
+		err = errors.Join(err, s.context.Close())
+		if provider, ok := s.context.(interface {
+			HARResult() (gomoufox.HARResult, bool)
+		}); ok {
+			if result, available := provider.HARResult(); available {
+				s.harResult = &result
+			}
 		}
 	}
 	if s.closeBrowser && s.browser != nil {
-		if berr := s.browser.Close(); err == nil {
-			err = berr
-		}
+		err = errors.Join(err, s.browser.Close())
 	}
 	return err
+}
+
+func (s *gomoufoxSession) HARResult() (gomoufox.HARResult, bool) {
+	if s == nil || s.harResult == nil {
+		return gomoufox.HARResult{}, false
+	}
+	result := *s.harResult
+	result.Routes = append([]gomoufox.HARRoute(nil), result.Routes...)
+	return result, true
 }
 
 func (s *gomoufoxSession) locator(ctx context.Context, target elementTarget) (gomoufox.Locator, error) {
@@ -969,6 +1123,15 @@ func contextOptions(opts sessionOptions, allowDownloads bool) ([]gomoufox.Contex
 			return nil, err
 		}
 		out = append(out, gomoufox.WithStorageState(&state))
+	}
+	if opts.har != nil {
+		out = append(out, gomoufox.WithHARRecording(gomoufox.HAROptions{
+			Path:      opts.har.path,
+			Capture:   gomoufox.HARCapture(opts.har.capture),
+			URLFilter: opts.har.urlFilter,
+			MaxBytes:  opts.har.maxBytes,
+			Overwrite: opts.har.overwrite,
+		}))
 	}
 	return out, nil
 }

@@ -23,6 +23,7 @@ func TestContextAndNewPageOptionConversion(t *testing.T) {
 		ExtraHTTPHeaders: map[string]string{"x-test": "1"},
 		HTTPCredentials:  &HTTPCredentials{Username: "user", Password: "pass"},
 		AcceptDownloads:  &acceptDownloads,
+		HAR:              &HAROptions{Path: "/tmp/capture.har", Mode: "minimal", Content: "omit", OmitRequestContent: true, URLFilter: "**/api/**"},
 	}
 	pw := toBrowserContextOptions(opts)
 	if pw.Viewport == nil || pw.Viewport.Width != 1200 || pw.Viewport.Height != 800 {
@@ -39,6 +40,9 @@ func TestContextAndNewPageOptionConversion(t *testing.T) {
 	}
 	if pw.Proxy == nil || pw.Proxy.Server != "http://proxy.example:8080" || *pw.Proxy.Username != "u" || *pw.Proxy.Password != "p" {
 		t.Fatalf("proxy = %#v", pw.Proxy)
+	}
+	if pw.RecordHarPath == nil || *pw.RecordHarPath != "/tmp/capture.har" || pw.RecordHarMode == nil || string(*pw.RecordHarMode) != "minimal" || pw.RecordHarContent == nil || string(*pw.RecordHarContent) != "omit" || pw.RecordHarOmitContent == nil || !*pw.RecordHarOmitContent || pw.RecordHarURLFilter != "**/api/**" {
+		t.Fatalf("HAR = %#v", pw)
 	}
 	if pw.StorageState == nil {
 		t.Fatalf("missing storage state")

@@ -14,13 +14,26 @@ import (
 const pythonLaunchPayloadScript = `
 import contextlib
 import json
+import os
+from pathlib import Path
 import sys
 
 import orjson
 from browserforge.fingerprints import Screen
+from camoufox.addons import DefaultAddons
+import camoufox.pkgman as camoufox_pkgman
+import camoufox.utils as camoufox_utils
 from camoufox.server import launch_options, to_camel_case_dict
 
 launch_kwargs = orjson.loads(sys.stdin.buffer.read())
+managed_executable_path = launch_kwargs.pop("executable_path", None)
+if managed_executable_path:
+    managed_executable = Path(managed_executable_path).resolve()
+    managed_root = managed_executable.parents[3] if sys.platform == "darwin" else managed_executable.parent
+    camoufox_pkgman.INSTALL_DIR = managed_root
+    camoufox_pkgman.camoufox_path = lambda download_if_missing=True: managed_root
+    camoufox_utils.installed_verstr = lambda: "135.0.1-beta.24"
+    launch_kwargs["exclude_addons"] = [DefaultAddons.UBO]
 persistent_user_data_dir = None
 if launch_kwargs.pop("persistent_context", False):
     persistent_user_data_dir = launch_kwargs.pop("user_data_dir", None)
@@ -37,6 +50,8 @@ if isinstance(webgl_value, dict):
     launch_kwargs["webgl_config"] = (webgl_value.get("vendor"), webgl_value.get("renderer"))
 with contextlib.redirect_stdout(sys.stderr):
     config = launch_options(**launch_kwargs)
+if managed_executable_path and os.path.realpath(config.get("executable_path", "")) != os.path.realpath(managed_executable_path):
+    raise RuntimeError("Camoufox resolved an unexpected managed browser executable")
 if config.get("proxy") is None:
     config.pop("proxy", None)
 payload = to_camel_case_dict(config)

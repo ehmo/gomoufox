@@ -1,9 +1,13 @@
 package sidecar
 
 import (
+	"archive/tar"
 	"archive/zip"
+	"bytes"
+	"compress/gzip"
 	"context"
 	"crypto/sha256"
+	"crypto/sha512"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -11,18 +15,24 @@ import (
 	"io/fs"
 	"net/http"
 	"os"
+	"os/exec"
+	"path"
 	"path/filepath"
 	"runtime"
 	"sort"
 	"strings"
 	"time"
-
-	"github.com/playwright-community/playwright-go"
 )
 
 const (
 	runtimeAssetManifestSchemaVersion = 1
 	runtimeAssetReadyMarker           = ".gomoufox-runtime-ready"
+	playwrightDriverNodeVersion       = "24.11.1"
+	playwrightCoreArchiveMaxBytes     = 32 << 20
+	playwrightCoreExtractedMaxBytes   = 64 << 20
+	playwrightCoreMaxEntries          = 4096
+	playwrightNodeArchiveMaxBytes     = 128 << 20
+	playwrightNodeBinaryMaxBytes      = 192 << 20
 )
 
 var (
@@ -30,7 +40,29 @@ var (
 	installCamoufoxBrowserForRuntime  = installRuntimeCamoufoxBrowser
 	runtimeAssetHTTPClient            = http.DefaultClient
 	camoufoxReleaseAssetBaseURL       = "https://github.com/daijro/camoufox/releases/download"
+	// The package digest is npm's dist.integrity SHA-512 for
+	// playwright-core@1.57.0. Node 24.11.1 and the per-platform SHA-256 values
+	// come from Playwright v1.57.0's build-playwright-driver.sh and Node's signed
+	// SHASUMS256.txt release manifest.
+	playwrightCorePackageURL     = "https://registry.npmjs.org/playwright-core/-/playwright-core-1.57.0.tgz"
+	playwrightCorePackageSHA512  = "6a04dc2a5330fe68c158e9c3ea4159b6d000187822fcdc34099da8e89a9649b325236d7d94014b6590b2a81c93b2f54026ae570391fc700e8faef051a41584b9"
+	playwrightNodeReleaseBaseURL = "https://nodejs.org/dist"
+	playwrightNodeAssets         = map[string]playwrightNodeAsset{
+		"darwin/arm64": {
+			Filename: "node-v24.11.1-darwin-arm64.tar.gz",
+			SHA256:   "b05aa3a66efe680023f930bd5af3fdbbd542794da5644ca2ad711d68cbd4dc35",
+		},
+		"linux/amd64": {
+			Filename: "node-v24.11.1-linux-x64.tar.gz",
+			SHA256:   "58a5ff5cc8f2200e458bea22e329d5c1994aa1b111d499ca46ec2411d58239ca",
+		},
+	}
 )
+
+type playwrightNodeAsset struct {
+	Filename string
+	SHA256   string
+}
 
 type RuntimeAssetKind string
 
@@ -120,9 +152,9 @@ func NewRuntimeAssetManifest(root RuntimeRoot, goos, goarch string) RuntimeAsset
 		PlaywrightVersion: RequiredPlaywrightJSON,
 		GeneratedAt:       time.Now().UTC().Format(time.RFC3339),
 		Assets: []RuntimeAssetRecord{
-			{Name: "node", Kind: RuntimeAssetNodeJS, GOOS: goos, GOARCH: goarch, Path: relPath(root.Root, root.NodeJS), Source: "gomoufox-release-asset://node", License: "Node.js"},
+			{Name: "node", Kind: RuntimeAssetNodeJS, GOOS: goos, GOARCH: goarch, Path: relPath(root.Root, root.NodeJS), Source: playwrightNodeSource(goos, goarch), License: "Node.js"},
 			{Name: "launch-server", Kind: RuntimeAssetLaunchServerJS, GOOS: goos, GOARCH: goarch, Path: relPath(root.Root, root.LaunchServerJS), Source: "gomoufox-release-asset://launch-server", License: "Apache-2.0"},
-			{Name: "playwright-package", Kind: RuntimeAssetPlaywrightPackage, GOOS: goos, GOARCH: goarch, Path: relPath(root.Root, root.PlaywrightPackageDir), Source: "gomoufox-release-asset://playwright-package", License: "Apache-2.0"},
+			{Name: "playwright-package", Kind: RuntimeAssetPlaywrightPackage, GOOS: goos, GOARCH: goarch, Path: relPath(root.Root, root.PlaywrightPackageDir), Source: playwrightCorePackageURL, License: "Apache-2.0"},
 			{Name: "camoufox-browser", Kind: RuntimeAssetCamoufoxBrowser, GOOS: goos, GOARCH: goarch, Path: relPath(root.Root, root.BrowserResourcesDir), Source: "gomoufox-release-asset://camoufox-browser", License: "MPL-2.0"},
 		},
 	}
@@ -371,17 +403,292 @@ func installRuntimePlaywrightDriver(ctx context.Context, root RuntimeRoot, opts 
 		return ctx.Err()
 	default:
 	}
-	driver, err := playwright.NewDriver(&playwright.RunOptions{
-		DriverDirectory:     root.PlaywrightDriverDir,
-		SkipInstallBrowsers: true,
-		Verbose:             opts.Verbose,
-		Stdout:              installDiagnosticWriter,
-		Stderr:              installDiagnosticWriter,
-	})
+	if !opts.ForceReinstall && verifyPinnedPlaywrightDriver(ctx, root.PlaywrightDriverDir) == nil {
+		return nil
+	}
+	if opts.SkipBinaryFetch || os.Getenv("GOMOUFOX_SKIP_FETCH") != "" {
+		return fmt.Errorf("%w: pinned Playwright driver is unavailable and fetch is disabled", ErrNotInstalled)
+	}
+
+	nodeAsset, ok := playwrightNodeAssets[sidecarGOOS+"/"+sidecarGOARCH]
+	if !ok {
+		return fmt.Errorf("%w: no pinned Playwright Node.js asset for %s/%s", ErrNotInstalled, sidecarGOOS, sidecarGOARCH)
+	}
+	coreArchive, err := downloadRuntimeAssetBytes(ctx, playwrightCorePackageURL, playwrightCoreArchiveMaxBytes)
+	if err != nil {
+		return fmt.Errorf("%w: download pinned playwright-core %s: %v", ErrNotInstalled, RequiredPlaywright, err)
+	}
+	coreSum := sha512.Sum512(coreArchive)
+	if !strings.EqualFold(hex.EncodeToString(coreSum[:]), playwrightCorePackageSHA512) {
+		return fmt.Errorf("%w: playwright-core %s archive checksum mismatch", ErrVersionMismatch, RequiredPlaywright)
+	}
+	nodeURL := strings.TrimRight(playwrightNodeReleaseBaseURL, "/") + "/v" + playwrightDriverNodeVersion + "/" + nodeAsset.Filename
+	nodeArchive, err := downloadRuntimeAssetBytes(ctx, nodeURL, playwrightNodeArchiveMaxBytes)
+	if err != nil {
+		return fmt.Errorf("%w: download pinned Playwright Node.js %s: %v", ErrNotInstalled, playwrightDriverNodeVersion, err)
+	}
+	nodeSum := sha256.Sum256(nodeArchive)
+	if !strings.EqualFold(hex.EncodeToString(nodeSum[:]), nodeAsset.SHA256) {
+		return fmt.Errorf("%w: Playwright Node.js %s archive checksum mismatch", ErrVersionMismatch, playwrightDriverNodeVersion)
+	}
+
+	parent := filepath.Dir(root.PlaywrightDriverDir)
+	if err := os.MkdirAll(parent, 0o700); err != nil {
+		return err
+	}
+	staging, err := os.MkdirTemp(parent, ".playwright-driver-")
 	if err != nil {
 		return err
 	}
-	return driver.Install()
+	defer func() { _ = os.RemoveAll(staging) }()
+	if err := extractPlaywrightCoreArchive(coreArchive, staging); err != nil {
+		return err
+	}
+	if err := extractPlaywrightNodeArchive(nodeArchive, nodeAsset.Filename, staging); err != nil {
+		return err
+	}
+	if err := verifyPinnedPlaywrightDriver(ctx, staging); err != nil {
+		return err
+	}
+	return replaceRuntimeDirectory(staging, root.PlaywrightDriverDir)
+}
+
+// EnsureManagedPlaywrightDriver installs the exact driver used by both the
+// node-direct and legacy Python runtimes. It avoids playwright-go's retired
+// driver CDN without changing the pinned Playwright protocol version.
+func EnsureManagedPlaywrightDriver(ctx context.Context, opts InstallOptions) error {
+	venvDir := opts.VenvDir
+	if venvDir == "" {
+		venvDir = DefaultCacheDir()
+	}
+	opts.VenvDir = venvDir
+	lock, err := acquireInstallLock(ctx, venvDir)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = lock.Release() }()
+	root := RuntimeAssetCacheRoot(venvDir, sidecarGOOS, sidecarGOARCH)
+	return installRuntimePlaywrightDriver(ctx, root, opts)
+}
+
+func playwrightNodeSource(goos, goarch string) string {
+	asset, ok := playwrightNodeAssets[goos+"/"+goarch]
+	if !ok {
+		return ""
+	}
+	return strings.TrimRight(playwrightNodeReleaseBaseURL, "/") + "/v" + playwrightDriverNodeVersion + "/" + asset.Filename
+}
+
+func downloadRuntimeAssetBytes(ctx context.Context, rawURL string, maxBytes int64) ([]byte, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := runtimeAssetHTTPClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode < 200 || resp.StatusCode > 299 {
+		return nil, fmt.Errorf("HTTP %s", resp.Status)
+	}
+	if resp.ContentLength > maxBytes {
+		return nil, fmt.Errorf("archive exceeds %d-byte limit", maxBytes)
+	}
+	raw, err := io.ReadAll(io.LimitReader(resp.Body, maxBytes+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(raw)) > maxBytes {
+		return nil, fmt.Errorf("archive exceeds %d-byte limit", maxBytes)
+	}
+	return raw, nil
+}
+
+func extractPlaywrightCoreArchive(raw []byte, dst string) error {
+	gz, err := gzip.NewReader(bytes.NewReader(raw))
+	if err != nil {
+		return fmt.Errorf("%w: read playwright-core archive: %v", ErrVersionMismatch, err)
+	}
+	defer func() { _ = gz.Close() }()
+	tr := tar.NewReader(gz)
+	var total int64
+	entries := 0
+	for {
+		header, err := tr.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return fmt.Errorf("%w: read playwright-core archive: %v", ErrVersionMismatch, err)
+		}
+		entries++
+		if entries > playwrightCoreMaxEntries {
+			return fmt.Errorf("%w: playwright-core archive has too many entries", ErrVersionMismatch)
+		}
+		name, err := safeRuntimeArchiveMember(header.Name, "package")
+		if err != nil {
+			return err
+		}
+		if header.Typeflag == tar.TypeDir {
+			if err := os.MkdirAll(filepath.Join(dst, filepath.FromSlash(name)), 0o700); err != nil {
+				return err
+			}
+			continue
+		}
+		if header.Typeflag != tar.TypeReg && header.Typeflag != tar.TypeRegA {
+			return fmt.Errorf("%w: unsupported playwright-core archive member %q", ErrVersionMismatch, header.Name)
+		}
+		if header.Size < 0 || header.Size > playwrightCoreExtractedMaxBytes-total {
+			return fmt.Errorf("%w: playwright-core archive exceeds extracted-size limit", ErrVersionMismatch)
+		}
+		total += header.Size
+		target := filepath.Join(dst, filepath.FromSlash(name))
+		if err := os.MkdirAll(filepath.Dir(target), 0o700); err != nil {
+			return err
+		}
+		mode := os.FileMode(0o600)
+		if os.FileMode(header.Mode).Perm()&0o111 != 0 {
+			mode = 0o700
+		}
+		out, err := os.OpenFile(target, os.O_CREATE|os.O_EXCL|os.O_WRONLY, mode)
+		if err != nil {
+			return err
+		}
+		_, copyErr := io.CopyN(out, tr, header.Size)
+		closeErr := out.Close()
+		if copyErr != nil {
+			return copyErr
+		}
+		if closeErr != nil {
+			return closeErr
+		}
+	}
+	for _, required := range []string{"cli.js", "package.json"} {
+		if st, err := os.Stat(filepath.Join(dst, "package", required)); err != nil || !st.Mode().IsRegular() {
+			return fmt.Errorf("%w: playwright-core archive missing package/%s", ErrVersionMismatch, required)
+		}
+	}
+	return nil
+}
+
+func extractPlaywrightNodeArchive(raw []byte, filename, dst string) error {
+	gz, err := gzip.NewReader(bytes.NewReader(raw))
+	if err != nil {
+		return fmt.Errorf("%w: read Playwright Node.js archive: %v", ErrVersionMismatch, err)
+	}
+	defer func() { _ = gz.Close() }()
+	archiveRoot := strings.TrimSuffix(filename, ".tar.gz")
+	wanted := archiveRoot + "/bin/node"
+	tr := tar.NewReader(gz)
+	for {
+		header, err := tr.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return fmt.Errorf("%w: read Playwright Node.js archive: %v", ErrVersionMismatch, err)
+		}
+		if path.Clean(header.Name) != wanted {
+			continue
+		}
+		if header.Typeflag != tar.TypeReg && header.Typeflag != tar.TypeRegA {
+			return fmt.Errorf("%w: Playwright Node.js binary is not a regular file", ErrVersionMismatch)
+		}
+		if header.Size <= 0 || header.Size > playwrightNodeBinaryMaxBytes {
+			return fmt.Errorf("%w: Playwright Node.js binary has invalid size", ErrVersionMismatch)
+		}
+		target := filepath.Join(dst, nodeExecutableName())
+		out, err := os.OpenFile(target, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o700)
+		if err != nil {
+			return err
+		}
+		_, copyErr := io.CopyN(out, tr, header.Size)
+		closeErr := out.Close()
+		if copyErr != nil {
+			return copyErr
+		}
+		if closeErr != nil {
+			return closeErr
+		}
+		return nil
+	}
+	return fmt.Errorf("%w: Playwright Node.js archive missing %s", ErrVersionMismatch, wanted)
+}
+
+func safeRuntimeArchiveMember(name, requiredRoot string) (string, error) {
+	clean := path.Clean(strings.ReplaceAll(name, "\\", "/"))
+	if clean == requiredRoot || !strings.HasPrefix(clean, requiredRoot+"/") || strings.HasPrefix(clean, "/") {
+		return "", fmt.Errorf("%w: unsafe runtime archive member %q", ErrVersionMismatch, name)
+	}
+	return clean, nil
+}
+
+func verifyPinnedPlaywrightDriver(ctx context.Context, driverDir string) error {
+	node := filepath.Join(driverDir, nodeExecutableName())
+	if st, err := os.Stat(node); err != nil || !st.Mode().IsRegular() || st.Mode().Perm()&0o111 == 0 {
+		return fmt.Errorf("%w: pinned Playwright Node.js executable is unavailable", ErrNotInstalled)
+	}
+	packageJSON := filepath.Join(driverDir, "package", "package.json")
+	raw, err := os.ReadFile(packageJSON)
+	if err != nil {
+		return fmt.Errorf("%w: read pinned playwright-core package: %v", ErrNotInstalled, err)
+	}
+	var pkg struct {
+		Version string `json:"version"`
+	}
+	if err := json.Unmarshal(raw, &pkg); err != nil {
+		return fmt.Errorf("%w: decode pinned playwright-core package: %v", ErrVersionMismatch, err)
+	}
+	if pkg.Version != RequiredPlaywright {
+		return fmt.Errorf("%w: installed playwright-core %s, required %s", ErrVersionMismatch, pkg.Version, RequiredPlaywright)
+	}
+	cli := filepath.Join(driverDir, "package", "cli.js")
+	if st, err := os.Stat(cli); err != nil || !st.Mode().IsRegular() {
+		return fmt.Errorf("%w: pinned Playwright CLI is unavailable", ErrNotInstalled)
+	}
+	out, err := exec.CommandContext(ctx, node, cli, "--version").CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("%w: run pinned Playwright CLI: %v", ErrVersionMismatch, err)
+	}
+	if strings.TrimSpace(string(out)) != "Version "+RequiredPlaywright {
+		return fmt.Errorf("%w: pinned Playwright CLI reported an unexpected version", ErrVersionMismatch)
+	}
+	return nil
+}
+
+func replaceRuntimeDirectory(source, target string) error {
+	parent := filepath.Dir(target)
+	backup := ""
+	if _, err := os.Lstat(target); err == nil {
+		placeholder, err := os.MkdirTemp(parent, ".playwright-backup-")
+		if err != nil {
+			return err
+		}
+		if err := os.Remove(placeholder); err != nil {
+			return err
+		}
+		backup = placeholder
+		if err := os.Rename(target, backup); err != nil {
+			return err
+		}
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+	if err := os.Rename(source, target); err != nil {
+		if backup != "" {
+			if restoreErr := os.Rename(backup, target); restoreErr != nil {
+				return fmt.Errorf("replace Playwright driver: %v; restore previous driver: %w", err, restoreErr)
+			}
+		}
+		return err
+	}
+	if backup != "" {
+		if err := os.RemoveAll(backup); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func installRuntimeCamoufoxBrowser(ctx context.Context, root RuntimeRoot, opts InstallOptions) error {
@@ -390,26 +697,41 @@ func installRuntimeCamoufoxBrowser(ctx context.Context, root RuntimeRoot, opts I
 		return ctx.Err()
 	default:
 	}
-	source := firstNonEmpty(opts.CamoufoxPath, os.Getenv(EnvCamoufoxPath))
-	if source == "" {
-		for _, candidateRoot := range camoufoxBrowserCacheRoots() {
-			if candidate, err := discoverUsableBrowserDir(candidateRoot); err == nil {
-				source = candidate
-				break
+	explicitSource := firstNonEmpty(opts.CamoufoxPath, os.Getenv(EnvCamoufoxPath))
+	if explicitSource != "" {
+		if err := validateCamoufoxBrowserDir(explicitSource); err != nil {
+			return fmt.Errorf("%w: invalid Camoufox browser asset source %s: %v", ErrNotInstalled, explicitSource, err)
+		}
+		if !trustUnverifiedCamoufoxPath() {
+			if err := verifyCamoufoxManifest(explicitSource); err != nil {
+				return fmt.Errorf("%w: offline Camoufox browser path %s failed manifest verification: %v; set %s=1 only for trusted local builds", ErrVersionMismatch, explicitSource, err, EnvTrustUnverifiedCamoufoxPath)
+			}
+		}
+		return copyRuntimeCamoufoxBrowser(explicitSource, root)
+	}
+
+	if !opts.ForceReinstall {
+		if err := validateCamoufoxBrowserDir(root.BrowserResourcesDir); err == nil {
+			if trustUnverifiedCamoufoxPath() || verifyCamoufoxManifest(root.BrowserResourcesDir) == nil {
+				return nil
 			}
 		}
 	}
-	if source == "" {
-		return downloadRuntimeCamoufoxBrowser(ctx, root, opts)
-	}
-	if err := validateCamoufoxBrowserDir(source); err != nil {
-		return fmt.Errorf("%w: invalid Camoufox browser asset source %s: %v", ErrNotInstalled, source, err)
-	}
-	if !trustUnverifiedCamoufoxPath() {
-		if err := verifyCamoufoxManifest(source); err != nil {
-			return err
+
+	// Camoufox's Python package fetches the newest supported browser into a
+	// global cache. Reuse that cache only when it matches gomoufox's exact pin;
+	// a valid but newer tree must not be mistaken for the pinned runtime.
+	for _, candidateRoot := range camoufoxBrowserCacheRoots() {
+		candidate, err := discoverUsableBrowserDir(candidateRoot)
+		if err != nil || verifyCamoufoxManifest(candidate) != nil {
+			continue
 		}
+		return copyRuntimeCamoufoxBrowser(candidate, root)
 	}
+	return downloadRuntimeCamoufoxBrowser(ctx, root, opts)
+}
+
+func copyRuntimeCamoufoxBrowser(source string, root RuntimeRoot) error {
 	if sameFileTree(source, root.BrowserResourcesDir) {
 		return nil
 	}
@@ -505,15 +827,10 @@ func downloadRuntimeCamoufoxBrowser(ctx context.Context, root RuntimeRoot, opts 
 	if err != nil {
 		return fmt.Errorf("%w: downloaded Camoufox browser asset is unusable: %v", ErrNotInstalled, err)
 	}
-	if !trustUnverifiedCamoufoxPath() {
-		if err := verifyCamoufoxManifest(source); err != nil {
-			return err
-		}
-	}
-	if err := os.RemoveAll(root.BrowserResourcesDir); err != nil {
+	if err := verifyCamoufoxManifest(source); err != nil {
 		return err
 	}
-	return copyTree(source, root.BrowserResourcesDir)
+	return copyRuntimeCamoufoxBrowser(source, root)
 }
 
 func discoverDownloadedBrowserDir(root string) (string, error) {

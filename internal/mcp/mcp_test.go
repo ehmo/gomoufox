@@ -10,12 +10,16 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"runtime"
+	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/ehmo/gomoufox"
 	"github.com/ehmo/gomoufox/internal/content"
+	"github.com/ehmo/gomoufox/internal/harcapture"
 	"github.com/ehmo/gomoufox/internal/netguard"
 	"github.com/ehmo/gomoufox/internal/policy"
 	skillreg "github.com/ehmo/gomoufox/internal/skills"
@@ -69,7 +73,7 @@ func TestToolsCatalogIncludesCoreAndSessionTools(t *testing.T) {
 			t.Fatalf("%s exposes unsafe_direct_network", tool.Name)
 		}
 	}
-	for _, name := range []string{"browser_navigate", "browser_click", "browser_type", "browser_press_key", "browser_hover", "browser_scroll", "browser_select_option", "browser_set_checked", "browser_upload_file", "browser_download", "browser_dialog", "browser_form_batch", "browser_wait_for", "browser_evaluate", "browser_console_messages", "browser_network_requests", "browser_performance_snapshot", "session_create", "session_list", "skills_list", "skills_get"} {
+	for _, name := range []string{"browser_navigate", "browser_click", "browser_type", "browser_press_key", "browser_hover", "browser_scroll", "browser_select_option", "browser_set_checked", "browser_upload_file", "browser_download", "browser_dialog", "browser_form_batch", "browser_wait_for", "browser_evaluate", "browser_fetch", "browser_fetch_form", "browser_console_messages", "browser_network_requests", "browser_performance_snapshot", "browser_har_start", "browser_har_stop", "session_create", "session_list", "skills_list", "skills_get"} {
 		if !seen[name] {
 			t.Fatalf("missing tool %s", name)
 		}
@@ -93,12 +97,12 @@ func TestCoreToolsetTrimsAgentDiscoverySurface(t *testing.T) {
 		t.Fatalf("core toolset length = %d, full = %d", len(core), len(full))
 	}
 	names := toolNames(core)
-	for _, want := range []string{"browser_navigate", "browser_snapshot", "browser_click", "browser_form_batch", "session_list", "skills_get"} {
+	for _, want := range []string{"browser_navigate", "browser_snapshot", "browser_click", "browser_form_batch", "browser_har_start", "browser_har_stop", "session_list", "skills_get"} {
 		if !names[want] {
 			t.Fatalf("core toolset missing %s", want)
 		}
 	}
-	for _, hidden := range []string{"browser_evaluate", "browser_fetch", "browser_cookies", "browser_network_requests", "session_save", "session_load", "browser_upload_file", "browser_download"} {
+	for _, hidden := range []string{"browser_evaluate", "browser_fetch", "browser_fetch_form", "browser_cookies", "browser_network_requests", "session_save", "session_load", "browser_upload_file", "browser_download"} {
 		if names[hidden] {
 			t.Fatalf("core toolset includes %s", hidden)
 		}
@@ -293,6 +297,13 @@ func TestToolsCatalogSchemasMatchSpecCriticalFields(t *testing.T) {
 	requireFields(t, tools["browser_fetch"], "url")
 	assertEnum(t, tools["browser_fetch"], "method", "GET", "POST", "PUT", "PATCH", "DELETE", "HEAD")
 	assertProp(t, tools["browser_fetch"], "body", "maxLength", policy.FetchBodyInputBytes)
+	requireFields(t, tools["browser_fetch_form"], "url", "files")
+	assertEnum(t, tools["browser_fetch_form"], "method", "POST", "PUT", "PATCH", "DELETE")
+	assertProp(t, tools["browser_fetch_form"], "files", "minItems", 1)
+	assertProp(t, tools["browser_fetch_form"], "files", "maxItems", maxUploadFiles)
+	assertProp(t, tools["browser_fetch_form"], "fields", "maxItems", maxFormFetchFields)
+	assertNestedObjectProp(t, tools["browser_fetch_form"], "files", "path", "maxLength", maxUploadPathBytes)
+	assertNestedObjectProp(t, tools["browser_fetch_form"], "fields", "value", "maxLength", maxFormFetchFieldValueBytes)
 	assertProp(t, tools["browser_console_messages"], "max_events", "minimum", 1)
 	assertProp(t, tools["browser_console_messages"], "max_events", "maximum", maxObservationEvents)
 	assertProp(t, tools["browser_console_messages"], "max_events", "default", defaultObservationEvents)
@@ -311,6 +322,14 @@ func TestToolsCatalogSchemasMatchSpecCriticalFields(t *testing.T) {
 	assertSchemaDescriptionDocuments(t, tools["session_load"], "Exactly one of path or state must be provided.")
 	requireFields(t, tools["session_create"], "session_id")
 	assertEnum(t, tools["session_create"], "os", "windows", "macos", "linux")
+	requireFields(t, tools["browser_har_start"], "session_id", "path")
+	assertEnum(t, tools["browser_har_start"], "capture", "metadata", "full")
+	assertProp(t, tools["browser_har_start"], "path", "maxLength", maxHARPathBytes)
+	assertProp(t, tools["browser_har_start"], "url_filter", "maxLength", harcapture.MaxFilterBytes)
+	assertProp(t, tools["browser_har_start"], "max_bytes", "maximum", int(harcapture.HardMaxBytes))
+	assertProp(t, tools["browser_har_start"], "duration_ms", "minimum", 1000)
+	assertProp(t, tools["browser_har_start"], "duration_ms", "maximum", int(maxHARRecordingDuration/time.Millisecond))
+	requireFields(t, tools["browser_har_stop"], "session_id")
 	requireFields(t, tools["session_destroy"], "session_id")
 	if props := propertiesOf(tools["session_list"]); len(props) != 0 {
 		t.Fatalf("session_list props = %#v", props)
@@ -365,6 +384,11 @@ func TestToolsCatalogRiskMetadataAndAnnotations(t *testing.T) {
 	assertPropDescriptionContains(t, tools["browser_fetch"], "url", "--allow-browser-fetch")
 	assertPropDescriptionContains(t, tools["browser_fetch"], "url", "--allowed-origins")
 	assertPropDescriptionContains(t, tools["browser_fetch"], "url", "--allowed-hosts")
+	assertToolRisk(t, tools["browser_fetch_form"], "high", true, "--allow-browser-fetch", "--allow-browser-file-fetch", "--allowed-origins/--allowed-hosts", "network_policy", "--session-dir")
+	assertAnnotation(t, tools["browser_fetch_form"], "destructiveHint", true)
+	assertAnnotation(t, tools["browser_fetch_form"], "openWorldHint", true)
+	assertPropDescriptionContains(t, tools["browser_fetch_form"], "url", "--allow-browser-file-fetch")
+	assertPropDescriptionContains(t, tools["browser_fetch_form"], "files", "--session-dir")
 	assertToolRisk(t, tools["browser_cookies"], "high", false, "--allow-cookie-values", "--allow-cookie-mutation")
 	assertPropDescriptionContains(t, tools["browser_cookies"], "action", "--allow-cookie-mutation")
 	assertPropDescriptionContains(t, tools["browser_cookies"], "cookies", "--allow-cookie-mutation")
@@ -378,6 +402,10 @@ func TestToolsCatalogRiskMetadataAndAnnotations(t *testing.T) {
 	assertToolRisk(t, tools["session_create"], "high", false, "--allow-session-proxy", "--allow-session-import")
 	assertPropDescriptionContains(t, tools["session_create"], "proxy", "--allow-session-proxy")
 	assertPropDescriptionContains(t, tools["session_create"], "storage_state_path", "--allow-session-import")
+	assertToolRisk(t, tools["browser_har_start"], "high", false, "--allow-har-recording", "--allow-har-sensitive-values")
+	assertAnnotation(t, tools["browser_har_start"], "destructiveHint", true)
+	assertToolRisk(t, tools["browser_har_stop"], "high", true, "--allow-har-recording")
+	assertAnnotation(t, tools["browser_har_stop"], "destructiveHint", true)
 	assertToolRisk(t, tools["browser_snapshot"], "medium", true, "--allow-snapshot-values")
 	assertPropDescriptionContains(t, tools["browser_snapshot"], "include_values", "--allow-snapshot-values")
 	assertToolRisk(t, tools["browser_upload_file"], "high", false, "--allow-file-upload")
@@ -835,6 +863,171 @@ func TestBrowserFetchUsesBrowserSessionAndCapsBody(t *testing.T) {
 	if call.URL != "https://api.example.com/me" || call.Method != "POST" || string(call.Body) != "{}" || call.NavigateFirst != "https://api.example.com" || call.MaxBytes != 8 || call.Headers["content-type"] != "application/json" {
 		t.Fatalf("fetch call = %#v", call)
 	}
+}
+
+func TestBrowserFetchBinaryResponseUsesBase64(t *testing.T) {
+	session := &fakeBrowserSession{fetchResult: fetchResult{
+		URL:     "https://api.example.com/blob",
+		Status:  200,
+		Headers: map[string]string{"content-type": "application/octet-stream"},
+		Body:    []byte{0xff, 0x00, 0x01},
+	}}
+	cfg := defaultTestConfig(t)
+	cfg.Policy.AllowBrowserFetch = true
+	cfg.Policy.AllowedHosts = []string{"api.example.com"}
+	cfg.Validator = &fakeValidator{}
+	cfg.BrowserFactory = &fakeBrowserFactory{session: session}
+	server := newTestServer(t, cfg)
+
+	resp := server.Handle(context.Background(), "browser_fetch", raw(`{"url":"https://api.example.com/blob"}`))
+	if resp.IsError || resp.Payload["body_encoding"] != "base64" || resp.Payload["body_base64"] != "/wAB" || resp.Payload["bytes"] != 3 {
+		t.Fatalf("binary fetch response = %#v", resp)
+	}
+	if _, ok := resp.Payload["body"]; ok {
+		t.Fatalf("binary fetch should not expose lossy body: %#v", resp.Payload)
+	}
+}
+
+func TestBrowserFetchFormUsesJailedFilesAndBinaryResponse(t *testing.T) {
+	session := &fakeBrowserSession{fetchFormResult: fetchResult{
+		URL:    "https://api.example.com/upload",
+		Status: 201,
+		Headers: map[string]string{
+			"content-type": "application/octet-stream",
+			"x-csrf-token": "csrf-secret",
+			"x-api-key":    "api-secret",
+		},
+		Body: []byte{0xff, 0x00, 0x01},
+	}}
+	cfg := defaultTestConfig(t)
+	cfg.Policy.AllowBrowserFetch = true
+	cfg.Policy.AllowBrowserFileFetch = true
+	cfg.Policy.AllowedHosts = []string{"api.example.com", "app.example.com"}
+	cfg.Validator = &fakeValidator{}
+	cfg.BrowserFactory = &fakeBrowserFactory{session: session}
+	uploadPath := filepath.Join(cfg.SessionDir, "upload.bin")
+	if err := os.WriteFile(uploadPath, []byte{0x00, 0xff, 0x41}, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	resolvedUploadPath, err := filepath.EvalSymlinks(uploadPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := newTestServer(t, cfg)
+
+	resp := server.Handle(context.Background(), "browser_fetch_form", raw(`{"url":"https://api.example.com/upload","method":"POST","headers":{"x-requested-with":"gomoufox"},"fields":[{"name":"title","value":"private-title"},{"name":"title","value":"duplicate"}],"files":[{"name":"image","path":"upload.bin"}],"navigate_first":"https://app.example.com/editor","max_bytes":16,"timeout_ms":1500,"session_id":"work"}`))
+	if resp.IsError {
+		t.Fatalf("fetch form response = %#v", resp)
+	}
+	if resp.Payload["url"] != "https://api.example.com/upload" || resp.Payload["status"] != 201 || resp.Payload["body_encoding"] != "base64" || resp.Payload["body_base64"] != "/wAB" || resp.Payload["bytes"] != 3 || resp.Payload["file_count"] != 1 || resp.Payload["field_count"] != 2 || resp.Payload["session_id"] != "work" {
+		t.Fatalf("fetch form payload = %#v", resp.Payload)
+	}
+	headers := resp.Payload["headers"].(map[string]string)
+	if headers["x-csrf-token"] != "<redacted>" || headers["x-api-key"] != "<redacted>" {
+		t.Fatalf("sensitive form headers not redacted: %#v", headers)
+	}
+	if got := mustJSONText(resp.Payload); strings.Contains(got, uploadPath) || strings.Contains(got, "upload.bin") || strings.Contains(got, "private-title") || strings.Contains(got, "csrf-secret") || strings.Contains(got, "api-secret") {
+		t.Fatalf("fetch form payload leaked local path, field, or header secret: %s", got)
+	}
+	if len(session.fetchFormCalls) != 1 {
+		t.Fatalf("fetch form calls = %#v", session.fetchFormCalls)
+	}
+	call := session.fetchFormCalls[0]
+	if call.URL != "https://api.example.com/upload" || call.Method != "POST" || call.NavigateFirst != "https://app.example.com/editor" || call.MaxBytes != 16 || call.Timeout != 1500*time.Millisecond || call.Headers["x-requested-with"] != "gomoufox" {
+		t.Fatalf("fetch form call metadata = %#v", call)
+	}
+	if len(call.Fields) != 2 || call.Fields[0].Name != "title" || call.Fields[1].Value != "duplicate" {
+		t.Fatalf("fetch form fields = %#v", call.Fields)
+	}
+	if len(call.Files) != 1 || call.Files[0].Name != "image" || call.Files[0].Path != resolvedUploadPath {
+		t.Fatalf("fetch form files = %#v", call.Files)
+	}
+}
+
+func TestBrowserFetchFormGuards(t *testing.T) {
+	cfg := defaultTestConfig(t)
+	server := newTestServer(t, cfg)
+	args := raw(`{"url":"https://api.example.com/upload","files":[{"name":"image","path":"missing.bin"}]}`)
+	assertError(t, server.Handle(context.Background(), "browser_fetch_form", raw(`{}`)), "invalid_arguments")
+	assertError(t, server.Handle(context.Background(), "browser_fetch_form", raw(`{"url":"https://api.example.com/upload","method":"GET","files":[{"name":"image","path":"missing.bin"}]}`)), "invalid_arguments")
+	assertError(t, server.Handle(context.Background(), "browser_fetch_form", raw(`{"url":"https://api.example.com/upload","method":"TRACE","files":[{"name":"image","path":"missing.bin"}]}`)), "invalid_arguments")
+	assertError(t, server.Handle(context.Background(), "browser_fetch_form", raw(`{"url":"https://api.example.com/upload","timeout_ms":120001,"files":[{"name":"image","path":"missing.bin"}]}`)), "invalid_arguments")
+	assertError(t, server.Handle(context.Background(), "browser_fetch_form", raw(fmt.Sprintf(`{"url":"https://api.example.com/upload","max_bytes":%d,"files":[{"name":"image","path":"missing.bin"}]}`, policy.HardMaxResponseBytes+1))), "invalid_arguments")
+	assertError(t, server.Handle(context.Background(), "browser_fetch_form", raw(`{"url":"https://api.example.com/upload","headers":{"Content-Type":"multipart/form-data"},"files":[{"name":"image","path":"missing.bin"}]}`)), "invalid_arguments")
+	assertError(t, server.Handle(context.Background(), "browser_fetch_form", raw(`{"url":"https://api.example.com/upload","headers":{"x-long":"`+strings.Repeat("x", 4097)+`"},"files":[{"name":"image","path":"missing.bin"}]}`)), "invalid_arguments")
+	manyHeaders := map[string]string{}
+	for i := 0; i < 101; i++ {
+		manyHeaders[fmt.Sprintf("x-%03d", i)] = "v"
+	}
+	manyHeadersPayload, err := json.Marshal(map[string]any{
+		"url":     "https://api.example.com/upload",
+		"headers": manyHeaders,
+		"files":   []map[string]string{{"name": "image", "path": "missing.bin"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertError(t, server.Handle(context.Background(), "browser_fetch_form", raw(string(manyHeadersPayload))), "invalid_arguments")
+	assertError(t, server.Handle(context.Background(), "browser_fetch_form", raw(`{"url":"https://api.example.com/upload","fields":[{"name":"","value":"x"}],"files":[{"name":"image","path":"missing.bin"}]}`)), "invalid_arguments")
+	assertError(t, server.Handle(context.Background(), "browser_fetch_form", raw(`{"url":"https://api.example.com/upload","fields":[{"name":"`+strings.Repeat("n", maxFormFetchFieldNameBytes+1)+`","value":"x"}],"files":[{"name":"image","path":"missing.bin"}]}`)), "invalid_arguments")
+	assertError(t, server.browserFetchForm(context.Background(), raw(`{"url":"https://api.example.com/upload","fields":[{"name":"title","value":"`+strings.Repeat("v", maxFormFetchFieldValueBytes+1)+`"}],"files":[{"name":"image","path":"missing.bin"}]}`)), "invalid_arguments")
+	assertError(t, server.browserFetchForm(context.Background(), raw(`{"url":"https://api.example.com/upload","fields":[{"name":"title","value":"`+strings.Repeat("v", policy.FetchBodyInputBytes)+`"}],"files":[{"name":"image","path":"missing.bin"}]}`)), "invalid_arguments")
+	fieldParts := make([]string, maxFormFetchFields+1)
+	for i := range fieldParts {
+		fieldParts[i] = `{"name":"title","value":"x"}`
+	}
+	assertError(t, server.Handle(context.Background(), "browser_fetch_form", raw(`{"url":"https://api.example.com/upload","fields":[`+strings.Join(fieldParts, ",")+`],"files":[{"name":"image","path":"missing.bin"}]}`)), "invalid_arguments")
+	fileParts := make([]string, maxUploadFiles+1)
+	for i := range fileParts {
+		fileParts[i] = `{"name":"image","path":"missing.bin"}`
+	}
+	assertError(t, server.Handle(context.Background(), "browser_fetch_form", raw(`{"url":"https://api.example.com/upload","files":[`+strings.Join(fileParts, ",")+`]}`)), "invalid_arguments")
+	validationCfg := defaultTestConfig(t)
+	validationCfg.Policy.AllowBrowserFetch = true
+	validationCfg.Policy.AllowBrowserFileFetch = true
+	validationCfg.Policy.AllowedHosts = []string{"api.example.com"}
+	validationCfg.Validator = &fakeValidator{}
+	validationServer := newTestServer(t, validationCfg)
+	assertError(t, validationServer.Handle(context.Background(), "browser_fetch_form", raw(`{"url":"https://api.example.com/upload","files":[{"name":"","path":"missing.bin"}]}`)), "invalid_arguments")
+	assertError(t, validationServer.Handle(context.Background(), "browser_fetch_form", raw(`{"url":"https://api.example.com/upload","files":[{"name":"`+strings.Repeat("n", maxFormFetchFieldNameBytes+1)+`","path":"missing.bin"}]}`)), "invalid_arguments")
+	assertError(t, server.Handle(context.Background(), "browser_fetch_form", args), "browser_fetch_disabled")
+
+	cfg.Policy.AllowBrowserFetch = true
+	server = newTestServer(t, cfg)
+	assertError(t, server.Handle(context.Background(), "browser_fetch_form", args), "browser_file_fetch_disabled")
+
+	cfg.Policy.AllowBrowserFileFetch = true
+	server = newTestServer(t, cfg)
+	assertError(t, server.Handle(context.Background(), "browser_fetch_form", args), "browser_fetch_scope_required")
+
+	cfg.Policy.AllowedHosts = []string{"api.example.com", "127.0.0.1"}
+	server = newTestServer(t, cfg)
+	assertError(t, server.Handle(context.Background(), "browser_fetch_form", raw(`{"url":"http://127.0.0.1/admin","files":[{"name":"image","path":"missing.bin"}]}`)), "url_blocked")
+	cfg.Validator = &fakeValidator{}
+	server = newTestServer(t, cfg)
+	assertError(t, server.Handle(context.Background(), "browser_fetch_form", args), "path_rejected")
+
+	largePath := filepath.Join(cfg.SessionDir, "large.bin")
+	largeFile, err := os.Create(largePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := largeFile.Truncate(maxUploadFileBytes + 1); err != nil {
+		_ = largeFile.Close()
+		t.Fatal(err)
+	}
+	if err := largeFile.Close(); err != nil {
+		t.Fatal(err)
+	}
+	assertError(t, server.Handle(context.Background(), "browser_fetch_form", raw(`{"url":"https://api.example.com/upload","files":[{"name":"image","path":"large.bin"}]}`)), "file_too_large")
+
+	okPath := filepath.Join(cfg.SessionDir, "ok.bin")
+	if err := os.WriteFile(okPath, []byte("ok"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg.BrowserFactory = &fakeBrowserFactory{session: &fakeBrowserSession{fetchFormErr: errors.New("fetch form failed")}}
+	server = newTestServer(t, cfg)
+	assertError(t, server.Handle(context.Background(), "browser_fetch_form", raw(`{"url":"https://api.example.com/upload","files":[{"name":"image","path":"ok.bin"}]}`)), "browser_fetch_failed")
 }
 
 func TestBrowserFetchCapsReturnedHeaders(t *testing.T) {
@@ -1407,6 +1600,590 @@ func TestSessionCreateProxyAndPathGates(t *testing.T) {
 	}
 }
 
+const validMCPHAR = `{"log":{"version":"1.2","creator":{"name":"test","version":"1"},"entries":[{"startedDateTime":"2026-07-19T00:00:00Z","time":1,"request":{"method":"GET","url":"https://example.com/api/items?q=secret","httpVersion":"HTTP/2","cookies":[],"headers":[],"queryString":[],"headersSize":0,"bodySize":0},"response":{"status":200,"statusText":"OK","httpVersion":"HTTP/2","cookies":[],"headers":[],"content":{"size":0,"mimeType":"application/json"},"redirectURL":"","headersSize":0,"bodySize":0},"cache":{},"timings":{"send":0,"wait":1,"receive":0}}]}}`
+
+func TestBrowserHARStartStopAndLegacyDestroyGuard(t *testing.T) {
+	disabled := newTestServer(t, defaultTestConfig(t))
+	assertError(t, disabled.Handle(context.Background(), "browser_har_start", raw(`{"session_id":"rec","path":"capture.har"}`)), "har_recording_disabled")
+	assertError(t, disabled.Handle(context.Background(), "browser_har_stop", raw(`{"session_id":"rec"}`)), "har_recording_disabled")
+
+	session := &fakeBrowserSession{}
+	factory := &fakeBrowserFactory{session: session}
+	cfg := defaultTestConfig(t)
+	cfg.Policy.AllowHARRecording = true
+	cfg.Policy.AllowSessionImport = true
+	cfg.BrowserFactory = factory
+	server := newTestServer(t, cfg)
+	session.closeFunc = func() error {
+		return os.WriteFile(factory.requests[0].har.path, []byte(validMCPHAR), 0o600)
+	}
+	resp := server.Handle(context.Background(), "browser_har_start", raw(`{"session_id":"rec","path":"har/capture.har","url_filter":"**/api/**"}`))
+	if resp.IsError || resp.Payload["started"] != true || resp.Payload["session_id"] != "rec" || resp.Payload["path"] != "har/capture.har" || resp.Payload["capture"] != "metadata" || resp.Payload["max_bytes"] != int64(harcapture.DefaultMaxBytes) {
+		t.Fatalf("start response = %#v", resp)
+	}
+	if len(factory.requests) != 1 || factory.requests[0].har == nil {
+		t.Fatalf("factory requests = %#v", factory.requests)
+	}
+	harOpts := factory.requests[0].har
+	if harOpts.path != filepath.Join(server.jail.Root, "har", "capture.har") || harOpts.responsePath != "har/capture.har" || harOpts.capture != "metadata" || harOpts.urlFilter != "**/api/**" || harOpts.duration != defaultHARRecordingDuration {
+		t.Fatalf("HAR options = %#v", harOpts)
+	}
+	assertError(t, server.Handle(context.Background(), "session_destroy", raw(`{"session_id":"rec"}`)), "har_stop_required")
+	assertError(t, server.Handle(context.Background(), "session_load", raw(`{"session_id":"rec","state":{"cookies":[],"origins":[]}}`)), "har_stop_required")
+	if len(session.loadStates) != 0 {
+		t.Fatalf("session_load mutated recording context: %#v", session.loadStates)
+	}
+	resp = server.Handle(context.Background(), "browser_navigate", raw(`{"session_id":"rec","url":"https://example.com"}`))
+	if resp.IsError || len(factory.requests) != 1 {
+		t.Fatalf("recording navigate response=%#v requests=%#v", resp, factory.requests)
+	}
+	resp = server.Handle(context.Background(), "browser_har_stop", raw(`{"session_id":"rec"}`))
+	if resp.IsError || resp.Payload["stopped"] != true || session.closeCalls != 1 {
+		t.Fatalf("stop response = %#v close calls=%d", resp, session.closeCalls)
+	}
+	harPayload, ok := resp.Payload["har"].(map[string]any)
+	if !ok || harPayload["path"] != "har/capture.har" || harPayload["capture"] != "metadata" || harPayload["entries"] != 1 {
+		t.Fatalf("HAR payload = %#v", resp.Payload["har"])
+	}
+	routes, ok := resp.Payload["routes"].([]harcapture.Route)
+	if !ok || len(routes) != 1 || routes[0].URL != "https://example.com/api/items?q=%3Credacted%3E" {
+		t.Fatalf("routes = %#v", resp.Payload["routes"])
+	}
+	if resp.Payload["routes_truncated"] != false || resp.Payload["provenance"].(map[string]any)["trust"] != "untrusted" {
+		t.Fatalf("route metadata = %#v", resp.Payload)
+	}
+	encoded, _ := json.Marshal(resp)
+	if strings.Contains(string(encoded), server.jail.Root) {
+		t.Fatalf("stop leaked absolute path: %s", encoded)
+	}
+	assertError(t, server.Handle(context.Background(), "browser_har_stop", raw(`{"session_id":"rec"}`)), "har_not_recording")
+	if sessions := sessionList(t, server.Handle(context.Background(), "session_list", raw(`{}`))); len(sessions) != 0 {
+		t.Fatalf("recording session remains: %#v", sessions)
+	}
+}
+
+func TestBrowserHARDestinationReservedUntilFinalizationCompletes(t *testing.T) {
+	sessionA := &fakeBrowserSession{}
+	sessionB := &fakeBrowserSession{}
+	factory := &fakeBrowserFactory{sessions: []*fakeBrowserSession{sessionA, sessionB}}
+	cfg := defaultTestConfig(t)
+	cfg.Policy.AllowHARRecording = true
+	cfg.BrowserFactory = factory
+	server := newTestServer(t, cfg)
+
+	resp := server.Handle(context.Background(), "browser_har_start", mustRaw(t, map[string]any{
+		"session_id": "a",
+		"path":       "shared.har",
+		"overwrite":  true,
+	}))
+	if resp.IsError {
+		t.Fatalf("start a = %#v", resp)
+	}
+	sharedPath := factory.requests[0].har.path
+	sessionA.harResult = &gomoufox.HARResult{
+		Path: sharedPath, Capture: gomoufox.HARCaptureMetadata, Bytes: 101, Entries: 1,
+		Routes: []gomoufox.HARRoute{{Method: "GET", URL: "https://a.example/api", Status: 200}},
+	}
+	aClosed := make(chan struct{})
+	releaseA := make(chan struct{})
+	sessionA.closeFunc = func() error {
+		if err := os.WriteFile(sharedPath, []byte(strings.Replace(validMCPHAR, "example.com", "a.example", 1)), 0o600); err != nil {
+			return err
+		}
+		close(aClosed)
+		<-releaseA
+		return nil
+	}
+	sessionB.closeFunc = func() error {
+		return os.WriteFile(sharedPath, []byte(strings.Replace(validMCPHAR, "example.com", "b.example", 1)), 0o600)
+	}
+
+	aResponse := make(chan Response, 1)
+	go func() {
+		aResponse <- server.Handle(context.Background(), "browser_har_stop", raw(`{"session_id":"a"}`))
+	}()
+	select {
+	case <-aClosed:
+	case <-time.After(time.Second):
+		t.Fatal("session A did not reach close")
+	}
+	assertError(t, server.Handle(context.Background(), "browser_har_start", mustRaw(t, map[string]any{
+		"session_id": "b",
+		"path":       "shared.har",
+		"overwrite":  true,
+	})), "har_destination_exists")
+	if len(factory.requests) != 1 {
+		t.Fatalf("colliding start reached browser factory: %#v", factory.requests)
+	}
+	close(releaseA)
+	var aResp Response
+	select {
+	case aResp = <-aResponse:
+	case <-time.After(time.Second):
+		t.Fatal("session A stop did not finish")
+	}
+	if aResp.IsError {
+		t.Fatalf("stop a = %#v", aResp)
+	}
+	aRoutes, aOK := aResp.Payload["routes"].([]harcapture.Route)
+	if !aOK || len(aRoutes) != 1 || aRoutes[0].URL != "https://a.example/api" {
+		t.Fatalf("session A routes = %#v", aResp.Payload["routes"])
+	}
+
+	resp = server.Handle(context.Background(), "browser_har_start", mustRaw(t, map[string]any{
+		"session_id": "b",
+		"path":       "shared.har",
+		"overwrite":  true,
+	}))
+	if resp.IsError || len(factory.requests) != 2 {
+		t.Fatalf("start b after release = %#v requests=%#v", resp, factory.requests)
+	}
+	sessionB.harResult = &gomoufox.HARResult{
+		Path: sharedPath, Capture: gomoufox.HARCaptureMetadata, Bytes: 202, Entries: 1,
+		Routes: []gomoufox.HARRoute{{Method: "POST", URL: "https://b.example/api", Status: 201}},
+	}
+	sessionB.closeFunc = func() error {
+		return os.WriteFile(sharedPath, []byte(strings.Replace(validMCPHAR, "example.com", "b.example", 1)), 0o600)
+	}
+	bResp := server.Handle(context.Background(), "browser_har_stop", raw(`{"session_id":"b"}`))
+	if bResp.IsError {
+		t.Fatalf("stop b = %#v", bResp)
+	}
+	bRoutes, bOK := bResp.Payload["routes"].([]harcapture.Route)
+	if !bOK || len(bRoutes) != 1 || bRoutes[0].URL != "https://b.example/api" {
+		t.Fatalf("session B routes = %#v", bResp.Payload["routes"])
+	}
+	data, err := os.ReadFile(sharedPath)
+	if err != nil || !strings.Contains(string(data), "b.example") {
+		t.Fatalf("shared artifact = %q err=%v", data, err)
+	}
+}
+
+func TestBrowserHARDestinationLeaseReleasedAfterFinalizeError(t *testing.T) {
+	boom := errors.New("finalize failed")
+	sessionA := &fakeBrowserSession{closeErr: boom}
+	sessionB := &fakeBrowserSession{}
+	factory := &fakeBrowserFactory{sessions: []*fakeBrowserSession{sessionA, sessionB}}
+	cfg := defaultTestConfig(t)
+	cfg.Policy.AllowHARRecording = true
+	cfg.BrowserFactory = factory
+	server := newTestServer(t, cfg)
+
+	if resp := server.Handle(context.Background(), "browser_har_start", raw(`{"session_id":"a","path":"shared.har","overwrite":true}`)); resp.IsError {
+		t.Fatalf("start a = %#v", resp)
+	}
+	assertError(t, server.Handle(context.Background(), "browser_har_stop", raw(`{"session_id":"a"}`)), "har_finalize_failed")
+
+	resp := server.Handle(context.Background(), "browser_har_start", raw(`{"session_id":"b","path":"shared.har","overwrite":true}`))
+	if resp.IsError || len(factory.requests) != 2 {
+		t.Fatalf("start b after finalize error = %#v requests=%#v", resp, factory.requests)
+	}
+	sharedPath := factory.requests[1].har.path
+	sessionB.harResult = &gomoufox.HARResult{
+		Path: sharedPath, Capture: gomoufox.HARCaptureMetadata, Bytes: int64(len(validMCPHAR)), Entries: 1,
+	}
+	sessionB.closeFunc = func() error { return os.WriteFile(sharedPath, []byte(validMCPHAR), 0o600) }
+	if resp := server.Handle(context.Background(), "browser_har_stop", raw(`{"session_id":"b"}`)); resp.IsError {
+		t.Fatalf("stop b = %#v", resp)
+	}
+}
+
+func TestBrowserHARStopHonorsConfiguredResponseCap(t *testing.T) {
+	const responseCap = 2048
+	routes := make([]gomoufox.HARRoute, maxHARRoutes+1)
+	for i := range routes {
+		routes[i] = gomoufox.HARRoute{
+			Method: "GET",
+			URL:    "https://example.com/" + strings.Repeat("x", maxHARURLBytes-32) + strconv.Itoa(i),
+			Status: 200,
+		}
+	}
+	session := &fakeBrowserSession{}
+	factory := &fakeBrowserFactory{session: session}
+	cfg := defaultTestConfig(t)
+	cfg.Policy.AllowHARRecording = true
+	cfg.Policy.MaxResponseBytes = responseCap
+	cfg.BrowserFactory = factory
+	server := newTestServer(t, cfg)
+	if resp := server.Handle(context.Background(), "browser_har_start", raw(`{"session_id":"rec","path":"capture.har"}`)); resp.IsError {
+		t.Fatalf("start = %#v", resp)
+	}
+	session.harResult = &gomoufox.HARResult{
+		Path: factory.requests[0].har.path, Capture: gomoufox.HARCaptureMetadata,
+		Bytes: 4096, Entries: len(routes), Routes: routes,
+	}
+	resp := server.Handle(context.Background(), "browser_har_stop", raw(`{"session_id":"rec"}`))
+	if resp.IsError || resp.Payload["routes_truncated"] != true {
+		t.Fatalf("stop response = %#v", resp)
+	}
+	encoded, err := json.Marshal(resp.Payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(encoded) > responseCap {
+		t.Fatalf("payload bytes = %d, cap %d", len(encoded), responseCap)
+	}
+	bounded, ok := resp.Payload["routes"].([]harcapture.Route)
+	if !ok || len(bounded) == 0 || len(bounded) >= len(routes) {
+		t.Fatalf("bounded routes = %#v", resp.Payload["routes"])
+	}
+}
+
+func TestBrowserHARStopFailsClosedWhenBasePayloadExceedsResponseCap(t *testing.T) {
+	server := &Server{cfg: policy.Config{MaxResponseBytes: 1}}
+	resp := server.boundedHARStopResponse(map[string]any{"stopped": true}, nil)
+	assertError(t, resp, "response_too_large")
+}
+
+func TestBrowserHARStartCannotOutliveServerClose(t *testing.T) {
+	session := &fakeBrowserSession{}
+	factory := &blockingBrowserFactory{
+		started: make(chan struct{}),
+		release: make(chan struct{}),
+		session: session,
+	}
+	cfg := defaultTestConfig(t)
+	cfg.Policy.AllowHARRecording = true
+	cfg.BrowserFactory = factory
+	server := newTestServer(t, cfg)
+	startResponse := make(chan Response, 1)
+	go func() {
+		startResponse <- server.Handle(context.Background(), "browser_har_start", raw(`{"session_id":"rec","path":"capture.har"}`))
+	}()
+	select {
+	case <-factory.started:
+	case <-time.After(time.Second):
+		t.Fatal("HAR startup did not reach factory")
+	}
+	server.sessions.mu.Lock()
+	initializing := server.sessions.sessions["rec"]
+	server.sessions.mu.Unlock()
+	if initializing == nil || initializing.harTimer == nil || sessionLifecycle(initializing.lifecycle.Load()) != sessionInitializing {
+		t.Fatalf("startup timer/lifecycle = %#v", initializing)
+	}
+	closeResult := make(chan error, 1)
+	go func() { closeResult <- server.Close() }()
+	deadline := time.Now().Add(time.Second)
+	for {
+		server.sessions.mu.Lock()
+		closed := server.sessions.closed
+		server.sessions.mu.Unlock()
+		if closed {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("server close did not close session store")
+		}
+		runtime.Gosched()
+	}
+	close(factory.release)
+	select {
+	case resp := <-startResponse:
+		assertError(t, resp, "har_start_failed")
+	case <-time.After(time.Second):
+		t.Fatal("HAR start did not finish")
+	}
+	select {
+	case err := <-closeResult:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("server close did not finish")
+	}
+	if session.closeCalls != 1 {
+		t.Fatalf("startup rollback close calls = %d", session.closeCalls)
+	}
+	if sessions := sessionList(t, server.Handle(context.Background(), "session_list", raw(`{}`))); len(sessions) != 0 {
+		t.Fatalf("closed server sessions = %#v", sessions)
+	}
+}
+
+func TestBrowserHARStopDuringStartupPreventsActivation(t *testing.T) {
+	session := &fakeBrowserSession{}
+	factory := &blockingBrowserFactory{
+		started: make(chan struct{}),
+		release: make(chan struct{}),
+		session: session,
+	}
+	cfg := defaultTestConfig(t)
+	cfg.Policy.AllowHARRecording = true
+	cfg.BrowserFactory = factory
+	server := newTestServer(t, cfg)
+	startResponse := make(chan Response, 1)
+	go func() {
+		startResponse <- server.Handle(context.Background(), "browser_har_start", raw(`{"session_id":"rec","path":"capture.har"}`))
+	}()
+	select {
+	case <-factory.started:
+	case <-time.After(time.Second):
+		t.Fatal("HAR startup did not reach factory")
+	}
+	stopResponse := make(chan Response, 1)
+	go func() {
+		stopResponse <- server.Handle(context.Background(), "browser_har_stop", raw(`{"session_id":"rec"}`))
+	}()
+	deadline := time.Now().Add(time.Second)
+	for {
+		server.sessions.mu.Lock()
+		removed := server.sessions.sessions["rec"] == nil
+		server.sessions.mu.Unlock()
+		if removed {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("HAR stop did not remove initializing session")
+		}
+		runtime.Gosched()
+	}
+	close(factory.release)
+	select {
+	case resp := <-startResponse:
+		assertError(t, resp, "har_start_failed")
+	case <-time.After(time.Second):
+		t.Fatal("HAR start did not finish")
+	}
+	select {
+	case resp := <-stopResponse:
+		assertError(t, resp, "har_finalize_failed")
+	case <-time.After(time.Second):
+		t.Fatal("HAR stop did not finish")
+	}
+	if session.closeCalls != 1 {
+		t.Fatalf("startup stop close calls = %d", session.closeCalls)
+	}
+	if sessions := sessionList(t, server.Handle(context.Background(), "session_list", raw(`{}`))); len(sessions) != 0 {
+		t.Fatalf("stopped startup sessions = %#v", sessions)
+	}
+}
+
+func TestBoundedHARRoutesCapsHostileStrings(t *testing.T) {
+	method := strings.Repeat("M", maxHARMethodBytes+100)
+	longPath := strings.Repeat("/abcdefghij", 200)
+	routes, truncated := boundedHARRoutes([]harcapture.Route{{
+		Method: method,
+		URL:    "https://example.com" + longPath + "?token=secret-value",
+		Status: 200,
+	}})
+	if !truncated || len(routes) != 1 {
+		t.Fatalf("bounded routes = %#v truncated=%t", routes, truncated)
+	}
+	if len(routes[0].Method) > maxHARMethodBytes || len(routes[0].URL) > maxHARURLBytes {
+		t.Fatalf("route exceeded byte cap: %#v", routes[0])
+	}
+	if strings.Contains(routes[0].URL, "secret-value") {
+		t.Fatalf("route leaked query value: %#v", routes[0])
+	}
+}
+
+func TestBrowserHARGatesValidationAndEagerRollback(t *testing.T) {
+	cfg := defaultTestConfig(t)
+	cfg.Policy.AllowHARRecording = true
+	cfg.BrowserFactory = &fakeBrowserFactory{session: &fakeBrowserSession{}}
+	server := newTestServer(t, cfg)
+	assertError(t, server.Handle(context.Background(), "browser_har_start", raw(`{"session_id":"full","path":"full.har","capture":"full"}`)), "har_sensitive_values_disabled")
+	for _, args := range []string{
+		`{}`,
+		`{"session_id":"x","path":"x.har","capture":"unknown"}`,
+		`{"session_id":"x","path":"x.har","max_bytes":-1}`,
+		fmt.Sprintf(`{"session_id":"x","path":"x.har","max_bytes":%d}`, harcapture.HardMaxBytes+1),
+		`{"session_id":"x","path":"x.har","duration_ms":999}`,
+		`{"session_id":"x","path":"x.har","duration_ms":1800001}`,
+		`{"session_id":"x","path":"x.har","os":"android"}`,
+		`{"session_id":"x","path":"x.har","extra":true}`,
+	} {
+		assertError(t, server.Handle(context.Background(), "browser_har_start", raw(args)), "invalid_arguments")
+	}
+	longFilter := strings.Repeat("x", harcapture.MaxFilterBytes+1)
+	assertError(t, server.Handle(context.Background(), "browser_har_start", mustRaw(t, map[string]any{"session_id": "x", "path": "x.har", "url_filter": longFilter})), "invalid_arguments")
+	assertError(t, server.Handle(context.Background(), "browser_har_start", raw(`{"session_id":"x","path":"../escape.har"}`)), "har_path_rejected")
+	existing := filepath.Join(server.jail.Root, "existing.har")
+	if err := os.WriteFile(existing, []byte("old"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	assertError(t, server.Handle(context.Background(), "browser_har_start", raw(`{"session_id":"x","path":"existing.har"}`)), "har_destination_exists")
+	assertError(t, server.Handle(context.Background(), "browser_har_start", raw(`{"session_id":"proxy","path":"proxy.har","proxy":"http://proxy.example:8080"}`)), "session_proxy_disabled")
+	assertError(t, server.Handle(context.Background(), "browser_har_start", raw(`{"session_id":"state","path":"state.har","storage_state_path":"state.json"}`)), "session_import_disabled")
+
+	blockedParent := filepath.Join(server.jail.Root, "blocked")
+	if err := os.WriteFile(blockedParent, []byte("not a directory"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	assertError(t, server.Handle(context.Background(), "browser_har_start", raw(`{"session_id":"blocked","path":"blocked/capture.har"}`)), "har_path_rejected")
+	directoryDestination := filepath.Join(server.jail.Root, "directory.har")
+	if err := os.Mkdir(directoryDestination, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	assertError(t, server.Handle(context.Background(), "browser_har_start", raw(`{"session_id":"directory","path":"directory.har","overwrite":true}`)), "har_path_rejected")
+
+	cfg.Policy.AllowSessionProxy = true
+	server = newTestServer(t, cfg)
+	assertError(t, server.Handle(context.Background(), "browser_har_start", raw(`{"session_id":"proxy","path":"proxy.har","proxy":"ftp://invalid"}`)), "invalid_proxy")
+
+	statePath := filepath.Join(cfg.SessionDir, "state.json")
+	if err := os.WriteFile(statePath, []byte(`{"cookies":[],"origins":[]}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg.Policy.AllowSessionImport = true
+	stateSession := &fakeBrowserSession{}
+	cfg.BrowserFactory = &fakeBrowserFactory{session: stateSession}
+	server = newTestServer(t, cfg)
+	resp := server.Handle(context.Background(), "browser_har_start", raw(`{"session_id":"state","path":"state.har","storage_state_path":"state.json"}`))
+	if resp.IsError {
+		t.Fatalf("storage-state HAR start = %#v", resp)
+	}
+	stateSession.closeErr = errors.New("cleanup")
+	assertError(t, server.Handle(context.Background(), "browser_har_stop", raw(`{"session_id":"state"}`)), "har_finalize_failed")
+
+	cfg.Policy.AllowHARSensitiveValues = true
+	cfg.BrowserFactory = &fakeBrowserFactory{session: &fakeBrowserSession{}}
+	server = newTestServer(t, cfg)
+	resp = server.Handle(context.Background(), "browser_har_start", raw(`{"session_id":"full","path":"full.har","capture":"full","max_bytes":1024,"duration_ms":1000}`))
+	if resp.IsError || resp.Payload["capture"] != "full" || resp.Payload["max_bytes"] != int64(1024) {
+		t.Fatalf("full start response = %#v", resp)
+	}
+	if _, err := server.sessions.destroyHAR("full"); err != nil && !errors.Is(err, harcapture.ErrInvalidHAR) {
+		t.Fatalf("full cleanup = %v", err)
+	}
+
+	failingFactory := &fakeBrowserFactory{err: errors.New("launch failed")}
+	cfg.BrowserFactory = failingFactory
+	server = newTestServer(t, cfg)
+	assertError(t, server.Handle(context.Background(), "browser_har_start", raw(`{"session_id":"failed","path":"failed.har"}`)), "har_start_failed")
+	if len(failingFactory.requests) != 2 {
+		t.Fatalf("eager launch attempts = %d", len(failingFactory.requests))
+	}
+	if sessions := sessionList(t, server.Handle(context.Background(), "session_list", raw(`{}`))); len(sessions) != 0 {
+		t.Fatalf("failed session remains: %#v", sessions)
+	}
+	for _, tc := range []struct {
+		err  error
+		code string
+	}{
+		{err: harcapture.ErrDestinationExists, code: "har_destination_exists"},
+		{err: harcapture.ErrTooLarge, code: "har_too_large"},
+	} {
+		cfg.BrowserFactory = &fakeBrowserFactory{err: tc.err}
+		server = newTestServer(t, cfg)
+		assertError(t, server.Handle(context.Background(), "browser_har_start", raw(`{"session_id":"failed","path":"typed.har"}`)), tc.code)
+	}
+
+	invalid := defaultTestConfig(t)
+	invalid.Policy.AllowHARSensitiveValues = true
+	if _, err := New(invalid); !errors.Is(err, ErrInvalidConfig) {
+		t.Fatalf("sensitive-without-recording config error = %v", err)
+	}
+}
+
+func TestBrowserHARFinalizeErrorsShutdownAndTTL(t *testing.T) {
+	newServer := func(t *testing.T, session *fakeBrowserSession) (*Server, *fakeBrowserFactory) {
+		t.Helper()
+		factory := &fakeBrowserFactory{session: session}
+		cfg := defaultTestConfig(t)
+		cfg.Policy.AllowHARRecording = true
+		cfg.BrowserFactory = factory
+		return newTestServer(t, cfg), factory
+	}
+
+	t.Run("too large", func(t *testing.T) {
+		session := &fakeBrowserSession{closeErr: harcapture.ErrTooLarge}
+		server, _ := newServer(t, session)
+		if resp := server.Handle(context.Background(), "browser_har_start", raw(`{"session_id":"rec","path":"capture.har"}`)); resp.IsError {
+			t.Fatalf("start = %#v", resp)
+		}
+		assertError(t, server.Handle(context.Background(), "browser_har_stop", raw(`{"session_id":"rec"}`)), "har_too_large")
+	})
+
+	t.Run("destination appeared", func(t *testing.T) {
+		session := &fakeBrowserSession{closeErr: harcapture.ErrDestinationExists}
+		server, _ := newServer(t, session)
+		if resp := server.Handle(context.Background(), "browser_har_start", raw(`{"session_id":"rec","path":"capture.har"}`)); resp.IsError {
+			t.Fatalf("start = %#v", resp)
+		}
+		assertError(t, server.Handle(context.Background(), "browser_har_stop", raw(`{"session_id":"rec"}`)), "har_destination_exists")
+	})
+
+	t.Run("invalid final artifact", func(t *testing.T) {
+		session := &fakeBrowserSession{}
+		server, factory := newServer(t, session)
+		session.closeFunc = func() error { return os.WriteFile(factory.requests[0].har.path, []byte(`{}`), 0o600) }
+		if resp := server.Handle(context.Background(), "browser_har_start", raw(`{"session_id":"rec","path":"capture.har"}`)); resp.IsError {
+			t.Fatalf("start = %#v", resp)
+		}
+		assertError(t, server.Handle(context.Background(), "browser_har_stop", raw(`{"session_id":"rec"}`)), "har_finalize_failed")
+	})
+
+	t.Run("server close", func(t *testing.T) {
+		session := &fakeBrowserSession{}
+		server, factory := newServer(t, session)
+		session.closeFunc = func() error { return os.WriteFile(factory.requests[0].har.path, []byte(validMCPHAR), 0o600) }
+		if resp := server.Handle(context.Background(), "browser_har_start", raw(`{"session_id":"rec","path":"capture.har"}`)); resp.IsError {
+			t.Fatalf("start = %#v", resp)
+		}
+		if err := server.Close(); err != nil {
+			t.Fatal(err)
+		}
+		if err := server.Close(); err != nil || session.closeCalls != 1 {
+			t.Fatalf("second close err=%v calls=%d", err, session.closeCalls)
+		}
+		if _, err := os.Stat(filepath.Join(server.jail.Root, "capture.har")); err != nil {
+			t.Fatalf("shutdown did not finalize HAR: %v", err)
+		}
+	})
+
+	t.Run("ttl", func(t *testing.T) {
+		session := &fakeBrowserSession{}
+		server, factory := newServer(t, session)
+		now := time.Date(2026, 7, 19, 0, 0, 0, 0, time.UTC)
+		server.sessions.now = func() time.Time { return now }
+		session.closeFunc = func() error { return os.WriteFile(factory.requests[0].har.path, []byte(validMCPHAR), 0o600) }
+		if resp := server.Handle(context.Background(), "browser_har_start", raw(`{"session_id":"rec","path":"capture.har"}`)); resp.IsError {
+			t.Fatalf("start = %#v", resp)
+		}
+		now = now.Add(policy.DefaultSessionTTL + time.Second)
+		if sessions := sessionList(t, server.Handle(context.Background(), "session_list", raw(`{}`))); len(sessions) != 0 {
+			t.Fatalf("expired sessions = %#v", sessions)
+		}
+		if session.closeCalls != 1 {
+			t.Fatalf("ttl close calls = %d", session.closeCalls)
+		}
+		if _, err := os.Stat(filepath.Join(server.jail.Root, "capture.har")); err != nil {
+			t.Fatalf("ttl did not finalize HAR: %v", err)
+		}
+	})
+
+	t.Run("wall clock", func(t *testing.T) {
+		session := &fakeBrowserSession{}
+		server, factory := newServer(t, session)
+		closed := make(chan struct{})
+		session.closeFunc = func() error {
+			err := os.WriteFile(factory.requests[0].har.path, []byte(validMCPHAR), 0o600)
+			close(closed)
+			return err
+		}
+		if resp := server.Handle(context.Background(), "browser_har_start", raw(`{"session_id":"rec","path":"capture.har","duration_ms":1000}`)); resp.IsError {
+			t.Fatalf("start = %#v", resp)
+		}
+		server.sessions.mu.Lock()
+		state := server.sessions.sessions["rec"]
+		server.sessions.mu.Unlock()
+		state.opMu.Lock()
+		if state.harTimer == nil || !state.harTimer.Reset(time.Millisecond) {
+			state.opMu.Unlock()
+			t.Fatal("HAR wall-clock timer was not active")
+		}
+		state.opMu.Unlock()
+		select {
+		case <-closed:
+		case <-time.After(time.Second):
+			t.Fatal("HAR wall-clock expiry did not close session")
+		}
+		if sessions := sessionList(t, server.Handle(context.Background(), "session_list", raw(`{}`))); len(sessions) != 0 {
+			t.Fatalf("wall-clock session remains: %#v", sessions)
+		}
+	})
+}
+
 func TestProfileSessionBrowserToolsUseResolvedProfilePath(t *testing.T) {
 	session := &fakeBrowserSession{cookieResult: cookieResult{Cookies: []cookie{{Name: "sid", Value: "secret", Domain: ".example.com", Path: "/"}}}}
 	factory := &fakeBrowserFactory{session: session}
@@ -1488,6 +2265,33 @@ func TestSessionManagerStateCapsDestroyAndTTL(t *testing.T) {
 	}
 }
 
+func TestSessionManagerRejectsTerminalLifecycleOperations(t *testing.T) {
+	store := newSessionStore(2, time.Hour)
+	session, err := store.create(sessionOptions{id: "active"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if store.activateExpected("active", session) {
+		t.Fatal("already-active session was activated as initializing")
+	}
+	if err := closeSessionState(nil); err != nil {
+		t.Fatalf("nil session close = %v", err)
+	}
+	assertError(t, sessionError(errSessionClosing), "session_closed")
+
+	session.lifecycle.Store(uint32(sessionClosing))
+	server := &Server{sessions: store}
+	called := false
+	resp := server.withBrowserSessionState(context.Background(), session, func(*sessionState, browserSession) Response {
+		called = true
+		return ok(nil)
+	})
+	assertError(t, resp, "session_closed")
+	if called {
+		t.Fatal("terminal session invoked browser operation")
+	}
+}
+
 func TestSessionLimitReturnedBySessionAwareTools(t *testing.T) {
 	cfg := defaultTestConfig(t)
 	cfg.Policy.MaxSessions = 1
@@ -1545,6 +2349,61 @@ func TestSessionStoreDefensiveBranches(t *testing.T) {
 	}
 	resp := sessionError(errors.New("unexpected"))
 	assertError(t, resp, "session_error")
+}
+
+func TestSessionStoreRecordingLifecycleAndStaleDestroy(t *testing.T) {
+	store := newSessionStore(2, time.Hour)
+	oldBrowser := &fakeBrowserSession{}
+	old, err := store.create(sessionOptions{id: "rec", har: &harSessionOptions{path: "capture.har"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if old.active() || !store.activateExpected("rec", old) || !old.active() {
+		t.Fatalf("HAR activation state active=%t lifecycle=%d", old.active(), old.lifecycle.Load())
+	}
+	old.browser = oldBrowser
+	if _, err := store.destroy("rec", false); !errors.Is(err, errHARStopRequired) {
+		t.Fatalf("legacy destroy error = %v", err)
+	}
+	if !old.active() || oldBrowser.closeCalls != 0 {
+		t.Fatalf("guard changed recording state active=%t calls=%d", old.active(), oldBrowser.closeCalls)
+	}
+	if got, err := store.destroyExpected("rec", old, true); err != nil || got != old || oldBrowser.closeCalls != 1 || old.active() {
+		t.Fatalf("recording destroy got=%#v err=%v calls=%d active=%t", got, err, oldBrowser.closeCalls, old.active())
+	}
+	newBrowser := &fakeBrowserSession{}
+	current, err := store.create(sessionOptions{id: "rec"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	current.browser = newBrowser
+	if got, err := store.destroyExpected("rec", old, true); err != nil || got != nil {
+		t.Fatalf("stale destroy got=%#v err=%v", got, err)
+	}
+	if !current.active() || newBrowser.closeCalls != 0 {
+		t.Fatalf("stale destroy touched replacement active=%t calls=%d", current.active(), newBrowser.closeCalls)
+	}
+	if err := store.closeAll(); err != nil || newBrowser.closeCalls != 1 {
+		t.Fatalf("close all err=%v calls=%d", err, newBrowser.closeCalls)
+	}
+	if _, err := store.create(sessionOptions{id: "after-close"}); !errors.Is(err, errSessionClosing) {
+		t.Fatalf("create after close error = %v", err)
+	}
+	if _, err := store.touchState("after-close", nil); !errors.Is(err, errSessionClosing) {
+		t.Fatalf("touch after close error = %v", err)
+	}
+
+	closingStore := newSessionStore(1, time.Hour)
+	initializing, err := closingStore.create(sessionOptions{id: "init", har: &harSessionOptions{path: "init.har"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := closingStore.closeAll(); err != nil {
+		t.Fatal(err)
+	}
+	if closingStore.activateExpected("init", initializing) || initializing.active() {
+		t.Fatalf("closed initialization was activated: lifecycle=%d", initializing.lifecycle.Load())
+	}
 }
 
 func TestClickTypeWaitArgumentsAndNoEcho(t *testing.T) {
@@ -2565,9 +3424,23 @@ func (f mcpFakeResolver) LookupIPAddr(ctx context.Context, host string) ([]net.I
 
 type fakeBrowserFactory struct {
 	session  *fakeBrowserSession
+	sessions []*fakeBrowserSession
 	err      error
 	failures []error
 	requests []sessionOptions
+}
+
+type blockingBrowserFactory struct {
+	started chan struct{}
+	release chan struct{}
+	session *fakeBrowserSession
+	once    sync.Once
+}
+
+func (f *blockingBrowserFactory) NewBrowserSession(context.Context, sessionOptions) (browserSession, error) {
+	f.once.Do(func() { close(f.started) })
+	<-f.release
+	return f.session, nil
 }
 
 func (f *fakeBrowserFactory) NewBrowserSession(_ context.Context, opts sessionOptions) (browserSession, error) {
@@ -2582,7 +3455,15 @@ func (f *fakeBrowserFactory) NewBrowserSession(_ context.Context, opts sessionOp
 	if f.err != nil {
 		return nil, f.err
 	}
-	return f.session, nil
+	selected := f.session
+	if len(f.sessions) > 0 {
+		selected = f.sessions[0]
+		f.sessions = f.sessions[1:]
+	}
+	if selected != nil {
+		selected.harOptions = opts.har
+	}
+	return selected, nil
 }
 
 type fakeBrowserSession struct {
@@ -2630,6 +3511,9 @@ type fakeBrowserSession struct {
 	fetchResult       fetchResult
 	fetchCalls        []fetchOptions
 	fetchErr          error
+	fetchFormResult   fetchResult
+	fetchFormCalls    []fetchFormOptions
+	fetchFormErr      error
 	consoleResult     consoleMessagesResult
 	consoleCalls      []observeOptions
 	consoleErr        error
@@ -2647,6 +3531,11 @@ type fakeBrowserSession struct {
 	saveStatePaths    []string
 	loadStateErr      error
 	loadStates        []*gomoufox.StorageState
+	closeErr          error
+	closeFunc         func() error
+	closeCalls        int
+	harOptions        *harSessionOptions
+	harResult         *gomoufox.HARResult
 }
 
 type navigateCall struct {
@@ -2839,6 +3728,29 @@ func (f *fakeBrowserSession) Fetch(_ context.Context, opts fetchOptions) (fetchR
 	return f.fetchResult, nil
 }
 
+func (f *fakeBrowserSession) FetchForm(_ context.Context, opts fetchFormOptions) (fetchResult, error) {
+	copied := opts
+	copied.Headers = copyStringMapForTest(opts.Headers)
+	copied.Fields = append([]fetchFormField(nil), opts.Fields...)
+	copied.Files = append([]fetchFormFile(nil), opts.Files...)
+	f.fetchFormCalls = append(f.fetchFormCalls, copied)
+	if f.fetchFormErr != nil {
+		return fetchResult{}, f.fetchFormErr
+	}
+	return f.fetchFormResult, nil
+}
+
+func copyStringMapForTest(in map[string]string) map[string]string {
+	if in == nil {
+		return nil
+	}
+	out := make(map[string]string, len(in))
+	for key, value := range in {
+		out[key] = value
+	}
+	return out
+}
+
 func (f *fakeBrowserSession) ConsoleMessages(_ context.Context, opts observeOptions) (consoleMessagesResult, error) {
 	f.consoleCalls = append(f.consoleCalls, opts)
 	if f.consoleErr != nil {
@@ -2890,7 +3802,46 @@ func (f *fakeBrowserSession) LoadStorageState(_ context.Context, state *gomoufox
 	return f.loadStateErr
 }
 
-func (f *fakeBrowserSession) Close() error { return nil }
+func (f *fakeBrowserSession) Close() error {
+	f.closeCalls++
+	if f.closeFunc != nil {
+		if err := f.closeFunc(); err != nil {
+			return err
+		}
+	}
+	return f.closeErr
+}
+
+func (f *fakeBrowserSession) HARResult() (gomoufox.HARResult, bool) {
+	if f.harResult != nil {
+		result := *f.harResult
+		result.Routes = append([]gomoufox.HARRoute(nil), result.Routes...)
+		return result, true
+	}
+	if f.harOptions == nil {
+		return gomoufox.HARResult{}, false
+	}
+	entries, routes, truncated, err := harcapture.InspectFile(f.harOptions.path, maxHARRoutes)
+	if err != nil {
+		return gomoufox.HARResult{}, false
+	}
+	st, err := os.Stat(f.harOptions.path)
+	if err != nil {
+		return gomoufox.HARResult{}, false
+	}
+	publicRoutes := make([]gomoufox.HARRoute, 0, len(routes))
+	for _, route := range routes {
+		publicRoutes = append(publicRoutes, gomoufox.HARRoute{Method: route.Method, URL: route.URL, Status: route.Status})
+	}
+	return gomoufox.HARResult{
+		Path:            f.harOptions.path,
+		Capture:         gomoufox.HARCapture(f.harOptions.capture),
+		Bytes:           st.Size(),
+		Entries:         entries,
+		Routes:          publicRoutes,
+		RoutesTruncated: truncated,
+	}, true
+}
 
 func toolsByName() map[string]Tool {
 	out := map[string]Tool{}
@@ -3043,6 +3994,25 @@ func assertArrayItemProp(t *testing.T, tool Tool, propName, key string, want any
 	}
 	if got := items[key]; got != want {
 		t.Fatalf("%s.%s.items[%s] = %#v, want %#v", tool.Name, propName, key, got, want)
+	}
+}
+
+func assertNestedObjectProp(t *testing.T, tool Tool, arrayPropName, nestedPropName, key string, want any) {
+	t.Helper()
+	items, ok := propOf(t, tool, arrayPropName)["items"].(map[string]any)
+	if !ok {
+		t.Fatalf("%s.%s items missing: %#v", tool.Name, arrayPropName, propOf(t, tool, arrayPropName)["items"])
+	}
+	props, ok := items["properties"].(map[string]any)
+	if !ok {
+		t.Fatalf("%s.%s items properties missing: %#v", tool.Name, arrayPropName, items["properties"])
+	}
+	nested, ok := props[nestedPropName].(map[string]any)
+	if !ok {
+		t.Fatalf("%s.%s.items.%s missing: %#v", tool.Name, arrayPropName, nestedPropName, props[nestedPropName])
+	}
+	if got := nested[key]; got != want {
+		t.Fatalf("%s.%s.items.%s[%s] = %#v, want %#v", tool.Name, arrayPropName, nestedPropName, key, got, want)
 	}
 }
 

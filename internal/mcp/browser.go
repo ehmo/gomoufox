@@ -29,6 +29,7 @@ type browserSession interface {
 	Screenshot(context.Context, screenshotOptions) (screenshotResult, error)
 	Snapshot(context.Context, snapshotOptions) (snapshotResult, error)
 	Fetch(context.Context, fetchOptions) (fetchResult, error)
+	FetchForm(context.Context, fetchFormOptions) (fetchResult, error)
 	ConsoleMessages(context.Context, observeOptions) (consoleMessagesResult, error)
 	NetworkRequests(context.Context, observeOptions) (networkRequestsResult, error)
 	PerformanceSnapshot(context.Context) (performanceSnapshot, error)
@@ -201,6 +202,28 @@ type fetchResult struct {
 	Headers   map[string]string
 	Body      []byte
 	Truncated bool
+}
+
+type fetchFormField struct {
+	Name  string
+	Value string
+}
+
+type fetchFormFile struct {
+	Name     string
+	Path     string
+	Filename string
+}
+
+type fetchFormOptions struct {
+	URL           string
+	Method        string
+	Headers       map[string]string
+	Fields        []fetchFormField
+	Files         []fetchFormFile
+	NavigateFirst string
+	MaxBytes      int
+	Timeout       time.Duration
 }
 
 type observeOptions struct {

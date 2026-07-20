@@ -63,6 +63,7 @@ func TestMainUsesProcessDefaults(t *testing.T) {
 }
 
 func TestRunWritesLaunchPlanAndRedactsSensitiveValues(t *testing.T) {
+	stubManagedBrowserResolver(t)
 	oldBuild := buildPythonLaunchPayload
 	oldNow := nowUTC
 	t.Cleanup(func() {
@@ -114,6 +115,7 @@ func TestRunWritesLaunchPlanAndRedactsSensitiveValues(t *testing.T) {
 }
 
 func TestRunCandidateDriftFailsClosed(t *testing.T) {
+	stubManagedBrowserResolver(t)
 	oldBuild := buildPythonLaunchPayload
 	t.Cleanup(func() { buildPythonLaunchPayload = oldBuild })
 	buildPythonLaunchPayload = func(context.Context, string, sidecar.Config) (map[string]any, error) {
@@ -148,6 +150,7 @@ func TestRunCandidateDriftFailsClosed(t *testing.T) {
 }
 
 func TestRunErrorBranches(t *testing.T) {
+	stubManagedBrowserResolver(t)
 	oldBuild := buildPythonLaunchPayload
 	t.Cleanup(func() { buildPythonLaunchPayload = oldBuild })
 	buildPythonLaunchPayload = func(context.Context, string, sidecar.Config) (map[string]any, error) {
@@ -273,7 +276,14 @@ func TestHelpers(t *testing.T) {
 	if markdown := markdownReport(report{Scenarios: []scenarioReport{{Name: "fixed", CandidateStatus: "compared", CandidateDrift: drift}}}); !strings.Contains(markdown, "| fixed | compared | 1 |") {
 		t.Fatalf("markdown = %s", markdown)
 	}
-	if _, err := buildScenario(context.Background(), "bad", "python", nil); err == nil {
+	if _, err := buildScenario(context.Background(), "bad", "python", "/browser", nil); err == nil {
 		t.Fatal("bad buildScenario succeeded")
 	}
+}
+
+func stubManagedBrowserResolver(t *testing.T) {
+	t.Helper()
+	oldResolve := resolveManagedCamoufoxExecutable
+	resolveManagedCamoufoxExecutable = func(string) (string, error) { return "/managed/browser", nil }
+	t.Cleanup(func() { resolveManagedCamoufoxExecutable = oldResolve })
 }

@@ -73,18 +73,12 @@ func TestNewHonorsCancelledContextBeforeSideEffects(t *testing.T) {
 func TestNewAutoInstallAndConnectErrorStopsSidecar(t *testing.T) {
 	orig := sidecarEnsureInstalled
 	defer func() { sidecarEnsureInstalled = orig }()
-	origDriver := pwbridgeEnsureDriver
-	defer func() { pwbridgeEnsureDriver = origDriver }()
 	installed := false
 	sidecarEnsureInstalled = func(ctx context.Context, opts sidecarpkg.InstallOptions) error {
 		installed = true
 		if opts.PythonBin != "python3.12" || opts.VenvDir != "/venv" || opts.Runtime != string(SidecarRuntimeNodeDirect) {
 			t.Fatalf("install opts = %#v", opts)
 		}
-		return nil
-	}
-	pwbridgeEnsureDriver = func(driverDirectory string) error {
-		t.Fatalf("node-direct auto install should use the managed runtime driver, not install %q separately", driverDirectory)
 		return nil
 	}
 	sidecar := &fakeSidecar{endpoint: "wss://localhost:1234/rawtoken"}
@@ -486,6 +480,30 @@ func TestSidecarManagerReceivesLaunchOptions(t *testing.T) {
 	if scfg.Runtime != string(SidecarRuntimeNodeDirect) {
 		t.Fatalf("runtime not mapped: %#v", scfg)
 	}
+
+	oldResolve := resolveManagedCamoufoxExecutable
+	t.Cleanup(func() { resolveManagedCamoufoxExecutable = oldResolve })
+	resolveManagedCamoufoxExecutable = func(venvDir string) (string, error) {
+		if venvDir != "/managed/venv" {
+			t.Fatalf("resolver venv = %q", venvDir)
+		}
+		return "/managed/venv/runtime/camoufox", nil
+	}
+	cfg.sidecarRuntime = SidecarRuntimePython
+	cfg.venvDir = "/managed/venv"
+	handle, err = newSidecarManager(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	scfg = handle.(sidecarAdapter).manager.Config()
+	if scfg.ExecutablePath != "/managed/venv/runtime/camoufox" {
+		t.Fatalf("managed Python executable = %q", scfg.ExecutablePath)
+	}
+	resolveErr := errors.New("managed browser unavailable")
+	resolveManagedCamoufoxExecutable = func(string) (string, error) { return "", resolveErr }
+	if _, err := newSidecarManager(cfg); !errors.Is(err, resolveErr) {
+		t.Fatalf("managed browser resolver err = %v", err)
+	}
 }
 
 func TestNavigationAndScreenshotOptions(t *testing.T) {
@@ -545,6 +563,307 @@ func TestPersistentContextLimit(t *testing.T) {
 	}
 	if _, err := b.NewContext(context.Background()); !errors.Is(err, ErrPersistentContextLimit) {
 		t.Fatalf("second context error = %v", err)
+	}
+}
+
+const validHARForTest = `{"log":{"version":"1.2","creator":{"name":"test","version":"1"},"entries":[{"startedDateTime":"2026-07-19T00:00:00Z","time":1,"request":{"method":"GET","url":"https://example.com/api?q=secret","httpVersion":"HTTP/2","cookies":[],"headers":[],"queryString":[],"headersSize":0,"bodySize":0},"response":{"status":200,"statusText":"OK","httpVersion":"HTTP/2","cookies":[],"headers":[],"content":{"size":0,"mimeType":"application/json"},"redirectURL":"","headersSize":0,"bodySize":0},"cache":{},"timings":{"send":0,"wait":1,"receive":0}}]}}`
+
+func TestHARRecordingPublicLifecycle(t *testing.T) {
+	rawContext := &fakeContext{}
+	rawBrowser := &fakeBrowser{connected: true, newCtx: rawContext}
+	session := &fakeSession{browser: rawBrowser}
+	browser, err := New(context.Background(),
+		WithAutoInstall(false),
+		withSidecarFactory(fakeSidecarFactory(&fakeSidecar{endpoint: "ws://localhost:1/t"})),
+		withConnector(&fakeConnector{session: session}),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	destination := filepath.Join(t.TempDir(), "capture.har")
+	ctx, err := browser.NewContext(context.Background(), WithHARRecording(HAROptions{
+		Path:      destination,
+		URLFilter: "**/api/**",
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rawBrowser.newCtxOptions.HAR == nil || rawBrowser.newCtxOptions.HAR.Path == destination {
+		t.Fatalf("HAR bridge options = %#v", rawBrowser.newCtxOptions.HAR)
+	}
+	if rawBrowser.newCtxOptions.HAR.Mode != "minimal" || rawBrowser.newCtxOptions.HAR.Content != "omit" || !rawBrowser.newCtxOptions.HAR.OmitRequestContent || rawBrowser.newCtxOptions.HAR.URLFilter != "**/api/**" {
+		t.Fatalf("HAR bridge options = %#v", rawBrowser.newCtxOptions.HAR)
+	}
+	rawContext.closeFunc = func() error {
+		return os.WriteFile(rawBrowser.newCtxOptions.HAR.Path, []byte(validHARForTest), 0o600)
+	}
+	if _, ok := ctx.HARResult(); ok {
+		t.Fatal("HAR result available before close")
+	}
+	if err := ctx.Close(); err != nil {
+		t.Fatal(err)
+	}
+	result, ok := ctx.HARResult()
+	if !ok || result.Path != destination || result.Capture != HARCaptureMetadata || result.Entries != 1 || result.Bytes == 0 || len(result.Routes) != 1 || result.RoutesTruncated {
+		t.Fatalf("HAR result = %#v ok=%t", result, ok)
+	}
+	if result.Routes[0].Method != "GET" || result.Routes[0].URL != "https://example.com/api?q=%3Credacted%3E" || result.Routes[0].Status != 200 {
+		t.Fatalf("HAR route = %#v", result.Routes[0])
+	}
+	result.Routes[0].URL = "mutated"
+	again, ok := ctx.HARResult()
+	if !ok || again.Routes[0].URL == "mutated" {
+		t.Fatalf("HAR result was not cloned: %#v ok=%t", again, ok)
+	}
+	if rawContext.closeCalls != 1 {
+		t.Fatalf("close calls = %d", rawContext.closeCalls)
+	}
+	if err := ctx.Close(); err != nil || rawContext.closeCalls != 1 {
+		t.Fatalf("second close err=%v calls=%d", err, rawContext.closeCalls)
+	}
+}
+
+func TestHARAbortDiscardsArtifact(t *testing.T) {
+	destination := filepath.Join(t.TempDir(), "capture.har")
+	recorder, native, err := prepareHAR(HAROptions{Path: destination})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rawContext := &fakeContext{closeFunc: func() error {
+		return os.WriteFile(native.Path, []byte(validHARForTest), 0o600)
+	}}
+	ctx := &Context{raw: rawContext, har: recorder}
+	privateDirectory := filepath.Dir(native.Path)
+
+	if err := ctx.Abort(); err != nil {
+		t.Fatal(err)
+	}
+	if rawContext.closeCalls != 1 {
+		t.Fatalf("abort close calls = %d", rawContext.closeCalls)
+	}
+	if _, ok := ctx.HARResult(); ok {
+		t.Fatal("aborted HAR exposed a result")
+	}
+	if _, err := os.Stat(destination); !os.IsNotExist(err) {
+		t.Fatalf("aborted HAR destination exists: %v", err)
+	}
+	if _, err := os.Stat(privateDirectory); !os.IsNotExist(err) {
+		t.Fatalf("aborted HAR private directory exists: %v", err)
+	}
+	if err := ctx.Close(); err != nil || rawContext.closeCalls != 1 {
+		t.Fatalf("close after abort err=%v calls=%d", err, rawContext.closeCalls)
+	}
+}
+
+func TestBrowserNewPageFailureAbortsHAR(t *testing.T) {
+	boom := errors.New("new page failed")
+	rawContext := &fakeContext{newPageErr: boom}
+	rawBrowser := &fakeBrowser{connected: true, newCtx: rawContext}
+	browser := &Browser{raw: rawBrowser, done: make(chan struct{})}
+	destination := filepath.Join(t.TempDir(), "capture.har")
+	rawContext.closeFunc = func() error {
+		return os.WriteFile(rawBrowser.newCtxOptions.HAR.Path, []byte(validHARForTest), 0o600)
+	}
+
+	if _, err := browser.NewPage(context.Background(), WithHARRecording(HAROptions{Path: destination})); !errors.Is(err, boom) {
+		t.Fatalf("new page error = %v", err)
+	}
+	if rawContext.closeCalls != 1 {
+		t.Fatalf("rollback close calls = %d", rawContext.closeCalls)
+	}
+	if _, err := os.Stat(destination); !os.IsNotExist(err) {
+		t.Fatalf("failed startup published HAR: %v", err)
+	}
+	if rawBrowser.newCtxOptions.HAR == nil {
+		t.Fatal("missing HAR bridge options")
+	}
+	if _, err := os.Stat(filepath.Dir(rawBrowser.newCtxOptions.HAR.Path)); !os.IsNotExist(err) {
+		t.Fatalf("failed startup retained private HAR: %v", err)
+	}
+	if len(browser.harContexts) != 0 {
+		t.Fatalf("failed startup retained tracked contexts: %d", len(browser.harContexts))
+	}
+}
+
+func TestBrowserCloseDuringNewPageDiscardsProvisionalHAR(t *testing.T) {
+	newPageStarted := make(chan struct{})
+	releaseNewPage := make(chan struct{})
+	rawContext := &fakeContext{newPageFunc: func() (pwbridge.Page, error) {
+		close(newPageStarted)
+		<-releaseNewPage
+		return &fakePage{}, nil
+	}}
+	rawBrowser := &fakeBrowser{connected: true, newCtx: rawContext}
+	browser := &Browser{raw: rawBrowser, done: make(chan struct{})}
+	destination := filepath.Join(t.TempDir(), "capture.har")
+	rawContext.closeFunc = func() error {
+		return os.WriteFile(rawBrowser.newCtxOptions.HAR.Path, []byte(validHARForTest), 0o600)
+	}
+
+	result := make(chan error, 1)
+	go func() {
+		_, err := browser.NewPage(context.Background(), WithHARRecording(HAROptions{Path: destination}))
+		result <- err
+	}()
+	select {
+	case <-newPageStarted:
+	case <-time.After(time.Second):
+		t.Fatal("new page did not start")
+	}
+	if err := browser.Close(); err != nil {
+		t.Fatal(err)
+	}
+	close(releaseNewPage)
+	select {
+	case err := <-result:
+		if !errors.Is(err, ErrSessionClosed) {
+			t.Fatalf("new page error = %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("new page did not finish")
+	}
+	if rawContext.closeCalls != 1 {
+		t.Fatalf("provisional close calls = %d", rawContext.closeCalls)
+	}
+	if _, err := os.Stat(destination); !os.IsNotExist(err) {
+		t.Fatalf("provisional HAR was published: %v", err)
+	}
+	if _, err := os.Stat(filepath.Dir(rawBrowser.newCtxOptions.HAR.Path)); !os.IsNotExist(err) {
+		t.Fatalf("provisional HAR private directory remains: %v", err)
+	}
+}
+
+func TestBrowserCloseFlushesTrackedHARAndPersistentRejectsIt(t *testing.T) {
+	rawContext := &fakeContext{}
+	rawBrowser := &fakeBrowser{connected: true, newCtx: rawContext}
+	session := &fakeSession{browser: rawBrowser}
+	browser, err := New(context.Background(),
+		WithAutoInstall(false),
+		withSidecarFactory(fakeSidecarFactory(&fakeSidecar{endpoint: "ws://localhost:1/t"})),
+		withConnector(&fakeConnector{session: session}),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	destination := filepath.Join(t.TempDir(), "capture.har")
+	if _, err := browser.NewContext(context.Background(), WithHARRecording(HAROptions{Path: destination, Capture: HARCaptureFull})); err != nil {
+		t.Fatal(err)
+	}
+	rawContext.closeFunc = func() error {
+		return os.WriteFile(rawBrowser.newCtxOptions.HAR.Path, []byte(validHARForTest), 0o600)
+	}
+	if err := browser.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if !session.stopped || rawContext.closeCalls != 1 {
+		t.Fatalf("browser close stopped=%t context calls=%d", session.stopped, rawContext.closeCalls)
+	}
+	if data, err := os.ReadFile(destination); err != nil || string(data) != validHARForTest {
+		t.Fatalf("full HAR = %q err=%v", data, err)
+	}
+
+	persistent := &Browser{
+		cfg:  launchConfig{persistentCtx: true},
+		raw:  &fakeBrowser{contexts: []pwbridge.BrowserContext{&fakeContext{}}},
+		done: make(chan struct{}),
+	}
+	if _, err := persistent.NewContext(context.Background(), WithHARRecording(HAROptions{Path: filepath.Join(t.TempDir(), "persistent.har")})); !errors.Is(err, ErrHARPersistentContext) {
+		t.Fatalf("persistent HAR error = %v", err)
+	}
+}
+
+func TestBrowserClosePreservesFirstCloseError(t *testing.T) {
+	boom := errors.New("stop failed")
+	browser := &Browser{session: &fakeSession{stopErr: boom}, done: make(chan struct{})}
+	if err := browser.Close(); !errors.Is(err, boom) {
+		t.Fatalf("first close error = %v", err)
+	}
+	if err := browser.Close(); !errors.Is(err, boom) {
+		t.Fatalf("second close error = %v", err)
+	}
+}
+
+func TestHARContextCreationFailureCleansPrivateArtifact(t *testing.T) {
+	boom := errors.New("new context failed")
+	rawBrowser := &fakeBrowser{connected: true, newCtxErr: boom}
+	browser := &Browser{raw: rawBrowser, done: make(chan struct{})}
+	if _, err := browser.NewContext(context.Background(), WithHARRecording(HAROptions{Path: filepath.Join(t.TempDir(), "capture.har")})); !errors.Is(err, boom) {
+		t.Fatalf("new context error = %v", err)
+	}
+	if rawBrowser.newCtxOptions.HAR == nil {
+		t.Fatal("missing captured HAR options")
+	}
+	if _, err := os.Stat(filepath.Dir(rawBrowser.newCtxOptions.HAR.Path)); !os.IsNotExist(err) {
+		t.Fatalf("private directory remains: %v", err)
+	}
+}
+
+func TestHARLifecycleRefusesInvalidAndClosingContexts(t *testing.T) {
+	if _, _, err := prepareHAR(HAROptions{}); err == nil {
+		t.Fatal("empty HAR options succeeded")
+	}
+	var nilContext *Context
+	if result, ok := nilContext.HARResult(); ok || result.Path != "" || result.Routes != nil {
+		t.Fatalf("nil context HAR result = %#v ok=%t", result, ok)
+	}
+
+	closedContext := &Context{harClosed: true, harProvisional: true}
+	if closedContext.commitHAR() {
+		t.Fatal("closed context committed HAR")
+	}
+	browser := &Browser{closed: true}
+	if browser.commitHARContext(&Context{}) {
+		t.Fatal("closed browser committed HAR context")
+	}
+	if browser.trackHARContext(&Context{}) {
+		t.Fatal("closed browser tracked HAR context")
+	}
+}
+
+func TestBrowserNewPageCommitsHARBeforeReturning(t *testing.T) {
+	rawContext := &fakeContext{}
+	rawBrowser := &fakeBrowser{connected: true, newCtx: rawContext}
+	browser := &Browser{raw: rawBrowser, done: make(chan struct{})}
+	destination := filepath.Join(t.TempDir(), "capture.har")
+	rawContext.closeFunc = func() error {
+		return os.WriteFile(rawBrowser.newCtxOptions.HAR.Path, []byte(validHARForTest), 0o600)
+	}
+
+	page, err := browser.NewPage(context.Background(), WithHARRecording(HAROptions{Path: destination}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if page.context == nil || page.context.harProvisional {
+		t.Fatalf("returned page has provisional context: %#v", page.context)
+	}
+	if err := page.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if result, ok := page.context.HARResult(); !ok || result.Path != destination {
+		t.Fatalf("committed HAR result = %#v ok=%t", result, ok)
+	}
+}
+
+func TestBrowserNewContextAbortsHARWhenCloseWinsTracking(t *testing.T) {
+	rawContext := &fakeContext{}
+	rawBrowser := &fakeBrowser{connected: true}
+	browser := &Browser{raw: rawBrowser, done: make(chan struct{})}
+	destination := filepath.Join(t.TempDir(), "capture.har")
+	rawBrowser.newCtxFunc = func(pwbridge.ContextOptions) (pwbridge.BrowserContext, error) {
+		browser.mu.Lock()
+		browser.closed = true
+		browser.mu.Unlock()
+		return rawContext, nil
+	}
+
+	if _, err := browser.NewContext(context.Background(), WithHARRecording(HAROptions{Path: destination})); !errors.Is(err, ErrSessionClosed) {
+		t.Fatalf("new context error = %v", err)
+	}
+	if rawContext.closeCalls != 1 {
+		t.Fatalf("rollback close calls = %d", rawContext.closeCalls)
+	}
+	if _, err := os.Stat(destination); !os.IsNotExist(err) {
+		t.Fatalf("tracking race published HAR: %v", err)
 	}
 }
 
@@ -709,10 +1028,10 @@ func TestStorageStateConversionsAndWriteErrors(t *testing.T) {
 func TestEnsureInstalledMapsOptionsAndErrors(t *testing.T) {
 	orig := sidecarEnsureInstalled
 	defer func() { sidecarEnsureInstalled = orig }()
-	origDriver := pwbridgeEnsureDriver
-	defer func() { pwbridgeEnsureDriver = origDriver }()
+	origDriver := sidecarEnsureManagedPlaywrightDriver
+	defer func() { sidecarEnsureManagedPlaywrightDriver = origDriver }()
 	called := false
-	pwbridgeEnsureDriver = func(string) error {
+	sidecarEnsureManagedPlaywrightDriver = func(context.Context, sidecarpkg.InstallOptions) error {
 		t.Fatalf("driver install should not run after sidecar error")
 		return nil
 	}
@@ -744,13 +1063,13 @@ func TestEnsureInstalledMapsOptionsAndErrors(t *testing.T) {
 
 func TestEnsureInstalledDefaultsToNodeDirectRuntime(t *testing.T) {
 	orig := sidecarEnsureInstalled
-	origDriver := pwbridgeEnsureDriver
+	origDriver := sidecarEnsureManagedPlaywrightDriver
 	defer func() {
 		sidecarEnsureInstalled = orig
-		pwbridgeEnsureDriver = origDriver
+		sidecarEnsureManagedPlaywrightDriver = origDriver
 	}()
-	pwbridgeEnsureDriver = func(driverDirectory string) error {
-		t.Fatalf("node-direct default install should not repeat driver install for %q", driverDirectory)
+	sidecarEnsureManagedPlaywrightDriver = func(context.Context, sidecarpkg.InstallOptions) error {
+		t.Fatalf("node-direct default install should not repeat driver install")
 		return nil
 	}
 	sidecarEnsureInstalled = func(_ context.Context, opts sidecarpkg.InstallOptions) error {
@@ -766,12 +1085,12 @@ func TestEnsureInstalledDefaultsToNodeDirectRuntime(t *testing.T) {
 
 func TestNewAutoInstallPassesConfiguredRuntime(t *testing.T) {
 	orig := sidecarEnsureInstalled
-	origDriver := pwbridgeEnsureDriver
+	origDriver := sidecarEnsureManagedPlaywrightDriver
 	defer func() {
 		sidecarEnsureInstalled = orig
-		pwbridgeEnsureDriver = origDriver
+		sidecarEnsureManagedPlaywrightDriver = origDriver
 	}()
-	pwbridgeEnsureDriver = func(string) error { return nil }
+	sidecarEnsureManagedPlaywrightDriver = func(context.Context, sidecarpkg.InstallOptions) error { return nil }
 	sidecarEnsureInstalled = func(_ context.Context, opts sidecarpkg.InstallOptions) error {
 		if opts.Runtime != string(SidecarRuntimePython) {
 			t.Fatalf("auto-install runtime = %q", opts.Runtime)
@@ -788,7 +1107,7 @@ func TestNewAutoInstallPassesConfiguredRuntime(t *testing.T) {
 	}
 }
 
-func TestConfigureConnectorForNodeDirectRuntimeUsesManagedDriver(t *testing.T) {
+func TestConfigureConnectorUsesManagedDriverForBothRuntimes(t *testing.T) {
 	cfg := defaultLaunchConfig()
 	cfg.venvDir = filepath.Join(t.TempDir(), "cache")
 	configureConnectorForRuntime(&cfg)
@@ -796,8 +1115,8 @@ func TestConfigureConnectorForNodeDirectRuntimeUsesManagedDriver(t *testing.T) {
 	if !ok {
 		t.Fatalf("connector = %T, want pwbridge.RealConnector", cfg.connector)
 	}
-	if real.DriverDirectory != nodeDirectPlaywrightDriverDir(cfg.venvDir) {
-		t.Fatalf("driver directory = %q, want %q", real.DriverDirectory, nodeDirectPlaywrightDriverDir(cfg.venvDir))
+	if real.DriverDirectory != managedPlaywrightDriverDir(cfg.venvDir) {
+		t.Fatalf("driver directory = %q, want %q", real.DriverDirectory, managedPlaywrightDriverDir(cfg.venvDir))
 	}
 
 	custom := pwbridge.RealConnector{DriverDirectory: "/custom-driver"}
@@ -810,17 +1129,17 @@ func TestConfigureConnectorForNodeDirectRuntimeUsesManagedDriver(t *testing.T) {
 	cfg.connector = pwbridge.RealConnector{}
 	cfg.sidecarRuntime = SidecarRuntimePython
 	configureConnectorForRuntime(&cfg)
-	if got := cfg.connector.(pwbridge.RealConnector).DriverDirectory; got != "" {
-		t.Fatalf("python runtime driver directory = %q, want default", got)
+	if got := cfg.connector.(pwbridge.RealConnector).DriverDirectory; got != managedPlaywrightDriverDir(cfg.venvDir) {
+		t.Fatalf("python runtime driver directory = %q, want managed", got)
 	}
 }
 
 func TestEnsureInstalledInstallsPlaywrightDriverForLegacyPython(t *testing.T) {
 	orig := sidecarEnsureInstalled
-	origDriver := pwbridgeEnsureDriver
+	origDriver := sidecarEnsureManagedPlaywrightDriver
 	defer func() {
 		sidecarEnsureInstalled = orig
-		pwbridgeEnsureDriver = origDriver
+		sidecarEnsureManagedPlaywrightDriver = origDriver
 	}()
 	sidecarCalled := false
 	driverCalled := false
@@ -828,14 +1147,17 @@ func TestEnsureInstalledInstallsPlaywrightDriverForLegacyPython(t *testing.T) {
 		sidecarCalled = true
 		return nil
 	}
-	pwbridgeEnsureDriver = func(driverDirectory string) error {
+	sidecarEnsureManagedPlaywrightDriver = func(_ context.Context, opts sidecarpkg.InstallOptions) error {
 		driverCalled = true
-		if driverDirectory != "" {
-			t.Fatalf("driver directory = %q", driverDirectory)
+		if opts.VenvDir != "/venv" || opts.SkipBinaryFetch || opts.ForceReinstall {
+			t.Fatalf("driver install options = %#v", opts)
 		}
 		return nil
 	}
-	if err := EnsureInstalled(context.Background(), func(o *InstallOptions) { o.Runtime = SidecarRuntimePython }); err != nil {
+	if err := EnsureInstalled(context.Background(), func(o *InstallOptions) {
+		o.Runtime = SidecarRuntimePython
+		o.VenvDir = "/venv"
+	}); err != nil {
 		t.Fatal(err)
 	}
 	if !sidecarCalled || !driverCalled {
@@ -843,7 +1165,7 @@ func TestEnsureInstalledInstallsPlaywrightDriverForLegacyPython(t *testing.T) {
 	}
 
 	driverErr := errors.New("driver failed")
-	pwbridgeEnsureDriver = func(string) error { return driverErr }
+	sidecarEnsureManagedPlaywrightDriver = func(context.Context, sidecarpkg.InstallOptions) error { return driverErr }
 	if err := EnsureInstalled(context.Background(), func(o *InstallOptions) { o.Runtime = SidecarRuntimePython }); !errors.Is(err, ErrNotInstalled) || !strings.Contains(err.Error(), "playwright driver install failed") {
 		t.Fatalf("driver install err = %v", err)
 	}
@@ -1524,28 +1846,35 @@ func (c *fakePreparedConnector) Stop() error {
 type fakeSession struct {
 	browser *fakeBrowser
 	stopped bool
+	stopErr error
 }
 
 func (s *fakeSession) Browser() pwbridge.Browser { return s.browser }
 func (s *fakeSession) Stop() error {
 	s.stopped = true
-	return nil
+	return s.stopErr
 }
 
 type fakeBrowser struct {
-	connected  bool
-	contexts   []pwbridge.BrowserContext
-	newCtx     *fakeContext
-	newPage    *fakePage
-	newCtxErr  error
-	newPageErr error
+	connected     bool
+	contexts      []pwbridge.BrowserContext
+	newCtx        *fakeContext
+	newCtxFunc    func(pwbridge.ContextOptions) (pwbridge.BrowserContext, error)
+	newPage       *fakePage
+	newCtxErr     error
+	newPageErr    error
+	newCtxOptions pwbridge.ContextOptions
 }
 
 func (b *fakeBrowser) Close() error                        { b.connected = false; return nil }
 func (b *fakeBrowser) IsConnected() bool                   { return b.connected }
 func (b *fakeBrowser) OnDisconnected(func())               {}
 func (b *fakeBrowser) Contexts() []pwbridge.BrowserContext { return b.contexts }
-func (b *fakeBrowser) NewContext(pwbridge.ContextOptions) (pwbridge.BrowserContext, error) {
+func (b *fakeBrowser) NewContext(opts pwbridge.ContextOptions) (pwbridge.BrowserContext, error) {
+	b.newCtxOptions = opts
+	if b.newCtxFunc != nil {
+		return b.newCtxFunc(opts)
+	}
 	if b.newCtxErr != nil {
 		return nil, b.newCtxErr
 	}
@@ -1569,6 +1898,7 @@ type fakeContext struct {
 	pages          []pwbridge.Page
 	storage        *pwbridge.StorageState
 	closed         bool
+	newPageFunc    func() (pwbridge.Page, error)
 	newPageErr     error
 	cookiesErr     error
 	addCookiesErr  error
@@ -1577,6 +1907,8 @@ type fakeContext struct {
 	routeErr       error
 	unrouteErr     error
 	closeErr       error
+	closeFunc      func() error
+	closeCalls     int
 	routePattern   string
 	routeHandler   pwbridge.RouteHandler
 	unroutePattern string
@@ -1587,6 +1919,9 @@ type fakeContext struct {
 }
 
 func (c *fakeContext) NewPage() (pwbridge.Page, error) {
+	if c.newPageFunc != nil {
+		return c.newPageFunc()
+	}
 	if c.newPageErr != nil {
 		return nil, c.newPageErr
 	}
@@ -1627,6 +1962,12 @@ func (c *fakeContext) OnRequest(fn func(pwbridge.Request))   { c.onRequest = fn 
 func (c *fakeContext) OnResponse(fn func(pwbridge.Response)) { c.onResponse = fn }
 func (c *fakeContext) Close() error {
 	c.closed = true
+	c.closeCalls++
+	if c.closeFunc != nil {
+		if err := c.closeFunc(); err != nil {
+			return err
+		}
+	}
 	return c.closeErr
 }
 func (c *fakeContext) Raw() any { return c }
@@ -2172,6 +2513,21 @@ func TestFetchBytesWithOptionsPostTruncatesDecodedBody(t *testing.T) {
 	}
 }
 
+func TestFetchBytesWithOptionsPreservesBinaryRequestAndResponse(t *testing.T) {
+	page := &Page{raw: &fakePage{evaluateResult: map[string]any{"ok": true, "status": 200, "body_base64": "/wAB", "body_encoding": "base64", "url": "https://example.com", "headers": map[string]string{}, "truncated": false}}}
+	result, err := page.FetchBytesWithOptions(context.Background(), "https://example.com", "POST", nil, []byte{0xff, 0x00, 0x01}, FetchBytesOptions{MaxBytes: 8})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.StatusCode != 200 || string(result.Body) != string([]byte{0xff, 0x00, 0x01}) || result.Truncated {
+		t.Fatalf("binary result = %#v", result)
+	}
+	arg, ok := page.raw.(*fakePage).internalEvalArg.(map[string]any)
+	if !ok || arg["bodyBase64"] != "/wAB" || arg["hasBody"] != true {
+		t.Fatalf("binary fetch arg = %#v", page.raw.(*fakePage).internalEvalArg)
+	}
+}
+
 func TestLegacyFetchBytesErrorsOnDefaultCapTruncation(t *testing.T) {
 	page := &Page{raw: &fakePage{evaluateResult: map[string]any{"ok": true, "status": 200, "body": "abcd", "url": "https://example.com", "headers": map[string]string{}, "truncated": true}}}
 	status, body, err := page.FetchBytes(context.Background(), "https://example.com", "", nil, nil)
@@ -2206,8 +2562,8 @@ func TestFetchBytesWithOptionsRejectsTooLargeCap(t *testing.T) {
 }
 
 func TestBrowserFetchExpressionStreamsAndCancelsAtCap(t *testing.T) {
-	if strings.Contains(browserFetchExpression, "response.text()") {
-		t.Fatal("browser fetch expression materializes full response text")
+	if strings.Contains(browserFetchExpression, "response.text()") || strings.Contains(browserFetchExpression, "TextDecoder") {
+		t.Fatal("browser fetch expression decodes response as text")
 	}
 	output := runRootNodeExpression(t, `
 const browserFetchExpression = `+browserFetchExpression+`;
@@ -2230,7 +2586,7 @@ globalThis.fetch = async (url) => ({
     cancel: async () => { cancelCalls++; }
   })}
 });
-browserFetchExpression({url: "https://example.com/stream", method: "GET", headers: {}, body: "", maxBytes: 5})
+browserFetchExpression({url: "https://example.com/stream", method: "GET", headers: {}, bodyBase64: "", hasBody: false, maxBytes: 5})
   .then(result => console.log(JSON.stringify({result, cancelCalls, readCalls})))
   .catch(error => { console.error(error); process.exit(1); });
 `)
@@ -2242,8 +2598,40 @@ browserFetchExpression({url: "https://example.com/stream", method: "GET", header
 	if err := json.Unmarshal(output, &got); err != nil {
 		t.Fatalf("decode node output %q: %v", output, err)
 	}
-	if got.Result["body"] != "abcde" || got.Result["truncated"] != true || got.CancelCalls != 1 || got.ReadCalls != 2 {
+	if got.Result["body_base64"] != "YWJjZGU=" || got.Result["body_encoding"] != "base64" || got.Result["truncated"] != true || got.CancelCalls != 1 || got.ReadCalls != 2 {
 		t.Fatalf("stream result = %#v", got)
+	}
+}
+
+func TestBrowserFetchExpressionSendsBinaryRequestBody(t *testing.T) {
+	output := runRootNodeExpression(t, `
+const browserFetchExpression = `+browserFetchExpression+`;
+let requestBytes = [];
+globalThis.fetch = async (url, opts) => {
+  requestBytes = Array.from(opts.body || []);
+  return {
+    url,
+    status: 200,
+    headers: {forEach: () => {}},
+    body: {getReader: () => ({
+      read: async () => ({done: true}),
+      cancel: async () => {}
+    })}
+  };
+};
+browserFetchExpression({url: "https://example.com/post", method: "POST", headers: {}, bodyBase64: "/wAB", hasBody: true, maxBytes: 5})
+  .then(result => console.log(JSON.stringify({result, requestBytes})))
+  .catch(error => { console.error(error); process.exit(1); });
+`)
+	var got struct {
+		RequestBytes []int          `json:"requestBytes"`
+		Result       map[string]any `json:"result"`
+	}
+	if err := json.Unmarshal(output, &got); err != nil {
+		t.Fatalf("decode node output %q: %v", output, err)
+	}
+	if fmt.Sprint(got.RequestBytes) != "[255 0 1]" || got.Result["body_base64"] != "" {
+		t.Fatalf("binary request result = %#v", got)
 	}
 }
 
@@ -2265,7 +2653,7 @@ globalThis.fetch = async (url) => ({
     cancel: async () => { cancelCalls++; }
   })}
 });
-browserFetchExpression({url: "https://example.com/exact", method: "GET", headers: {}, body: "", maxBytes: 5})
+browserFetchExpression({url: "https://example.com/exact", method: "GET", headers: {}, bodyBase64: "", hasBody: false, maxBytes: 5})
   .then(result => console.log(JSON.stringify({result, cancelCalls, readCalls})))
   .catch(error => { console.error(error); process.exit(1); });
 `)
@@ -2277,7 +2665,7 @@ browserFetchExpression({url: "https://example.com/exact", method: "GET", headers
 	if err := json.Unmarshal(output, &got); err != nil {
 		t.Fatalf("decode node output %q: %v", output, err)
 	}
-	if got.Result["body"] != "abcde" || got.Result["truncated"] != true || got.CancelCalls != 1 || got.ReadCalls != 1 {
+	if got.Result["body_base64"] != "YWJjZGU=" || got.Result["truncated"] != true || got.CancelCalls != 1 || got.ReadCalls != 1 {
 		t.Fatalf("exact-cap result = %#v", got)
 	}
 }
@@ -2299,7 +2687,7 @@ globalThis.fetch = async (url) => ({
     cancel: async () => { cancelCalls++; }
   })}
 });
-browserFetchExpression({url: "https://example.com/huge", method: "GET", headers: {}, body: "", maxBytes: 3})
+browserFetchExpression({url: "https://example.com/huge", method: "GET", headers: {}, bodyBase64: "", hasBody: false, maxBytes: 3})
   .then(result => console.log(JSON.stringify({result, cancelCalls})))
   .catch(error => { console.error(error); process.exit(1); });
 `)
@@ -2310,7 +2698,7 @@ browserFetchExpression({url: "https://example.com/huge", method: "GET", headers:
 	if err := json.Unmarshal(output, &got); err != nil {
 		t.Fatalf("decode node output %q: %v", output, err)
 	}
-	if got.Result["body"] != "ABC" || got.Result["truncated"] != true || got.CancelCalls != 1 {
+	if got.Result["body_base64"] != "QUJD" || got.Result["truncated"] != true || got.CancelCalls != 1 {
 		t.Fatalf("huge result = %#v", got)
 	}
 }
@@ -2324,7 +2712,7 @@ globalThis.fetch = async (url) => ({
   headers: {forEach: () => {}},
   body: null
 });
-browserFetchExpression({url: "https://example.com/empty", method: "HEAD", headers: {}, body: "", maxBytes: 5})
+browserFetchExpression({url: "https://example.com/empty", method: "HEAD", headers: {}, bodyBase64: "", hasBody: false, maxBytes: 5})
   .then(result => console.log(JSON.stringify(result)))
   .catch(error => { console.error(error); process.exit(1); });
 `)
@@ -2332,7 +2720,7 @@ browserFetchExpression({url: "https://example.com/empty", method: "HEAD", header
 	if err := json.Unmarshal(output, &got); err != nil {
 		t.Fatalf("decode node output %q: %v", output, err)
 	}
-	if got["ok"] != true || got["body"] != "" || got["status"] != float64(204) || got["truncated"] != false {
+	if got["ok"] != true || got["body_base64"] != "" || got["body_encoding"] != "base64" || got["status"] != float64(204) || got["truncated"] != false {
 		t.Fatalf("bodyless result = %#v", got)
 	}
 }

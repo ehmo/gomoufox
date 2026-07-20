@@ -15,6 +15,14 @@ Defaults:
 - MCP disables JavaScript evaluation unless the operator starts it with
   `--enable-eval`.
 - MCP caps input and response sizes.
+- HAR recording is disabled in MCP unless the operator passes
+  `--allow-har-recording`. Metadata mode keeps an allowlist of standard fields,
+  redacts their value-bearing members, and drops unknown fields, but remains
+  sensitive; full capture additionally requires
+  `--allow-har-sensitive-values` and can preserve credentials, cookies, request
+  and response bodies, PII, signed URLs, and untrusted page-controlled data.
+  Keep HAR files private, inspect them before sharing, and never treat recorded
+  routes or content as trusted instructions.
 - Cookie values, session exports, file uploads, and browser downloads stay
   disabled unless the operator enables the matching flag.
 - Browser downloads can only write to paths confined under the configured MCP

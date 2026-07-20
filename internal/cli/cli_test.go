@@ -13,6 +13,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"testing"
@@ -1384,6 +1385,8 @@ func TestMCPHelpDiscoversHighRiskGateFlags(t *testing.T) {
 		"allow-session-export",
 		"allow-session-import",
 		"allow-session-proxy",
+		"allow-har-recording",
+		"allow-har-sensitive-values",
 		"allow-file-upload",
 		"allowed-origins",
 		"allowed-hosts",
@@ -1504,6 +1507,7 @@ func TestMCPAuthGuardrailsAndBounds(t *testing.T) {
 		{[]string{"mcp", "--max-sessions", "21"}, ExitUsage},
 		{[]string{"mcp", "--allow-schemes", "file"}, ExitUsage},
 		{[]string{"mcp", "--toolset", "wide"}, ExitUsage},
+		{[]string{"mcp", "--allow-har-sensitive-values"}, ExitUsage},
 	}
 	for _, tc := range tests {
 		var stderr bytes.Buffer
@@ -1520,7 +1524,7 @@ func TestMCPHookReceivesParsedRuntimeRequest(t *testing.T) {
 		if req.Transport != "http" || req.Port != 3888 || req.AuthToken != "tok" {
 			t.Fatalf("request = %#v", req)
 		}
-		if req.Config.SessionDir == "" || req.Config.Toolset != mcpserver.ToolsetCore || !req.Config.Policy.EnableEval || !req.Config.Policy.AllowBrowserFetch || !req.Config.Policy.AllowCookieValues || !req.Config.Policy.AllowCookieMutation || !req.Config.Policy.AllowSnapshotValues || !req.Config.Policy.AllowSessionExport || !req.Config.Policy.AllowSessionImport || !req.Config.Policy.AllowSessionProxy || !req.Config.Policy.AllowFileUpload || !req.Config.Policy.AllowLocalhost {
+		if req.Config.SessionDir == "" || req.Config.Toolset != mcpserver.ToolsetCore || !req.Config.Policy.EnableEval || !req.Config.Policy.AllowBrowserFetch || !req.Config.Policy.AllowCookieValues || !req.Config.Policy.AllowCookieMutation || !req.Config.Policy.AllowSnapshotValues || !req.Config.Policy.AllowSessionExport || !req.Config.Policy.AllowSessionImport || !req.Config.Policy.AllowSessionProxy || !req.Config.Policy.AllowHARRecording || !req.Config.Policy.AllowHARSensitiveValues || !req.Config.Policy.AllowFileUpload || !req.Config.Policy.AllowLocalhost {
 			t.Fatalf("config = %#v", req.Config)
 		}
 		if req.Config.Policy.ContentWarning || req.Config.Policy.MaxInputBytes != 1024 || req.Config.Policy.MaxResponseBytes != 2048 || req.Config.Policy.MaxSessions != 3 || req.Config.Policy.SessionTTL != 45*time.Minute {
@@ -1547,6 +1551,8 @@ func TestMCPHookReceivesParsedRuntimeRequest(t *testing.T) {
 		"--allow-session-export",
 		"--allow-session-import",
 		"--allow-session-proxy",
+		"--allow-har-recording",
+		"--allow-har-sensitive-values",
 		"--allow-file-upload",
 		"--allow-localhost",
 		"--allowed-origins", "https://example.com",
@@ -1684,6 +1690,63 @@ func TestOpenForcesHeadfulAndRejectsNoWaitModes(t *testing.T) {
 		if code != ExitUsage || called {
 			t.Fatalf("%v code=%d called=%v stderr=%q", args, code, called, stderr.String())
 		}
+	}
+}
+
+func TestRecordForcesHeadfulWarnsAndValidatesFlags(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	called := false
+	runner := Runner{Hooks: Hooks{LocalCommand: func(_ context.Context, req LocalCommandRequest) (LocalCommandResponse, error) {
+		called = true
+		if req.Command != "record" || len(req.Args) != 1 || req.Args[0] != "http://93.184.216.34" {
+			t.Fatalf("request = %#v", req)
+		}
+		if req.Flags["headful"] != true || req.Flags["out"] != "capture.har" || req.Flags["capture"] != "full" || req.Flags["url_filter"] != "**/api/**" || req.Flags["max_bytes"] != "1024" || req.Flags["overwrite"] != true || req.Flags["humanize"] != "false" {
+			t.Fatalf("flags = %#v", req.Flags)
+		}
+		return LocalCommandResponse{ExitCode: ExitOK, Stdout: []byte("recorded\n")}, nil
+	}}}
+	code := runner.Run(context.Background(), []string{"record", "http://93.184.216.34", "--out", "capture.har", "--capture", "full", "--url-filter", "**/api/**", "--max-bytes", "1024", "--overwrite", "--humanize=false"}, Streams{Stdout: &stdout, Stderr: &stderr})
+	if code != ExitOK || !called || stdout.String() != "recorded\n" || !strings.Contains(stderr.String(), "full HAR capture") {
+		t.Fatalf("code=%d called=%t stdout=%q stderr=%q", code, called, stdout.String(), stderr.String())
+	}
+
+	for _, args := range [][]string{
+		{"record", "http://93.184.216.34"},
+		{"record", "http://93.184.216.34", "--out", "x.har", "--capture", "unknown"},
+		{"record", "http://93.184.216.34", "--out", "x.har", "--max-bytes", "0"},
+		{"record", "http://93.184.216.34", "--out", "x.har", "--max-bytes", strconv.FormatInt(gomoufox.HardHARMaxBytes+1, 10)},
+		{"record", "http://93.184.216.34", "--out", "same.har", "--save-session", "same.har"},
+		{"record", "http://93.184.216.34", "--out", "x.har", "--url-filter", strings.Repeat("x", 2049)},
+		{"record", "http://93.184.216.34", "--out", "x.har", "--url-filter", "x\x00y"},
+		{"record", "http://93.184.216.34", "--out", "x.har", "--headless"},
+		{"record", "http://93.184.216.34", "--out", "x.har", "--profile", "profile"},
+	} {
+		called = false
+		stderr.Reset()
+		if got := runner.Run(context.Background(), args, Streams{Stderr: &stderr}); got != ExitUsage || called {
+			t.Fatalf("%v code=%d called=%t stderr=%q", args, got, called, stderr.String())
+		}
+	}
+}
+
+func TestRecordRejectsOutputAndSessionAliasesThroughSymlinkedParent(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink creation is not generally available to unprivileged Windows tests")
+	}
+	root := t.TempDir()
+	realParent := filepath.Join(root, "real")
+	if err := os.Mkdir(realParent, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	linkedParent := filepath.Join(root, "linked")
+	if err := os.Symlink(realParent, linkedParent); err != nil {
+		t.Fatal(err)
+	}
+	out := filepath.Join(linkedParent, "not-created", "capture.har")
+	saved := filepath.Join(realParent, "not-created", "capture.har")
+	if _, err := parseRecord([]string{"http://93.184.216.34", "--out", out, "--save-session", saved}); err == nil || !strings.Contains(err.Error(), "different paths") {
+		t.Fatalf("alias collision error = %v", err)
 	}
 }
 
@@ -2040,6 +2103,163 @@ func TestDefaultLocalOpenBlocksAndSavesSessionWithFakes(t *testing.T) {
 	if !bytes.Contains(data, []byte(`"sid"`)) {
 		t.Fatalf("saved state = %s", data)
 	}
+}
+
+func TestDefaultLocalRecordFinalizesBeforeReporting(t *testing.T) {
+	dir := t.TempDir()
+	harPath := filepath.Join(dir, "capture.har")
+	statePath := filepath.Join(dir, "state.json")
+	page := &fakeLocalPage{
+		url:   "https://example.com/initial",
+		state: &gomoufox.StorageState{Cookies: []gomoufox.Cookie{{Name: "sid", Value: "secret"}}},
+	}
+	page.waitClosedFunc = func() { page.url = "https://example.com/final" }
+	page.closeFunc = func() error { return os.WriteFile(harPath, []byte(`{"log":{"version":"1.2","entries":[]}}`), 0o600) }
+	original := openPageForLocal
+	var optionCount int
+	openPageForLocal = func(_ context.Context, _ LocalCommandRequest, opts []gomoufox.ContextOption) (localPage, func(), error) {
+		optionCount = len(opts)
+		return page, func() { _ = page.Close() }, nil
+	}
+	defer func() { openPageForLocal = original }()
+
+	resp, err := defaultLocalCommand(context.Background(), LocalCommandRequest{
+		Command: "record",
+		Args:    []string{"https://example.com"},
+		JSON:    true,
+		Flags: map[string]any{
+			"out":          harPath,
+			"capture":      "metadata",
+			"url_filter":   "**/api/**",
+			"max_bytes":    "1024",
+			"overwrite":    true,
+			"save_session": statePath,
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if optionCount != 1 || len(page.gotoURLs) != 1 || page.waitClosedCalls != 1 || page.storageCalls != 1 || !page.closed {
+		t.Fatalf("record page=%#v optionCount=%d", page, optionCount)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(resp.Stdout, &payload); err != nil {
+		t.Fatal(err)
+	}
+	harPayload := payload["har"].(map[string]any)
+	if payload["url"] != "https://example.com/final" || payload["session_path"] != statePath || harPayload["path"] != harPath || harPayload["capture"] != "metadata" || harPayload["bytes"].(float64) == 0 {
+		t.Fatalf("record payload = %#v", payload)
+	}
+	for _, path := range []string{harPath, statePath} {
+		if st, err := os.Stat(path); err != nil || st.Mode().Perm() != 0o600 {
+			t.Fatalf("%s mode=%v err=%v", path, st, err)
+		}
+	}
+}
+
+func TestDefaultLocalRecordFailureBoundariesAndTextOutput(t *testing.T) {
+	boom := errors.New("boom")
+	request := func(harPath string) LocalCommandRequest {
+		return LocalCommandRequest{
+			Command: "record",
+			Args:    []string{"https://example.com"},
+			Flags:   map[string]any{"out": harPath, "capture": "metadata"},
+		}
+	}
+
+	t.Run("open page", func(t *testing.T) {
+		defer fakeOpenPageError(t, boom)()
+		if _, err := defaultLocalCommand(context.Background(), request(filepath.Join(t.TempDir(), "capture.har"))); !errors.Is(err, boom) {
+			t.Fatalf("record error = %v", err)
+		}
+	})
+
+	for _, tc := range []struct {
+		name    string
+		prepare func(*testing.T, string, *fakeLocalPage, *LocalCommandRequest)
+	}{
+		{
+			name: "navigation",
+			prepare: func(_ *testing.T, _ string, page *fakeLocalPage, _ *LocalCommandRequest) {
+				page.gotoErr = boom
+			},
+		},
+		{
+			name: "wait",
+			prepare: func(_ *testing.T, _ string, page *fakeLocalPage, _ *LocalCommandRequest) {
+				page.waitClosedErr = boom
+			},
+		},
+		{
+			name: "storage state",
+			prepare: func(t *testing.T, _ string, page *fakeLocalPage, req *LocalCommandRequest) {
+				page.storageErr = boom
+				req.Flags["save_session"] = filepath.Join(t.TempDir(), "state.json")
+			},
+		},
+		{
+			name: "storage state write",
+			prepare: func(t *testing.T, _ string, _ *fakeLocalPage, req *LocalCommandRequest) {
+				parent := filepath.Join(t.TempDir(), "parent")
+				if err := os.WriteFile(parent, []byte("not a directory"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+				req.Flags["save_session"] = filepath.Join(parent, "state.json")
+			},
+		},
+		{
+			name: "context close",
+			prepare: func(_ *testing.T, _ string, page *fakeLocalPage, _ *LocalCommandRequest) {
+				page.closeErr = boom
+			},
+		},
+		{
+			name: "missing artifact",
+			prepare: func(_ *testing.T, _ string, page *fakeLocalPage, _ *LocalCommandRequest) {
+				page.closeFunc = nil
+			},
+		},
+		{
+			name: "artifact is directory",
+			prepare: func(t *testing.T, harPath string, page *fakeLocalPage, _ *LocalCommandRequest) {
+				page.closeFunc = nil
+				if err := os.Mkdir(harPath, 0o700); err != nil {
+					t.Fatal(err)
+				}
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			harPath := filepath.Join(t.TempDir(), "capture.har")
+			page := &fakeLocalPage{url: "https://example.com/final"}
+			page.closeFunc = func() error { return os.WriteFile(harPath, []byte(`{"log":{"version":"1.2","entries":[]}}`), 0o600) }
+			req := request(harPath)
+			tc.prepare(t, harPath, page, &req)
+			defer fakeOpenPage(t, page)()
+			if _, err := defaultLocalCommand(context.Background(), req); err == nil {
+				t.Fatal("record unexpectedly succeeded")
+			}
+		})
+	}
+
+	t.Run("text output", func(t *testing.T) {
+		dir := t.TempDir()
+		harPath := filepath.Join(dir, "capture.har")
+		statePath := filepath.Join(dir, "state.json")
+		page := &fakeLocalPage{url: "https://example.com/final"}
+		page.closeFunc = func() error { return os.WriteFile(harPath, []byte(`{"log":{"version":"1.2","entries":[]}}`), 0o600) }
+		defer fakeOpenPage(t, page)()
+		req := request(harPath)
+		req.Flags["save_session"] = statePath
+		resp, err := defaultLocalCommand(context.Background(), req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		want := "https://example.com/final\n" + harPath + "\n" + statePath + "\n"
+		if resp.ExitCode != ExitOK || string(resp.Stdout) != want {
+			t.Fatalf("record response = %#v, want %q", resp, want)
+		}
+	})
 }
 
 func TestOpenHelperParsesHumanizeAndStorageState(t *testing.T) {
@@ -4291,7 +4511,10 @@ type fakeLocalPage struct {
 	evalErr         error
 	fetchErr        error
 	waitClosedErr   error
+	waitClosedFunc  func()
 	storageErr      error
+	closeErr        error
+	closeFunc       func() error
 }
 
 type fakeGomoufoxBrowser struct {
@@ -4611,6 +4834,9 @@ func (p *fakeLocalPage) FetchBytesWithOptions(ctx context.Context, url, method s
 }
 func (p *fakeLocalPage) WaitClosed(ctx context.Context) error {
 	p.waitClosedCalls++
+	if p.waitClosedFunc != nil {
+		p.waitClosedFunc()
+	}
 	if p.waitClosedErr != nil {
 		return p.waitClosedErr
 	}
@@ -4638,7 +4864,15 @@ func (p *fakeLocalPage) StorageState(context.Context) (*gomoufox.StorageState, e
 	}
 	return p.state, nil
 }
-func (p *fakeLocalPage) Close() error { p.closed = true; return nil }
+func (p *fakeLocalPage) Close() error {
+	p.closed = true
+	if p.closeFunc != nil {
+		if err := p.closeFunc(); err != nil {
+			return err
+		}
+	}
+	return p.closeErr
+}
 
 type fakeLocalBrowser struct {
 	state      *gomoufox.StorageState

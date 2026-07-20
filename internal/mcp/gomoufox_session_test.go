@@ -61,6 +61,15 @@ func TestGomoufoxFactoryCreatesSharedAndDedicatedSessions(t *testing.T) {
 	if second == nil || len(launcher.calls) != 1 || sharedBrowser.newContextCalls != 2 {
 		t.Fatalf("shared reuse calls launcher=%#v newContext=%d", launcher.calls, sharedBrowser.newContextCalls)
 	}
+	harSession, err := factory.NewBrowserSession(context.Background(), sessionOptions{id: "har", har: &harSessionOptions{
+		path: filepath.Join(dir, "capture.har"), capture: "metadata", maxBytes: gomoufox.DefaultHARMaxBytes,
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if harSession == nil || len(launcher.calls) != 1 || sharedBrowser.newContextCalls != 3 || sharedBrowser.contextOptionCounts[2] != 2 {
+		t.Fatalf("HAR shared session calls launcher=%#v contexts=%d optionCounts=%#v", launcher.calls, sharedBrowser.newContextCalls, sharedBrowser.contextOptionCounts)
+	}
 
 	persistent, err := factory.NewBrowserSession(context.Background(), sessionOptions{id: "profile", os: "linux", profilePath: filepath.Join(dir, "profile")})
 	if err != nil {
@@ -337,6 +346,40 @@ func TestGomoufoxSessionBrowserOperations(t *testing.T) {
 		t.Fatalf("fetch internal evaluate arg = %#v", page.internalEvaluateArg)
 	}
 	page.fetchPayload = map[string]any{
+		"ok": true, "url": "https://api.example.com/upload", "status": float64(201),
+		"headers": map[string]any{"content-type": "application/octet-stream"}, "body_base64": "/wAB", "truncated": true,
+	}
+	formFetched, err := session.FetchForm(context.Background(), fetchFormOptions{
+		URL:           "https://api.example.com/upload",
+		Method:        "POST",
+		Headers:       map[string]string{"X-Requested-With": "gomoufox"},
+		Fields:        []fetchFormField{{Name: "title", Value: "private"}},
+		Files:         []fetchFormFile{{Name: "image", Path: "/tmp/upload.bin"}},
+		NavigateFirst: "https://example.com/form",
+		MaxBytes:      4,
+		Timeout:       time.Second,
+	})
+	if err != nil || formFetched.Status != 201 || string(formFetched.Body) != string([]byte{0xff, 0x00, 0x01}) || !formFetched.Truncated {
+		t.Fatalf("form fetch = %#v err=%v", formFetched, err)
+	}
+	if page.locator.inputFiles[0] != "/tmp/upload.bin" || !strings.HasPrefix(page.locator.selector, "#gomoufox-mcp-file-") {
+		t.Fatalf("form fetch locator selector=%q files=%#v", page.locator.selector, page.locator.inputFiles)
+	}
+	formArg, ok := internalArgForExpression(page, mcpFormFetchExpression).(map[string]any)
+	if !ok || formArg["maxBytes"] != 4 || formArg["inputSelector"] == "" {
+		t.Fatalf("form fetch internal arg = %#v", internalArgForExpression(page, mcpFormFetchExpression))
+	}
+	formFiles := formArg["files"].([]map[string]any)
+	if len(formFiles) != 1 || formFiles[0]["name"] != "image" {
+		t.Fatalf("form fetch JS files = %#v", formArg["files"])
+	}
+	if got := fmt.Sprint(formArg); strings.Contains(got, "/tmp/upload.bin") {
+		t.Fatalf("form fetch leaked local path to JS arg: %#v", formArg)
+	}
+	if len(page.internalExpressions) < 3 || !strings.Contains(page.internalExpressions[len(page.internalExpressions)-1], "remove()") {
+		t.Fatalf("form fetch did not clean up transient input: %#v", page.internalExpressions)
+	}
+	page.fetchPayload = map[string]any{
 		"ok": true, "url": "https://api.example.com/large", "status": float64(200),
 		"headers": map[string]any{}, "body": "abcd", "truncated": true,
 	}
@@ -403,6 +446,90 @@ func TestGomoufoxSessionBrowserOperations(t *testing.T) {
 	}
 	if err := session.Close(); err != nil || replacementPage.closeCalls != 1 || replacementContext.closeCalls != 1 || browser.closeCalls != 1 {
 		t.Fatalf("close err=%v page=%d context=%d browser=%d", err, replacementPage.closeCalls, replacementContext.closeCalls, browser.closeCalls)
+	}
+}
+
+func TestGomoufoxSessionFetchFormFailureModes(t *testing.T) {
+	boom := errors.New("boom")
+	tests := []struct {
+		name         string
+		page         *fakeMCPPage
+		opts         fetchFormOptions
+		wantErr      error
+		wantContains string
+		wantCleanup  bool
+	}{
+		{
+			name:    "navigate",
+			page:    &fakeMCPPage{gotoErr: boom},
+			opts:    fetchFormOptions{NavigateFirst: "https://example.com/form"},
+			wantErr: boom,
+		},
+		{
+			name:    "create eval",
+			page:    &fakeMCPPage{internalEvalErr: boom},
+			opts:    fetchFormOptions{Files: []fetchFormFile{{Name: "image", Path: "/tmp/upload.bin"}}},
+			wantErr: boom,
+		},
+		{
+			name:         "create decode",
+			page:         &fakeMCPPage{formInputCreatePayload: "not-object"},
+			opts:         fetchFormOptions{Files: []fetchFormFile{{Name: "image", Path: "/tmp/upload.bin"}}},
+			wantContains: "json",
+		},
+		{
+			name:    "create rejected",
+			page:    &fakeMCPPage{formInputCreatePayload: map[string]any{"ok": false}},
+			opts:    fetchFormOptions{Files: []fetchFormFile{{Name: "image", Path: "/tmp/upload.bin"}}},
+			wantErr: ErrInvalidCall,
+		},
+		{
+			name:        "set files",
+			page:        &fakeMCPPage{locator: fakeMCPLocator{inputErr: boom}},
+			opts:        fetchFormOptions{Files: []fetchFormFile{{Name: "image", Path: "/tmp/upload.bin"}}},
+			wantErr:     boom,
+			wantCleanup: true,
+		},
+		{
+			name:         "fetch decode",
+			page:         &fakeMCPPage{fetchPayload: "not-object"},
+			opts:         fetchFormOptions{Files: []fetchFormFile{{Name: "image", Path: "/tmp/upload.bin"}}},
+			wantContains: "json",
+			wantCleanup:  true,
+		},
+		{
+			name:         "fetch rejected",
+			page:         &fakeMCPPage{fetchPayload: map[string]any{"ok": false, "message": "denied"}},
+			opts:         fetchFormOptions{Files: []fetchFormFile{{Name: "image", Path: "/tmp/upload.bin"}}},
+			wantContains: "denied",
+			wantCleanup:  true,
+		},
+		{
+			name:         "invalid base64",
+			page:         &fakeMCPPage{fetchPayload: map[string]any{"ok": true, "body_base64": "%%%%"}},
+			opts:         fetchFormOptions{Files: []fetchFormFile{{Name: "image", Path: "/tmp/upload.bin"}}},
+			wantContains: "illegal base64 data",
+			wantCleanup:  true,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := (&gomoufoxSession{page: tc.page, refs: a11y.NewStore()}).FetchForm(context.Background(), tc.opts)
+			if err == nil {
+				t.Fatal("FetchForm succeeded")
+			}
+			if tc.wantErr != nil && !errors.Is(err, tc.wantErr) {
+				t.Fatalf("FetchForm err = %v, want %v", err, tc.wantErr)
+			}
+			if tc.wantContains != "" && !strings.Contains(err.Error(), tc.wantContains) {
+				t.Fatalf("FetchForm err = %v, want containing %q", err, tc.wantContains)
+			}
+			if tc.wantCleanup {
+				if len(tc.page.internalExpressions) == 0 || !strings.Contains(tc.page.internalExpressions[len(tc.page.internalExpressions)-1], "remove()") {
+					t.Fatalf("FetchForm did not clean up transient input: %#v", tc.page.internalExpressions)
+				}
+			}
+		})
 	}
 }
 
@@ -681,9 +808,21 @@ func TestMCPFetchExpressionUsesBoundedStreamReader(t *testing.T) {
 	}
 }
 
+func TestMCPFormFetchExpressionUsesBoundedBinaryStreamReader(t *testing.T) {
+	if strings.Contains(mcpFormFetchExpression, "TextDecoder") || strings.Contains(mcpFormFetchExpression, "response.text()") {
+		t.Fatal("mcp form fetch expression decodes binary response as text")
+	}
+	for _, token := range []string{"FormData", "getReader", "cancel", "maxBytes", "body_base64", "btoa"} {
+		if !strings.Contains(mcpFormFetchExpression, token) {
+			t.Fatalf("mcp form fetch expression missing %q", token)
+		}
+	}
+}
+
 func TestMCPExpressionsDoNotExposePageVisibleHelper(t *testing.T) {
 	for name, expression := range map[string]string{
 		"fetch":    mcpFetchExpression,
+		"form":     mcpFormFetchExpression,
 		"content":  boundedContentExpression,
 		"snapshot": snapshotExpression,
 		"selector": selectorMetricsExpression,
@@ -769,6 +908,7 @@ func mcpBrowserScriptExpressions() map[string]string {
 	return map[string]string{
 		"bounded_content.js":             boundedContentExpression,
 		"fetch.js":                       mcpFetchExpression,
+		"form_fetch.js":                  mcpFormFetchExpression,
 		"full_page_metrics.js":           fullPageMetricsExpression,
 		"internal_probe.js":              mcpInternalProbeExpression,
 		"internal_probe_patch.js":        mcpInternalProbePatchExpression,
@@ -1322,6 +1462,12 @@ func TestGomoufoxAdaptersAndLauncherSeams(t *testing.T) {
 	if err := contextAdapter.Close(); err != nil {
 		t.Fatalf("context Close: %v", err)
 	}
+	if err := contextAdapter.Abort(); err != nil {
+		t.Fatalf("context Abort fallback: %v", err)
+	}
+	if result, ok := contextAdapter.HARResult(); ok || result.Path != "" {
+		t.Fatalf("empty context HAR result = %#v ok=%t", result, ok)
+	}
 
 	adapterPage := pageAdapter{
 		gotoFunc: func(context.Context, string, ...gomoufox.GotoOption) (*gomoufox.Response, error) { return nil, nil },
@@ -1460,6 +1606,39 @@ func TestGomoufoxAdaptersAndLauncherSeams(t *testing.T) {
 	}
 	if len(sessionProxyBrowser.contextOptionCounts) != 1 || sessionProxyBrowser.contextOptionCounts[0] != 1 {
 		t.Fatalf("session proxy context option counts = %#v, want only download policy", sessionProxyBrowser.contextOptionCounts)
+	}
+}
+
+func TestGomoufoxSessionPreservesImmutableHARResult(t *testing.T) {
+	want := gomoufox.HARResult{
+		Path: "capture.har", Capture: gomoufox.HARCaptureMetadata, Bytes: 42, Entries: 1,
+		Routes: []gomoufox.HARRoute{{Method: "GET", URL: "https://example.com/api", Status: 200}},
+	}
+	browserContext := contextAdapter{
+		close: func() error { return nil },
+		harResult: func() (gomoufox.HARResult, bool) {
+			return want, true
+		},
+	}
+	session := &gomoufoxSession{context: browserContext}
+	if result, ok := session.HARResult(); ok || result.Path != "" {
+		t.Fatalf("premature session HAR result = %#v ok=%t", result, ok)
+	}
+	if err := session.Close(); err != nil {
+		t.Fatal(err)
+	}
+	result, ok := session.HARResult()
+	if !ok || result.Path != want.Path || len(result.Routes) != 1 {
+		t.Fatalf("session HAR result = %#v ok=%t", result, ok)
+	}
+	result.Routes[0].URL = "mutated"
+	again, ok := session.HARResult()
+	if !ok || again.Routes[0].URL != want.Routes[0].URL {
+		t.Fatalf("session HAR result was mutable: %#v ok=%t", again, ok)
+	}
+	var nilSession *gomoufoxSession
+	if result, ok := nilSession.HARResult(); ok || result.Path != "" {
+		t.Fatalf("nil session HAR result = %#v ok=%t", result, ok)
 	}
 }
 
@@ -1798,6 +1977,81 @@ func TestGomoufoxSessionErrorBranches(t *testing.T) {
 	}
 }
 
+func TestGomoufoxFactoryAbortsHARContextOnStartupFailure(t *testing.T) {
+	boom := errors.New("page startup failed")
+	for _, tc := range []struct {
+		name       string
+		page       *fakeMCPPage
+		newPageErr error
+	}{
+		{name: "new page", newPageErr: boom},
+		{name: "startup probe", page: &fakeMCPPage{internalEvalErr: boom}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			closeCalls := 0
+			abortCalls := 0
+			browserContext := contextAdapter{
+				newPage: func(context.Context) (mcpPage, error) {
+					if tc.newPageErr != nil {
+						return nil, tc.newPageErr
+					}
+					return tc.page, nil
+				},
+				close: func() error {
+					closeCalls++
+					return nil
+				},
+				abort: func() error {
+					abortCalls++
+					return nil
+				},
+			}
+			browser := browserAdapter{
+				newContext: func(context.Context, ...gomoufox.ContextOption) (mcpContext, error) {
+					return browserContext, nil
+				},
+				close: func() error { return nil },
+			}
+			factory := &gomoufoxFactory{launcher: &fakeGomoufoxLauncher{browsers: []mcpBrowser{browser}}}
+			_, err := factory.NewBrowserSession(context.Background(), sessionOptions{har: &harSessionOptions{
+				path: filepath.Join(t.TempDir(), "capture.har"), capture: "metadata", maxBytes: gomoufox.DefaultHARMaxBytes,
+			}})
+			if !errors.Is(err, boom) {
+				t.Fatalf("startup error = %v", err)
+			}
+			if abortCalls != 1 || closeCalls != 0 {
+				t.Fatalf("context cleanup abort=%d close=%d", abortCalls, closeCalls)
+			}
+			if tc.page != nil && tc.page.closeCalls != 1 {
+				t.Fatalf("probe failure page close calls = %d", tc.page.closeCalls)
+			}
+		})
+	}
+}
+
+func TestGomoufoxFactoryCloseClosesSharedBrowserOnce(t *testing.T) {
+	page := &fakeMCPPage{}
+	browserContext := &fakeMCPContext{page: page}
+	browser := &fakeMCPBrowser{context: browserContext}
+	factory := &gomoufoxFactory{launcher: &fakeGomoufoxLauncher{browsers: []mcpBrowser{browser}}}
+	session, err := factory.NewBrowserSession(context.Background(), sessionOptions{id: "shared"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := session.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := factory.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := factory.Close(); err != nil || browser.closeCalls != 1 {
+		t.Fatalf("second close err=%v browser calls=%d", err, browser.closeCalls)
+	}
+	if _, err := factory.NewBrowserSession(context.Background(), sessionOptions{id: "after-close"}); !errors.Is(err, errBrowserUnavailable) {
+		t.Fatalf("new session after close = %v", err)
+	}
+}
+
 type fakeGomoufoxLauncher struct {
 	browsers []mcpBrowser
 	calls    []launcherCall
@@ -1901,57 +2155,60 @@ func (c *fakeMCPContext) Close() error {
 }
 
 type fakeMCPPage struct {
-	title                 string
-	url                   string
-	content               string
-	bodyText              string
-	gotoErr               error
-	gotoResp              *gomoufox.Response
-	titleErr              error
-	contentErr            error
-	evalErr               error
-	internalEvalErr       error
-	initErr               error
-	restoreErr            error
-	screenshotErr         error
-	gotoURL               string
-	evaluateExpression    string
-	evaluateArg           any
-	internalExpression    string
-	internalEvaluateArg   any
-	initScripts           []string
-	evaluateCalls         int
-	internalEvaluateCalls int
-	pageWorldInternalErr  error
-	screenshotData        []byte
-	viewport              any
-	pageMetrics           any
-	selectorMetrics       any
-	waitNavigationCalls   int
-	waitNavigationErr     error
-	waitDownloadCalls     int
-	waitDownloadErr       error
-	download              *fakeGomoufoxDownload
-	snapshot              any
-	patchPayload          any
-	probePayload          any
-	contentPayload        any
-	fetchPayload          any
-	pageErrorPayload      any
-	performancePayload    any
-	locator               fakeMCPLocator
-	locatorCalls          int
-	screenshotCalls       int
-	closeCalls            int
-	onRequest             func(*gomoufox.Request)
-	onRequestFailed       func(*gomoufox.Request)
-	onResponse            func(*gomoufox.Response)
-	onPageError           func(error)
-	onConsole             func(gomoufox.ConsoleMessage)
-	onDialog              func(gomoufox.Dialog)
-	wheelX                float64
-	wheelY                float64
-	wheelErr              error
+	title                  string
+	url                    string
+	content                string
+	bodyText               string
+	gotoErr                error
+	gotoResp               *gomoufox.Response
+	titleErr               error
+	contentErr             error
+	evalErr                error
+	internalEvalErr        error
+	initErr                error
+	restoreErr             error
+	screenshotErr          error
+	gotoURL                string
+	evaluateExpression     string
+	evaluateArg            any
+	internalExpression     string
+	internalExpressions    []string
+	internalEvaluateArg    any
+	internalEvaluateArgs   []any
+	initScripts            []string
+	evaluateCalls          int
+	internalEvaluateCalls  int
+	pageWorldInternalErr   error
+	screenshotData         []byte
+	viewport               any
+	pageMetrics            any
+	selectorMetrics        any
+	waitNavigationCalls    int
+	waitNavigationErr      error
+	waitDownloadCalls      int
+	waitDownloadErr        error
+	download               *fakeGomoufoxDownload
+	snapshot               any
+	patchPayload           any
+	probePayload           any
+	contentPayload         any
+	fetchPayload           any
+	formInputCreatePayload any
+	pageErrorPayload       any
+	performancePayload     any
+	locator                fakeMCPLocator
+	locatorCalls           int
+	screenshotCalls        int
+	closeCalls             int
+	onRequest              func(*gomoufox.Request)
+	onRequestFailed        func(*gomoufox.Request)
+	onResponse             func(*gomoufox.Response)
+	onPageError            func(error)
+	onConsole              func(gomoufox.ConsoleMessage)
+	onDialog               func(gomoufox.Dialog)
+	wheelX                 float64
+	wheelY                 float64
+	wheelErr               error
 }
 
 func (p *fakeMCPPage) Goto(_ context.Context, rawURL string, opts ...gomoufox.GotoOption) (*gomoufox.Response, error) {
@@ -2038,10 +2295,21 @@ func (p *fakeMCPPage) EvaluateInternal(_ context.Context, expression string, arg
 	}
 	p.internalEvaluateCalls++
 	p.internalExpression = expression
+	p.internalExpressions = append(p.internalExpressions, expression)
 	if len(arg) > 0 {
 		p.internalEvaluateArg = arg[0]
 	} else {
 		p.internalEvaluateArg = nil
+	}
+	p.internalEvaluateArgs = append(p.internalEvaluateArgs, p.internalEvaluateArg)
+	if strings.Contains(expression, `document.createElement("input")`) {
+		if p.formInputCreatePayload != nil {
+			return p.formInputCreatePayload, nil
+		}
+		return map[string]any{"ok": true}, nil
+	}
+	if strings.Contains(expression, "document.getElementById(inputID)") {
+		return map[string]any{"ok": true}, nil
 	}
 	switch expression {
 	case pageErrorObserverDrainExpression:
@@ -2069,6 +2337,8 @@ func (p *fakeMCPPage) EvaluateInternal(_ context.Context, expression string, arg
 	case snapshotExpression:
 		return p.snapshot, nil
 	case mcpFetchExpression:
+		return p.fetchPayload, nil
+	case mcpFormFetchExpression:
 		return p.fetchPayload, nil
 	case performanceSnapshotExpression:
 		if p.performancePayload != nil {
@@ -2105,9 +2375,18 @@ func (p *fakeMCPPage) AddInitScript(_ context.Context, script string) error {
 	return nil
 }
 
+func internalArgForExpression(page *fakeMCPPage, expression string) any {
+	for index, got := range page.internalExpressions {
+		if got == expression && index < len(page.internalEvaluateArgs) {
+			return page.internalEvaluateArgs[index]
+		}
+	}
+	return nil
+}
+
 func isMCPInternalExpression(expression string) bool {
 	switch expression {
-	case boundedContentExpression, snapshotExpression, mcpFetchExpression, mcpInternalProbeExpression, viewportMetricsExpression, fullPageMetricsExpression, selectorMetricsExpression:
+	case boundedContentExpression, snapshotExpression, mcpFetchExpression, mcpFormFetchExpression, mcpInternalProbeExpression, viewportMetricsExpression, fullPageMetricsExpression, selectorMetricsExpression:
 		return true
 	default:
 		return false
@@ -2428,6 +2707,9 @@ func (p *fakePWPage) RunAndWaitForDownload(action func() error, opts pwbridge.Do
 	return &fakePWDownload{url: "https://download.example/file", suggestedFilename: "file.txt"}, nil
 }
 func (p *fakePWPage) Evaluate(expression string, arg ...any) (any, error) {
+	if expression == mcpFormFetchExpression {
+		return map[string]any{"ok": true, "url": "https://api.example.com", "status": float64(200), "headers": map[string]any{}, "body_base64": "b2s="}, nil
+	}
 	if expression == mcpFetchExpression || (strings.Contains(expression, "fetch(url") && strings.Contains(expression, "maxBytes")) {
 		return map[string]any{"ok": true, "url": "https://api.example.com", "status": float64(200), "headers": map[string]any{}, "body": "ok"}, nil
 	}

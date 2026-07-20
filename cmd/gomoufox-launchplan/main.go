@@ -40,9 +40,10 @@ type valueDrift struct {
 }
 
 var (
-	buildPythonLaunchPayload = sidecar.BuildPythonLaunchPayload
-	nowUTC                   = func() time.Time { return time.Now().UTC() }
-	exitProcess              = os.Exit
+	buildPythonLaunchPayload         = sidecar.BuildPythonLaunchPayload
+	resolveManagedCamoufoxExecutable = sidecar.ResolveManagedCamoufoxExecutable
+	nowUTC                           = func() time.Time { return time.Now().UTC() }
+	exitProcess                      = os.Exit
 )
 
 func main() {
@@ -88,13 +89,18 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		_, _ = fmt.Fprintln(stderr, policy.Redact(err.Error()))
 		return 2
 	}
+	executablePath, err := resolveManagedCamoufoxExecutable(venvDir)
+	if err != nil {
+		_, _ = fmt.Fprintln(stderr, policy.Redact(err.Error()))
+		return 1
+	}
 	rep := report{
 		GeneratedAt: nowUTC().Format(time.RFC3339Nano),
 		Python:      displayPath(python),
 	}
 	failed := false
 	for _, name := range names {
-		scenario, err := buildScenario(ctx, name, python, candidate)
+		scenario, err := buildScenario(ctx, name, python, executablePath, candidate)
 		if err != nil {
 			_, _ = fmt.Fprintln(stderr, policy.Redact(err.Error()))
 			return 1
@@ -216,11 +222,12 @@ func readCandidate(path string) (map[string]any, error) {
 	return raw, nil
 }
 
-func buildScenario(ctx context.Context, name, python string, candidate map[string]any) (scenarioReport, error) {
+func buildScenario(ctx context.Context, name, python, executablePath string, candidate map[string]any) (scenarioReport, error) {
 	cfg, err := scenarioConfig(name)
 	if err != nil {
 		return scenarioReport{}, err
 	}
+	cfg.ExecutablePath = executablePath
 	launchArgs, _ := sidecar.LaunchArgsMap(cfg)
 	payload, err := buildPythonLaunchPayload(ctx, python, cfg)
 	if err != nil {

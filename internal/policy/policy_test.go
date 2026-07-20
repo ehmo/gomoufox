@@ -111,6 +111,7 @@ func TestValidateConfigDefaultsAndBounds(t *testing.T) {
 		{MaxSessions: HardMaxSessions + 1},
 		{SessionTTL: -time.Second},
 		{SessionTTL: MaxSessionTTL + time.Nanosecond},
+		{AllowHARSensitiveValues: true},
 	} {
 		if _, err := ValidateConfig(tc); err == nil {
 			t.Fatalf("expected invalid config rejected: %#v", tc)

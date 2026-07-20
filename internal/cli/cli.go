@@ -283,6 +283,8 @@ func (r Runner) Run(ctx context.Context, args []string, streams Streams) int {
 		return r.runBrowserCommand(ctx, global, rest, commandFetch, streams)
 	case "open":
 		return r.runBrowserCommand(ctx, global, rest, commandOpen, streams)
+	case "record":
+		return r.runBrowserCommand(ctx, global, rest, commandRecord, streams)
 	case "session":
 		session, err := parseSession(rest)
 		if err != nil {
@@ -516,7 +518,7 @@ func printHelpText(w io.Writer, command string) {
 	_, _ = fmt.Fprintln(w, "  gomoufox agents install --target all --features skills,mcp --dry-run --json")
 	_, _ = fmt.Fprintln(w)
 	_, _ = fmt.Fprintln(w, "Browser commands")
-	printCommandGroup(w, []string{"open", "get", "screenshot", "fetch", "eval", "session"})
+	printCommandGroup(w, []string{"open", "record", "get", "screenshot", "fetch", "eval", "session"})
 	_, _ = fmt.Fprintln(w)
 	_, _ = fmt.Fprintln(w, "Agent commands")
 	printCommandGroup(w, []string{"setup", "agents", "skills", "mcp"})
@@ -651,7 +653,7 @@ func cliGuardrailOverrideFlags() []string {
 
 func commandAcceptsURLGuardrailOverrides(command string) bool {
 	switch command {
-	case "open", "get", "screenshot", "fetch", "eval":
+	case "open", "record", "get", "screenshot", "fetch", "eval":
 		return true
 	default:
 		return false
@@ -688,6 +690,13 @@ func commandHelps() []commandHelp {
 				"gomoufox open https://example.com --save-session state.json --wait",
 				"gomoufox fetch https://example.com/api/me --cookies-file state.json",
 			},
+		},
+		{
+			Name:     "record",
+			Usage:    "gomoufox record <url> --out <path> [--capture metadata|full] [--cookies-file <state>]",
+			Summary:  "record an interactive browser workflow as a private HAR artifact",
+			Flags:    []string{"--out", "--capture", "--url-filter", "--max-bytes", "--overwrite", "--cookies-file", "--save-session", "--humanize"},
+			Examples: []string{"gomoufox record https://example.com --out capture.har", "gomoufox record https://example.com --out capture.har --capture full --url-filter '**/api/**'"},
 		},
 		{
 			Name:     "get",
@@ -764,12 +773,15 @@ func commandHelps() []commandHelp {
 				"--enable-eval",
 				"--no-content-warning",
 				"--allow-browser-fetch",
+				"--allow-browser-file-fetch",
 				"--allow-cookie-values",
 				"--allow-cookie-mutation",
 				"--allow-snapshot-values",
 				"--allow-session-export",
 				"--allow-session-import",
 				"--allow-session-proxy",
+				"--allow-har-recording",
+				"--allow-har-sensitive-values",
 				"--allow-file-upload",
 				"--allow-file-download",
 			},
@@ -1397,7 +1409,7 @@ func defaultMCP(ctx context.Context, req MCPRequest) error {
 	}
 	switch req.Transport {
 	case "stdio":
-		return mcpserver.ServeStdio(ctx, server, req.Stdin, req.Stdout)
+		return errors.Join(mcpserver.ServeStdio(ctx, server, req.Stdin, req.Stdout), server.Close())
 	case "http":
 		httpServer := &http.Server{
 			Addr:    fmt.Sprintf("127.0.0.1:%d", req.Port),
@@ -1409,11 +1421,11 @@ func defaultMCP(ctx context.Context, req MCPRequest) error {
 		}()
 		err := httpServer.ListenAndServe()
 		if errors.Is(err, http.ErrServerClosed) {
-			return nil
+			err = nil
 		}
-		return err
+		return errors.Join(err, server.Close())
 	default:
-		return fmt.Errorf("unsupported MCP transport: %s", req.Transport)
+		return errors.Join(fmt.Errorf("unsupported MCP transport: %s", req.Transport), server.Close())
 	}
 }
 
@@ -1502,17 +1514,24 @@ func (r Runner) runMCP(ctx context.Context, global globalFlags, args []string, s
 	cfg.EnableEval = parsed.bool("enable-eval")
 	cfg.ContentWarning = !parsed.bool("no-content-warning")
 	cfg.AllowBrowserFetch = parsed.bool("allow-browser-fetch")
+	cfg.AllowBrowserFileFetch = parsed.bool("allow-browser-file-fetch")
 	cfg.AllowCookieValues = parsed.bool("allow-cookie-values")
 	cfg.AllowCookieMutation = parsed.bool("allow-cookie-mutation")
 	cfg.AllowSnapshotValues = parsed.bool("allow-snapshot-values")
 	cfg.AllowSessionExport = parsed.bool("allow-session-export")
 	cfg.AllowSessionImport = parsed.bool("allow-session-import")
 	cfg.AllowSessionProxy = parsed.bool("allow-session-proxy")
+	cfg.AllowHARRecording = parsed.bool("allow-har-recording")
+	cfg.AllowHARSensitiveValues = parsed.bool("allow-har-sensitive-values")
 	cfg.AllowFileUpload = parsed.bool("allow-file-upload")
 	cfg.AllowFileDownload = parsed.bool("allow-file-download")
 	cfg.AllowLocalhost = parsed.bool("allow-localhost")
 	cfg.AllowedOrigins = splitCSV(parsed.value("allowed-origins"))
 	cfg.AllowedHosts = splitCSV(parsed.value("allowed-hosts"))
+	if cfg.AllowHARSensitiveValues && !cfg.AllowHARRecording {
+		_, _ = fmt.Fprintln(streams.Stderr, "--allow-har-sensitive-values requires --allow-har-recording")
+		return ExitUsage
+	}
 	req := MCPRequest{
 		Transport: transport,
 		Port:      port,
@@ -1774,6 +1793,7 @@ type commandKind int
 
 const (
 	commandOpen commandKind = iota
+	commandRecord
 	commandGet
 	commandScreenshot
 	commandEval
@@ -1826,29 +1846,32 @@ func serveFlagSpecs() map[string]flagSpec {
 
 func mcpFlagSpecs() map[string]flagSpec {
 	return map[string]flagSpec{
-		"transport":             {Kind: flagValue},
-		"toolset":               {Kind: flagValue},
-		"port":                  {Kind: flagValue},
-		"auth-token":            {Kind: flagValue},
-		"allowed-origins":       {Kind: flagValue},
-		"allowed-hosts":         {Kind: flagValue},
-		"allow-localhost":       {Kind: flagBool},
-		"enable-eval":           {Kind: flagBool},
-		"no-content-warning":    {Kind: flagBool},
-		"allow-browser-fetch":   {Kind: flagBool},
-		"allow-cookie-values":   {Kind: flagBool},
-		"allow-cookie-mutation": {Kind: flagBool},
-		"allow-snapshot-values": {Kind: flagBool},
-		"allow-session-export":  {Kind: flagBool},
-		"allow-session-import":  {Kind: flagBool},
-		"allow-session-proxy":   {Kind: flagBool},
-		"allow-file-upload":     {Kind: flagBool},
-		"allow-file-download":   {Kind: flagBool},
-		"max-input-bytes":       {Kind: flagValue},
-		"max-response-bytes":    {Kind: flagValue},
-		"session-dir":           {Kind: flagValue},
-		"session-ttl":           {Kind: flagValue},
-		"max-sessions":          {Kind: flagValue},
+		"transport":                  {Kind: flagValue},
+		"toolset":                    {Kind: flagValue},
+		"port":                       {Kind: flagValue},
+		"auth-token":                 {Kind: flagValue},
+		"allowed-origins":            {Kind: flagValue},
+		"allowed-hosts":              {Kind: flagValue},
+		"allow-localhost":            {Kind: flagBool},
+		"enable-eval":                {Kind: flagBool},
+		"no-content-warning":         {Kind: flagBool},
+		"allow-browser-fetch":        {Kind: flagBool},
+		"allow-browser-file-fetch":   {Kind: flagBool},
+		"allow-cookie-values":        {Kind: flagBool},
+		"allow-cookie-mutation":      {Kind: flagBool},
+		"allow-snapshot-values":      {Kind: flagBool},
+		"allow-session-export":       {Kind: flagBool},
+		"allow-session-import":       {Kind: flagBool},
+		"allow-session-proxy":        {Kind: flagBool},
+		"allow-har-recording":        {Kind: flagBool},
+		"allow-har-sensitive-values": {Kind: flagBool},
+		"allow-file-upload":          {Kind: flagBool},
+		"allow-file-download":        {Kind: flagBool},
+		"max-input-bytes":            {Kind: flagValue},
+		"max-response-bytes":         {Kind: flagValue},
+		"session-dir":                {Kind: flagValue},
+		"session-ttl":                {Kind: flagValue},
+		"max-sessions":               {Kind: flagValue},
 	}
 }
 
@@ -1856,6 +1879,19 @@ func openFlagSpecs() map[string]flagSpec {
 	return map[string]flagSpec{
 		"wait":         {Kind: flagBool},
 		"no-wait":      {Kind: flagBool},
+		"save-session": {Kind: flagValue},
+		"humanize":     {Kind: flagOptionalValue},
+	}
+}
+
+func recordFlagSpecs() map[string]flagSpec {
+	return map[string]flagSpec{
+		"out":          {Kind: flagValue},
+		"capture":      {Kind: flagValue},
+		"url-filter":   {Kind: flagValue},
+		"max-bytes":    {Kind: flagValue},
+		"overwrite":    {Kind: flagBool},
+		"cookies-file": {Kind: flagValue},
 		"save-session": {Kind: flagValue},
 		"humanize":     {Kind: flagOptionalValue},
 	}
@@ -2341,6 +2377,14 @@ func (r Runner) validateBrowserInputs(ctx context.Context, global globalFlags, p
 		_, _ = fmt.Fprintln(streams.Stderr, "gomoufox open forces headful mode; --headless is not allowed")
 		return ExitUsage
 	}
+	if kind == commandRecord && global.HeadlessSet && global.Headless {
+		_, _ = fmt.Fprintln(streams.Stderr, "gomoufox record forces headful mode; --headless is not allowed")
+		return ExitUsage
+	}
+	if kind == commandRecord && global.Profile != "" {
+		_, _ = fmt.Fprintln(streams.Stderr, "gomoufox record does not support --profile; use --cookies-file storage state")
+		return ExitUsage
+	}
 	if global.Profile != "" && (kind == commandGet || kind == commandFetch) && parsed.value("cookies-file") != "" {
 		_, _ = fmt.Fprintln(streams.Stderr, "--cookies-file is mutually exclusive with --profile")
 		return ExitUsage
@@ -2350,6 +2394,12 @@ func (r Runner) validateBrowserInputs(ctx context.Context, global globalFlags, p
 		if _, err := validator.ValidateProxy(global.Proxy); err != nil {
 			writeDiagnosticf(streams.Stderr, "invalid --proxy: %v\n", err)
 			return ExitSessionAuth
+		}
+	}
+	if kind == commandRecord && parsed.valueDefault("capture", "metadata") == "full" {
+		_, _ = fmt.Fprintln(streams.Stderr, "WARNING: full HAR capture may contain credentials, cookies, request and response bodies, PII, signed URLs, and untrusted web content")
+		if parsed.value("url-filter") == "" {
+			_, _ = fmt.Fprintln(streams.Stderr, "WARNING: full HAR capture has no URL filter and may include third-party traffic")
 		}
 	}
 	urls := urlsForValidation(parsed, kind)
@@ -2393,6 +2443,8 @@ func commandName(kind commandKind) string {
 	switch kind {
 	case commandOpen:
 		return "open"
+	case commandRecord:
+		return "record"
 	case commandGet:
 		return "get"
 	case commandScreenshot:
@@ -2413,7 +2465,7 @@ func (r Runner) executeLocalCommand(ctx context.Context, global globalFlags, com
 	}
 	flags := parsed.flagMap()
 	addForwardGlobalFlags(flags, global)
-	if command == "open" {
+	if command == "open" || command == "record" {
 		flags["headful"] = true
 		if _, ok := flags["humanize"]; !ok {
 			flags["humanize"] = "true"
@@ -2443,6 +2495,8 @@ func parseBrowserCommand(args []string, kind commandKind) (parsedFlags, error) {
 	switch kind {
 	case commandOpen:
 		return parseOpen(args)
+	case commandRecord:
+		return parseRecord(args)
 	case commandGet:
 		return parseGet(args)
 	case commandScreenshot:
@@ -2451,6 +2505,75 @@ func parseBrowserCommand(args []string, kind commandKind) (parsedFlags, error) {
 		return parseFetch(args)
 	default:
 		return parsedFlags{}, errors.New("unsupported command")
+	}
+}
+
+func parseRecord(args []string) (parsedFlags, error) {
+	parsed, err := parseFlags(args, recordFlagSpecs())
+	if err != nil {
+		return parsed, err
+	}
+	if len(parsed.Positionals) != 1 || parsed.value("out") == "" {
+		return parsed, errors.New("usage: gomoufox record <URL> --out <path>")
+	}
+	capture := parsed.valueDefault("capture", "metadata")
+	if capture != "metadata" && capture != "full" {
+		return parsed, errors.New("--capture must be metadata or full")
+	}
+	if len(parsed.value("url-filter")) > 2048 {
+		return parsed, errors.New("--url-filter exceeds 2048 bytes")
+	}
+	if strings.IndexByte(parsed.value("url-filter"), 0) >= 0 {
+		return parsed, errors.New("--url-filter contains NUL")
+	}
+	if err := validateMaxBytes(parsed.value("max-bytes"), int(gomoufox.HardHARMaxBytes), "--max-bytes"); err != nil {
+		return parsed, err
+	}
+	if saved := parsed.value("save-session"); saved != "" {
+		out, outErr := canonicalProspectivePath(parsed.value("out"))
+		session, sessionErr := canonicalProspectivePath(saved)
+		if outErr != nil {
+			return parsed, fmt.Errorf("resolve --out: %w", outErr)
+		}
+		if sessionErr != nil {
+			return parsed, fmt.Errorf("resolve --save-session: %w", sessionErr)
+		}
+		samePath := out == session
+		if (runtime.GOOS == "darwin" || runtime.GOOS == "windows") && strings.EqualFold(out, session) {
+			samePath = true
+		}
+		if samePath {
+			return parsed, errors.New("--out and --save-session must be different paths")
+		}
+	}
+	return parsed, nil
+}
+
+func canonicalProspectivePath(path string) (string, error) {
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return "", err
+	}
+	abs = filepath.Clean(abs)
+	parent := filepath.Dir(abs)
+	missing := make([]string, 0, 4)
+	for {
+		resolved, err := filepath.EvalSymlinks(parent)
+		if err == nil {
+			for i := len(missing) - 1; i >= 0; i-- {
+				resolved = filepath.Join(resolved, missing[i])
+			}
+			return filepath.Join(resolved, filepath.Base(abs)), nil
+		}
+		if !os.IsNotExist(err) {
+			return "", err
+		}
+		next := filepath.Dir(parent)
+		if next == parent {
+			return abs, nil
+		}
+		missing = append(missing, filepath.Base(parent))
+		parent = next
 	}
 }
 

@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/ehmo/gomoufox/internal/pwbridge"
 	"github.com/ehmo/gomoufox/internal/sidecar"
 )
 
@@ -21,8 +20,8 @@ type InstallOptions struct {
 }
 
 var (
-	sidecarEnsureInstalled = sidecar.EnsureInstalled
-	pwbridgeEnsureDriver   = pwbridge.EnsureDriver
+	sidecarEnsureInstalled               = sidecar.EnsureInstalled
+	sidecarEnsureManagedPlaywrightDriver = sidecar.EnsureManagedPlaywrightDriver
 )
 
 func EnsureInstalled(ctx context.Context, opts ...func(*InstallOptions)) error {
@@ -45,7 +44,16 @@ func EnsureInstalled(ctx context.Context, opts ...func(*InstallOptions)) error {
 	if installRuntime(cfg.Runtime) == SidecarRuntimeNodeDirect {
 		return nil
 	}
-	if err := pwbridgeEnsureDriver(""); err != nil {
+	if err := sidecarEnsureManagedPlaywrightDriver(ctx, sidecar.InstallOptions{
+		VenvDir:         cfg.VenvDir,
+		SkipBinaryFetch: cfg.SkipBinaryFetch,
+		Verbose:         cfg.Verbose,
+		ForceReinstall:  cfg.ForceReinstall,
+	}); err != nil {
+		mapped := mapSidecarError(err)
+		if errors.Is(mapped, ErrNotInstalled) || errors.Is(mapped, ErrVersionMismatch) {
+			return fmt.Errorf("playwright driver install failed: %w", mapped)
+		}
 		return fmt.Errorf("%w: playwright driver install failed: %v", ErrNotInstalled, err)
 	}
 	return nil
@@ -58,7 +66,7 @@ func installRuntime(runtime SidecarRuntime) SidecarRuntime {
 	return runtime
 }
 
-func nodeDirectPlaywrightDriverDir(venvDir string) string {
+func managedPlaywrightDriverDir(venvDir string) string {
 	return sidecar.RuntimeAssetCacheRoot(venvDir, "", "").PlaywrightDriverDir
 }
 

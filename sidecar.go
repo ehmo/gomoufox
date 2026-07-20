@@ -12,8 +12,18 @@ type sidecarHandle interface {
 	Info() SidecarInfo
 }
 
+var resolveManagedCamoufoxExecutable = sidecar.ResolveManagedCamoufoxExecutable
+
 func newSidecarManager(cfg launchConfig) (sidecarHandle, error) {
-	return sidecarAdapter{manager: sidecar.New(sidecarConfigFromLaunchConfig(cfg))}, nil
+	sidecarCfg := sidecarConfigFromLaunchConfig(cfg)
+	if sidecarCfg.Runtime == sidecar.RuntimePython {
+		executable, err := resolveManagedCamoufoxExecutable(sidecarCfg.VenvDir)
+		if err != nil {
+			return nil, err
+		}
+		sidecarCfg.ExecutablePath = executable
+	}
+	return sidecarAdapter{manager: sidecar.New(sidecarCfg)}, nil
 }
 
 func sidecarConfigFromLaunchConfig(cfg launchConfig) sidecar.Config {

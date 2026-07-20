@@ -522,6 +522,17 @@ func toBrowserContextOptions(opts ContextOptions) playwright.BrowserNewContextOp
 	if opts.AcceptDownloads != nil {
 		out.AcceptDownloads = playwright.Bool(*opts.AcceptDownloads)
 	}
+	if opts.HAR != nil {
+		out.RecordHarPath = playwright.String(opts.HAR.Path)
+		mode := playwright.HarMode(opts.HAR.Mode)
+		out.RecordHarMode = &mode
+		content := playwright.HarContentPolicy(opts.HAR.Content)
+		out.RecordHarContent = &content
+		out.RecordHarOmitContent = playwright.Bool(opts.HAR.OmitRequestContent)
+		if opts.HAR.URLFilter != "" {
+			out.RecordHarURLFilter = opts.HAR.URLFilter
+		}
+	}
 	if opts.StorageState != nil {
 		out.StorageState = toPWStorageState(opts.StorageState)
 	}

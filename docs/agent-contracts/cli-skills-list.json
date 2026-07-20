@@ -1,18 +1,18 @@
 {
   "skills": [
     {
-      "bytes": 1740,
+      "bytes": 2099,
       "min_gomoufox": "0.1.0",
       "name": "core",
-      "sha256": "370d133d5ee58ff1e163aaa046f70bbbfc3b1ead4b699a28448310e6d5914418",
+      "sha256": "8f9d82f941c37ad1afa306e72584f2eb003ddee6ade84ef9e44ade7aa0fd1ee8",
       "summary": "Core gomoufox browser automation workflow for agents.",
       "version": "0.1.0"
     },
     {
-      "bytes": 3341,
+      "bytes": 3754,
       "min_gomoufox": "0.1.0",
       "name": "mcp",
-      "sha256": "3555cba0269092a31e75cb8c2a9208602477035bf5c59d5353eb16d7d55ebbf9",
+      "sha256": "ac3c14b3ced690fa2358a5958af763605cb82f84da7a627a59ea0e4af8e6f5f7",
       "summary": "gomoufox MCP setup and browser-tool workflow for agents.",
       "version": "0.1.0"
     }

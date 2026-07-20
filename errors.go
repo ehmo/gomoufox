@@ -18,6 +18,7 @@ var (
 	ErrURLBlocked             = errors.New("gomoufox: url blocked by guardrail")
 	ErrBrowserFetch           = errors.New("gomoufox: browser fetch failed")
 	ErrPersistentContextLimit = errors.New("gomoufox: persistent context limit reached")
+	ErrHARPersistentContext   = errors.New("gomoufox: HAR recording is unavailable for persistent contexts")
 )
 
 // BrowserFetchError is returned when in-browser fetch fails before gomoufox can

@@ -34,6 +34,8 @@ func defaultLocalCommand(ctx context.Context, req LocalCommandRequest) (LocalCom
 		return localFetch(ctx, req)
 	case "open":
 		return localOpen(ctx, req)
+	case "record":
+		return localRecord(ctx, req)
 	case "session import":
 		return localSessionImport(req)
 	case "session export":
@@ -323,6 +325,69 @@ func localOpen(ctx context.Context, req LocalCommandRequest) (LocalCommandRespon
 	return LocalCommandResponse{ExitCode: ExitOK, Stdout: stdout}, nil
 }
 
+func localRecord(ctx context.Context, req LocalCommandRequest) (LocalCommandResponse, error) {
+	capture := gomoufox.HARCapture(flagString(req, "capture", string(gomoufox.HARCaptureMetadata)))
+	harPath := flagString(req, "out", "")
+	contextOptions := []gomoufox.ContextOption{gomoufox.WithHARRecording(gomoufox.HAROptions{
+		Path:      harPath,
+		Capture:   capture,
+		URLFilter: flagString(req, "url_filter", ""),
+		MaxBytes:  int64(flagInt(req, "max_bytes", int(gomoufox.DefaultHARMaxBytes))),
+		Overwrite: localBool(req, "overwrite"),
+	})}
+	p, closeAll, err := openPageForLocal(ctx, req, contextOptions)
+	if err != nil {
+		return LocalCommandResponse{}, err
+	}
+	defer closeAll()
+	if err := p.Goto(ctx, req.Args[0], gomoufox.WithTimeout(flagDuration(req, "timeout", 30*time.Second))); err != nil {
+		return LocalCommandResponse{}, err
+	}
+	if err := p.WaitClosed(ctx); err != nil && !isExpectedPageCloseError(err) {
+		return LocalCommandResponse{}, err
+	}
+	finalURL := p.URL()
+	sessionPath := flagString(req, "save_session", "")
+	if sessionPath != "" {
+		state, err := p.StorageState(ctx)
+		if err != nil {
+			return LocalCommandResponse{}, err
+		}
+		if err := writeFile0600(sessionPath, mustJSON(state), true); err != nil {
+			return LocalCommandResponse{}, err
+		}
+	}
+	if err := p.Close(); err != nil {
+		return LocalCommandResponse{}, err
+	}
+	info, err := os.Stat(harPath)
+	if err != nil || !info.Mode().IsRegular() {
+		if err == nil {
+			err = errors.New("HAR destination is not a regular file")
+		}
+		return LocalCommandResponse{}, err
+	}
+	if req.JSON {
+		payload := map[string]any{
+			"url": finalURL,
+			"har": map[string]any{
+				"path":    harPath,
+				"capture": capture,
+				"bytes":   info.Size(),
+			},
+		}
+		if sessionPath != "" {
+			payload["session_path"] = sessionPath
+		}
+		return jsonResponse(payload)
+	}
+	stdout := []byte(finalURL + "\n" + harPath + "\n")
+	if sessionPath != "" {
+		stdout = append(stdout, []byte(sessionPath+"\n")...)
+	}
+	return LocalCommandResponse{ExitCode: ExitOK, Stdout: stdout}, nil
+}
+
 func localSessionImport(req LocalCommandRequest) (LocalCommandResponse, error) {
 	src := flagString(req, "file", "")
 	dst := flagString(req, "out", "")
@@ -545,7 +610,7 @@ func browserOptions(req LocalCommandRequest) ([]gomoufox.Option, error) {
 		}
 		opts = append(opts, gomoufox.WithPersistentContext(profile))
 	}
-	if req.Command == "open" || localBool(req, "headful") {
+	if req.Command == "open" || req.Command == "record" || localBool(req, "headful") {
 		opts = append(opts, gomoufox.WithHeadless(camoufoxcfg.HeadlessFalse))
 	} else if raw, ok := req.Flags["headless"].(bool); ok {
 		if raw {

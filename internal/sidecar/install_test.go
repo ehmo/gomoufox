@@ -5,6 +5,8 @@ import (
 	"context"
 	"errors"
 	"io/fs"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -113,7 +115,8 @@ func TestInstallLockContextTimeoutAndNilPath(t *testing.T) {
 func TestEnsureBinaryOfflinePathRequiresManifestByDefault(t *testing.T) {
 	browser := fakeBrowserTree(t)
 	missingPython := filepath.Join(t.TempDir(), "python")
-	if err := EnsureBinary(context.Background(), missingPython, InstallOptions{CamoufoxPath: browser}); !errors.Is(err, ErrVersionMismatch) || !strings.Contains(err.Error(), EnvTrustUnverifiedCamoufoxPath) {
+	venv := t.TempDir()
+	if err := EnsureBinary(context.Background(), missingPython, InstallOptions{VenvDir: venv, CamoufoxPath: browser}); !errors.Is(err, ErrVersionMismatch) || !strings.Contains(err.Error(), EnvTrustUnverifiedCamoufoxPath) {
 		t.Fatalf("unverified offline path err = %v", err)
 	}
 
@@ -123,30 +126,35 @@ func TestEnsureBinaryOfflinePathRequiresManifestByDefault(t *testing.T) {
 	}
 	restore := replaceManifestChecksum(t, expected)
 	defer restore()
-	if err := EnsureBinary(context.Background(), missingPython, InstallOptions{CamoufoxPath: browser}); err != nil {
+	if err := EnsureBinary(context.Background(), missingPython, InstallOptions{VenvDir: venv, CamoufoxPath: browser}); err != nil {
 		t.Fatalf("verified offline path err = %v", err)
+	}
+	managed, err := ResolveManagedCamoufoxExecutable(venv)
+	if err != nil || !strings.HasPrefix(managed, RuntimeAssetCacheRoot(venv, sidecarGOOS, sidecarGOARCH).BrowserResourcesDir) {
+		t.Fatalf("managed executable = %q, %v", managed, err)
 	}
 }
 
 func TestEnsureBinaryOfflinePathAllowsExplicitUnverifiedTrust(t *testing.T) {
 	browser := fakeBrowserTree(t)
+	venv := t.TempDir()
 	t.Setenv(EnvTrustUnverifiedCamoufoxPath, "1")
-	if err := EnsureBinary(context.Background(), filepath.Join(t.TempDir(), "python"), InstallOptions{CamoufoxPath: browser}); err != nil {
+	if err := EnsureBinary(context.Background(), filepath.Join(t.TempDir(), "python"), InstallOptions{VenvDir: venv, CamoufoxPath: browser}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ResolveManagedCamoufoxExecutable(venv); err != nil {
 		t.Fatal(err)
 	}
 
 	t.Setenv(EnvTrustUnverifiedCamoufoxPath, "true")
-	if err := EnsureBinary(context.Background(), filepath.Join(t.TempDir(), "python"), InstallOptions{CamoufoxPath: browser}); !errors.Is(err, ErrVersionMismatch) {
+	if err := EnsureBinary(context.Background(), filepath.Join(t.TempDir(), "python"), InstallOptions{VenvDir: t.TempDir(), CamoufoxPath: browser}); !errors.Is(err, ErrVersionMismatch) {
 		t.Fatalf("non-explicit trust override err = %v", err)
 	}
 }
 
 func TestEnsureBinaryInvalidOfflinePathAndEmptyDiscovery(t *testing.T) {
-	if err := EnsureBinary(context.Background(), filepath.Join(t.TempDir(), "python"), InstallOptions{CamoufoxPath: t.TempDir()}); !errors.Is(err, ErrNotInstalled) {
+	if err := EnsureBinary(context.Background(), filepath.Join(t.TempDir(), "python"), InstallOptions{VenvDir: t.TempDir(), CamoufoxPath: t.TempDir()}); !errors.Is(err, ErrNotInstalled) {
 		t.Fatalf("invalid offline path err = %v", err)
-	}
-	if _, err := discoverCamoufoxBrowserDir(context.Background(), ""); err == nil {
-		t.Fatal("empty python discovery succeeded")
 	}
 	if err := verifyCamoufoxManifest(fakeBrowserTree(t)); !errors.Is(err, ErrVersionMismatch) {
 		t.Fatalf("missing manifest checksum err = %v", err)
@@ -154,18 +162,16 @@ func TestEnsureBinaryInvalidOfflinePathAndEmptyDiscovery(t *testing.T) {
 }
 
 func TestEnsureBinarySkipFetchWithEmptyDiscovery(t *testing.T) {
-	oldDiscover := discoverCamoufoxBrowserDirForEnsure
-	discoverCamoufoxBrowserDirForEnsure = func(context.Context, string) (string, error) {
-		return "", nil
-	}
-	t.Cleanup(func() { discoverCamoufoxBrowserDirForEnsure = oldDiscover })
-	if err := EnsureBinary(context.Background(), "python", InstallOptions{SkipBinaryFetch: true}); !errors.Is(err, ErrNotInstalled) || strings.Contains(err.Error(), ": <nil>") {
+	restoreCache := replaceUserCacheDir(t, t.TempDir(), nil)
+	defer restoreCache()
+	if err := EnsureBinary(context.Background(), "python", InstallOptions{VenvDir: t.TempDir(), SkipBinaryFetch: true}); !errors.Is(err, ErrNotInstalled) || strings.Contains(err.Error(), ": <nil>") {
 		t.Fatalf("skip fetch empty discovery err = %v", err)
 	}
 }
 
 func TestEnsureBinaryEnvOfflinePath(t *testing.T) {
 	browser := fakeBrowserTree(t)
+	venv := t.TempDir()
 	t.Setenv(EnvCamoufoxPath, browser)
 	expected, err := camoufoxBrowserManifestSHA256(browser)
 	if err != nil {
@@ -173,7 +179,10 @@ func TestEnsureBinaryEnvOfflinePath(t *testing.T) {
 	}
 	restore := replaceManifestChecksum(t, expected)
 	defer restore()
-	if err := EnsureBinary(context.Background(), filepath.Join(t.TempDir(), "python"), InstallOptions{}); err != nil {
+	if err := EnsureBinary(context.Background(), filepath.Join(t.TempDir(), "python"), InstallOptions{VenvDir: venv}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ResolveManagedCamoufoxExecutable(venv); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -838,37 +847,6 @@ func TestBrowserExecutableDiscoveryHelpers(t *testing.T) {
 	}
 }
 
-func TestDiscoverCamoufoxBrowserDirFallsBackToCamoufoxCacheRoot(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("fake shell python is unix-only")
-	}
-	cache := t.TempDir()
-	camoufoxRoot := filepath.Join(cache, "camoufox")
-	exe := filepath.Join(camoufoxRoot, "Camoufox.app", "Contents", "MacOS", "camoufox")
-	if err := os.MkdirAll(filepath.Dir(exe), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(exe, []byte("fake executable"), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	restore := replaceUserCacheDir(t, cache, nil)
-	defer restore()
-
-	python := fakePython(t, `#!/bin/sh
-if [ "$1" = "-c" ]; then
-	exit 0
-fi
-exit 42
-`)
-	got, err := discoverCamoufoxBrowserDir(context.Background(), python)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got != camoufoxRoot {
-		t.Fatalf("discovered cache root = %q want %q", got, camoufoxRoot)
-	}
-}
-
 func TestCamoufoxCacheRootsAndUnsupportedManifestPlatform(t *testing.T) {
 	restoreCache := replaceUserCacheDir(t, "", errors.New("cache unavailable"))
 	if roots := camoufoxBrowserCacheRoots(); roots != nil {
@@ -953,119 +931,92 @@ func TestRuntimePlatformHelpersCanBeExercisedLocally(t *testing.T) {
 }
 
 func TestEnsureBinarySkipFetchFailsWhenNoUsableBinary(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("fake shell python is unix-only")
-	}
 	restoreCache := replaceUserCacheDir(t, t.TempDir(), nil)
 	defer restoreCache()
-	python := fakePython(t, `#!/bin/sh
-if [ "$1" = "-c" ]; then
-	exit 0
-fi
-exit 42
-`)
-	err := EnsureBinary(context.Background(), python, InstallOptions{SkipBinaryFetch: true})
+	err := EnsureBinary(context.Background(), filepath.Join(t.TempDir(), "missing-python"), InstallOptions{VenvDir: t.TempDir(), SkipBinaryFetch: true})
 	if !errors.Is(err, ErrNotInstalled) {
 		t.Fatalf("EnsureBinary err = %v", err)
 	}
 }
 
-func TestEnsureBinaryFetchUsesFakeDownloadAndChecksum(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("fake shell python is unix-only")
-	}
+func TestEnsureBinaryDownloadsExactPinnedAssetWithoutPython(t *testing.T) {
+	restorePlatform := overrideSidecarPlatform(t, "linux", "amd64")
+	defer restorePlatform()
 	restoreCache := replaceUserCacheDir(t, t.TempDir(), nil)
 	defer restoreCache()
-	browser := fakeBrowserTree(t)
-	expected, err := camoufoxBrowserManifestSHA256(browser)
-	if err != nil {
-		t.Fatal(err)
-	}
+	zipData := runtimeBrowserZipFixture(t)
+	expected := runtimeBrowserZipManifestSHA256(t, zipData)
 	restoreManifest := replaceManifestChecksum(t, expected)
 	defer restoreManifest()
-	marker := filepath.Join(t.TempDir(), "fetched")
-	python := fakePython(t, `#!/bin/sh
-if [ "$1" = "-c" ]; then
-	if [ -f `+shQuote(marker)+` ]; then
-		printf '%s\n' `+shQuote(browser)+`
-	fi
-	exit 0
-fi
-if [ "$1" = "-m" ] && [ "$2" = "camoufox" ] && [ "$3" = "fetch" ]; then
-	touch `+shQuote(marker)+`
-	exit 0
-fi
-exit 42
-`)
-	if err := EnsureBinary(context.Background(), python, InstallOptions{}); err != nil {
+	origClient := runtimeAssetHTTPClient
+	origBase := camoufoxReleaseAssetBaseURL
+	t.Cleanup(func() {
+		runtimeAssetHTTPClient = origClient
+		camoufoxReleaseAssetBaseURL = origBase
+	})
+	requestedPath := ""
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestedPath = r.URL.Path
+		_, _ = w.Write(zipData)
+	}))
+	defer server.Close()
+	runtimeAssetHTTPClient = server.Client()
+	camoufoxReleaseAssetBaseURL = server.URL
+	venv := t.TempDir()
+	if err := EnsureBinary(context.Background(), filepath.Join(t.TempDir(), "missing-python"), InstallOptions{VenvDir: venv}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := os.Stat(marker); err != nil {
-		t.Fatalf("fetch marker missing: %v", err)
+	wantPath := "/" + CamoufoxBinaryVersion + "/camoufox-" + strings.TrimPrefix(CamoufoxBinaryVersion, "v") + "-lin.x86_64.zip"
+	if requestedPath != wantPath {
+		t.Fatalf("download path = %q, want %q", requestedPath, wantPath)
+	}
+	if _, err := ResolveManagedCamoufoxExecutable(venv); err != nil {
+		t.Fatalf("managed executable: %v", err)
 	}
 }
 
-func TestEnsureBinaryDiscoveryAndFetchErrorEdges(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("fake shell python is unix-only")
-	}
-	restoreCache := replaceUserCacheDir(t, t.TempDir(), nil)
+func TestEnsureBinaryIgnoresMovingGlobalCamoufoxCache(t *testing.T) {
+	restorePlatform := overrideSidecarPlatform(t, "linux", "amd64")
+	defer restorePlatform()
+	cache := t.TempDir()
+	restoreCache := replaceUserCacheDir(t, cache, nil)
 	defer restoreCache()
-	browser := fakeBrowserTree(t)
-	expected, err := camoufoxBrowserManifestSHA256(browser)
-	if err != nil {
+	global := filepath.Join(cache, "camoufox")
+	if err := os.MkdirAll(global, 0o700); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.WriteFile(filepath.Join(global, "camoufox"), []byte("newer browser"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	zipData := runtimeBrowserZipFixture(t)
+	expected := runtimeBrowserZipManifestSHA256(t, zipData)
 	restoreManifest := replaceManifestChecksum(t, expected)
 	defer restoreManifest()
-	python := fakePython(t, `#!/bin/sh
-if [ "$1" = "-c" ]; then
-	printf '%s\n' `+shQuote(browser)+`
-	exit 0
-fi
-exit 42
-`)
-	if err := EnsureBinary(context.Background(), python, InstallOptions{}); err != nil {
-		t.Fatalf("discovered binary err = %v", err)
+	origClient := runtimeAssetHTTPClient
+	origBase := camoufoxReleaseAssetBaseURL
+	t.Cleanup(func() {
+		runtimeAssetHTTPClient = origClient
+		camoufoxReleaseAssetBaseURL = origBase
+	})
+	downloads := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		downloads++
+		_, _ = w.Write(zipData)
+	}))
+	defer server.Close()
+	runtimeAssetHTTPClient = server.Client()
+	camoufoxReleaseAssetBaseURL = server.URL
+	venv := t.TempDir()
+	if err := EnsureBinary(context.Background(), "missing-python", InstallOptions{VenvDir: venv}); err != nil {
+		t.Fatal(err)
 	}
-
-	invalidBrowser := t.TempDir()
-	python = fakePython(t, `#!/bin/sh
-if [ "$1" = "-c" ]; then
-	printf '%s\n' `+shQuote(invalidBrowser)+`
-	exit 0
-fi
-exit 42
-`)
-	if err := EnsureBinary(context.Background(), python, InstallOptions{SkipBinaryFetch: true}); !errors.Is(err, ErrNotInstalled) {
-		t.Fatalf("invalid discovered binary err = %v", err)
+	if downloads != 1 {
+		t.Fatalf("downloads = %d, want exact pinned asset download", downloads)
 	}
-
-	python = fakePython(t, `#!/bin/sh
-if [ "$1" = "-c" ]; then
-	exit 0
-fi
-if [ "$1" = "-m" ] && [ "$2" = "camoufox" ] && [ "$3" = "fetch" ]; then
-	echo fetch failed
-	exit 9
-fi
-exit 42
-`)
-	if err := EnsureBinary(context.Background(), python, InstallOptions{}); err == nil || !strings.Contains(err.Error(), "camoufox fetch") {
-		t.Fatalf("fetch failure err = %v", err)
-	}
-
-	python = fakePython(t, `#!/bin/sh
-if [ "$1" = "-c" ]; then
-	exit 0
-fi
-if [ "$1" = "-m" ] && [ "$2" = "camoufox" ] && [ "$3" = "fetch" ]; then
-	exit 0
-fi
-exit 42
-`)
-	if err := EnsureBinary(context.Background(), python, InstallOptions{}); !errors.Is(err, ErrNotInstalled) {
-		t.Fatalf("fetch without discovery err = %v", err)
+	managed := RuntimeAssetCacheRoot(venv, "linux", "amd64").BrowserResourcesDir
+	got, err := camoufoxBrowserManifestSHA256(managed)
+	if err != nil || got != expected {
+		t.Fatalf("managed checksum = %q, %v; want %q", got, err, expected)
 	}
 }
 
@@ -1076,48 +1027,27 @@ func TestEnsureBinaryAdditionalLocalBranchEdges(t *testing.T) {
 	restoreCache := replaceUserCacheDir(t, t.TempDir(), nil)
 	defer restoreCache()
 
-	if _, err := discoverCamoufoxBrowserDir(context.Background(), fakePython(t, `#!/bin/sh
-exit 9
-`)); err == nil {
-		t.Fatal("discovery command failure succeeded")
-	}
-
-	browser := fakeBrowserTree(t)
-	python := fakePython(t, `#!/bin/sh
-if [ "$1" = "-c" ]; then
-	printf '%s\n' `+shQuote(browser)+`
-	exit 0
-fi
-exit 42
-`)
-	if err := EnsureBinary(context.Background(), python, InstallOptions{}); !errors.Is(err, ErrVersionMismatch) {
-		t.Fatalf("discovered manifest failure err = %v", err)
-	}
-
-	invalidBrowser := t.TempDir()
-	marker := filepath.Join(t.TempDir(), "fetched")
-	python = fakePython(t, `#!/bin/sh
-if [ "$1" = "-c" ]; then
-	if [ -f `+shQuote(marker)+` ]; then
-		printf '%s\n' `+shQuote(invalidBrowser)+`
-	fi
-	exit 0
-fi
-if [ "$1" = "-m" ] && [ "$2" = "camoufox" ] && [ "$3" = "fetch" ]; then
-	touch `+shQuote(marker)+`
-	exit 0
-fi
-exit 42
-`)
-	if err := EnsureBinary(context.Background(), python, InstallOptions{}); !errors.Is(err, ErrNotInstalled) || !strings.Contains(err.Error(), "fetch produced unusable") {
-		t.Fatalf("post-fetch invalid browser err = %v", err)
-	}
-
-	root := t.TempDir()
-	if err := os.WriteFile(filepath.Join(root, "chrome"), []byte("not a camoufox executable"), 0o600); err != nil {
+	venv := t.TempDir()
+	root := RuntimeAssetCacheRoot(venv, sidecarGOOS, sidecarGOARCH)
+	if err := os.MkdirAll(root.BrowserResourcesDir, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := findBrowserExecutable(root); err == nil {
+	if err := os.WriteFile(filepath.Join(root.BrowserResourcesDir, "camoufox"), []byte("tampered"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ResolveManagedCamoufoxExecutable(venv); !errors.Is(err, ErrVersionMismatch) {
+		t.Fatalf("tampered managed browser err = %v", err)
+	}
+	t.Setenv(EnvTrustUnverifiedCamoufoxPath, "1")
+	if _, err := ResolveManagedCamoufoxExecutable(venv); err != nil {
+		t.Fatalf("trusted managed browser err = %v", err)
+	}
+
+	plainRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(plainRoot, "chrome"), []byte("not a camoufox executable"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := findBrowserExecutable(plainRoot); err == nil {
 		t.Fatal("non-browser walk entry found executable")
 	}
 }

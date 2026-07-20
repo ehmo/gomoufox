@@ -70,6 +70,7 @@ type contextConfig struct {
 	ExtraHTTPHeaders map[string]string
 	HTTPCredentials  *HTTPCredentials
 	AcceptDownloads  *bool
+	HAR              *HAROptions
 }
 
 // HTTPCredentials stores HTTP authentication credentials for a context.

@@ -1,16 +1,25 @@
 package sidecar
 
 import (
+	"archive/tar"
 	"archive/zip"
+	"bytes"
+	"compress/gzip"
 	"context"
+	"crypto/sha256"
+	"crypto/sha512"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
+
+	playwright "github.com/playwright-community/playwright-go"
 )
 
 func TestEnsureRuntimeAssetsWritesManifestCacheLayout(t *testing.T) {
@@ -194,6 +203,9 @@ func TestEnsureRuntimeAssetsDownloadsCamoufoxBrowserWithoutPython(t *testing.T) 
 		return os.WriteFile(filepath.Join(root.PlaywrightPackageDir, "package.json"), []byte(`{"version":"`+RequiredPlaywrightJSON+`"}`), 0o600)
 	}
 	zipData := runtimeBrowserZipFixture(t)
+	expected := runtimeBrowserZipManifestSHA256(t, zipData)
+	restoreManifest := replaceManifestChecksum(t, expected)
+	defer restoreManifest()
 	var requestedPath string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requestedPath = r.URL.Path
@@ -202,8 +214,6 @@ func TestEnsureRuntimeAssetsDownloadsCamoufoxBrowserWithoutPython(t *testing.T) 
 	defer server.Close()
 	runtimeAssetHTTPClient = server.Client()
 	camoufoxReleaseAssetBaseURL = server.URL
-	t.Setenv(EnvTrustUnverifiedCamoufoxPath, "1")
-
 	layout, err := EnsureRuntimeAssets(context.Background(), InstallOptions{VenvDir: t.TempDir(), Runtime: RuntimeNodeDirect})
 	if err != nil {
 		t.Fatalf("EnsureRuntimeAssets download: %v", err)
@@ -361,6 +371,237 @@ func TestDownloadRuntimeCamoufoxBrowserFailureBranches(t *testing.T) {
 	}
 	if err := installRuntimePlaywrightDriver(ctx, RuntimeAssetCacheRoot(t.TempDir(), "linux", "amd64"), InstallOptions{}); !errors.Is(err, context.Canceled) {
 		t.Fatalf("canceled driver err = %v", err)
+	}
+}
+
+func TestInstallRuntimePlaywrightDriverUsesPinnedOfficialSources(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("fixture Node.js executable is a shell script")
+	}
+	restorePlatform := overrideSidecarPlatform(t, "linux", "amd64")
+	defer restorePlatform()
+	coreArchive := playwrightCoreArchiveFixture(t, map[string]string{
+		"package/cli.js":                       "// fixture cli\n",
+		"package/package.json":                 `{"name":"playwright-core","version":"` + RequiredPlaywright + `"}`,
+		"package/lib/utilsBundleImpl/xdg-open": "#!/bin/sh\n",
+	})
+	nodeFilename := "node-v" + playwrightDriverNodeVersion + "-linux-x64.tar.gz"
+	nodeArchive := playwrightNodeArchiveFixture(t, nodeFilename, "#!/bin/sh\nprintf 'Version "+RequiredPlaywright+"\\n'\n")
+	requests := map[string]int{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests[r.URL.Path]++
+		switch r.URL.Path {
+		case "/playwright-core.tgz":
+			_, _ = w.Write(coreArchive)
+		case "/v" + playwrightDriverNodeVersion + "/" + nodeFilename:
+			_, _ = w.Write(nodeArchive)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+	restoreSources := replacePinnedPlaywrightSources(t, server, coreArchive, nodeFilename, nodeArchive)
+	defer restoreSources()
+
+	root := RuntimeAssetCacheRoot(t.TempDir(), "linux", "amd64")
+	if err := installRuntimePlaywrightDriver(context.Background(), root, InstallOptions{}); err != nil {
+		t.Fatalf("install pinned Playwright driver: %v", err)
+	}
+	if err := verifyPinnedPlaywrightDriver(context.Background(), root.PlaywrightDriverDir); err != nil {
+		t.Fatalf("verify installed Playwright driver: %v", err)
+	}
+	if st, err := os.Stat(filepath.Join(root.PlaywrightPackageDir, "lib", "utilsBundleImpl", "xdg-open")); err != nil || st.Mode().Perm()&0o111 == 0 {
+		t.Fatalf("Playwright executable mode was not preserved: %v, %v", st, err)
+	}
+	if requests["/playwright-core.tgz"] != 1 || requests["/v"+playwrightDriverNodeVersion+"/"+nodeFilename] != 1 {
+		t.Fatalf("source requests = %#v", requests)
+	}
+	manifest := NewRuntimeAssetManifest(root, "linux", "amd64")
+	if manifest.Assets[0].Source != server.URL+"/v"+playwrightDriverNodeVersion+"/"+nodeFilename || manifest.Assets[2].Source != server.URL+"/playwright-core.tgz" {
+		t.Fatalf("manifest sources = %#v", manifest.Assets)
+	}
+	if err := installRuntimePlaywrightDriver(context.Background(), root, InstallOptions{}); err != nil {
+		t.Fatalf("reuse pinned Playwright driver: %v", err)
+	}
+	if requests["/playwright-core.tgz"] != 1 || requests["/v"+playwrightDriverNodeVersion+"/"+nodeFilename] != 1 {
+		t.Fatalf("verified driver unexpectedly downloaded again: %#v", requests)
+	}
+}
+
+func TestPinnedPlaywrightDriverOfficialSources(t *testing.T) {
+	if os.Getenv("GOMOUFOX_LIVE_DRIVER") != "1" {
+		t.Skip("set GOMOUFOX_LIVE_DRIVER=1 to test pinned official driver sources")
+	}
+	if _, ok := playwrightNodeAssets[runtime.GOOS+"/"+runtime.GOARCH]; !ok {
+		t.Skipf("no pinned driver asset for %s/%s", runtime.GOOS, runtime.GOARCH)
+	}
+	if fixtureDir := os.Getenv("GOMOUFOX_LIVE_DRIVER_FIXTURE_DIR"); fixtureDir != "" {
+		asset := playwrightNodeAssets[runtime.GOOS+"/"+runtime.GOARCH]
+		coreArchive, err := os.ReadFile(filepath.Join(fixtureDir, "playwright-core-1.57.0.tgz"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		nodeArchive, err := os.ReadFile(filepath.Join(fixtureDir, asset.Filename))
+		if err != nil {
+			t.Fatal(err)
+		}
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if strings.HasSuffix(r.URL.Path, "/"+asset.Filename) {
+				_, _ = w.Write(nodeArchive)
+				return
+			}
+			_, _ = w.Write(coreArchive)
+		}))
+		defer server.Close()
+		origClient := runtimeAssetHTTPClient
+		origCoreURL := playwrightCorePackageURL
+		origNodeBase := playwrightNodeReleaseBaseURL
+		defer func() {
+			runtimeAssetHTTPClient = origClient
+			playwrightCorePackageURL = origCoreURL
+			playwrightNodeReleaseBaseURL = origNodeBase
+		}()
+		runtimeAssetHTTPClient = server.Client()
+		playwrightCorePackageURL = server.URL + "/playwright-core-1.57.0.tgz"
+		playwrightNodeReleaseBaseURL = server.URL
+	}
+	root := RuntimeAssetCacheRoot(t.TempDir(), runtime.GOOS, runtime.GOARCH)
+	if err := installRuntimePlaywrightDriver(context.Background(), root, InstallOptions{ForceReinstall: true}); err != nil {
+		t.Fatalf("install official pinned driver: %v", err)
+	}
+	if err := verifyPinnedPlaywrightDriver(context.Background(), root.PlaywrightDriverDir); err != nil {
+		t.Fatalf("verify official pinned driver: %v", err)
+	}
+	pw, err := playwright.Run(&playwright.RunOptions{DriverDirectory: root.PlaywrightDriverDir})
+	if err != nil {
+		t.Fatalf("start playwright-go with assembled official driver: %v", err)
+	}
+	if err := pw.Stop(); err != nil {
+		t.Fatalf("stop playwright-go with assembled official driver: %v", err)
+	}
+}
+
+func TestInstallRuntimePlaywrightDriverFailsClosed(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("fixture Node.js executable is a shell script")
+	}
+	restorePlatform := overrideSidecarPlatform(t, "linux", "amd64")
+	defer restorePlatform()
+	validCore := playwrightCoreArchiveFixture(t, map[string]string{
+		"package/cli.js":       "// fixture cli\n",
+		"package/package.json": `{"version":"` + RequiredPlaywright + `"}`,
+	})
+	nodeFilename := "node-v" + playwrightDriverNodeVersion + "-linux-x64.tar.gz"
+	validNode := playwrightNodeArchiveFixture(t, nodeFilename, "#!/bin/sh\nprintf 'Version "+RequiredPlaywright+"\\n'\n")
+
+	for _, tc := range []struct {
+		name          string
+		core          []byte
+		node          []byte
+		mutateDigests func()
+		want          string
+	}{
+		{
+			name: "core checksum",
+			core: validCore,
+			node: validNode,
+			mutateDigests: func() {
+				playwrightCorePackageSHA512 = strings.Repeat("0", sha512.Size*2)
+			},
+			want: "playwright-core 1.57.0 archive checksum mismatch",
+		},
+		{
+			name: "node checksum",
+			core: validCore,
+			node: validNode,
+			mutateDigests: func() {
+				asset := playwrightNodeAssets["linux/amd64"]
+				asset.SHA256 = strings.Repeat("0", sha256.Size*2)
+				playwrightNodeAssets["linux/amd64"] = asset
+			},
+			want: "Node.js 24.11.1 archive checksum mismatch",
+		},
+		{
+			name: "unsafe core member",
+			core: playwrightCoreArchiveFixture(t, map[string]string{
+				"package/cli.js":       "// fixture cli\n",
+				"package/package.json": `{"version":"` + RequiredPlaywright + `"}`,
+				"package/../../escape": "nope",
+			}),
+			node:          validNode,
+			mutateDigests: func() {},
+			want:          "unsafe runtime archive member",
+		},
+		{
+			name: "reported version",
+			core: playwrightCoreArchiveFixture(t, map[string]string{
+				"package/cli.js":       "// fixture cli\n",
+				"package/package.json": `{"version":"0.0.0"}`,
+			}),
+			node:          validNode,
+			mutateDigests: func() {},
+			want:          "installed playwright-core 0.0.0",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path == "/playwright-core.tgz" {
+					_, _ = w.Write(tc.core)
+					return
+				}
+				_, _ = w.Write(tc.node)
+			}))
+			defer server.Close()
+			restoreSources := replacePinnedPlaywrightSources(t, server, tc.core, nodeFilename, tc.node)
+			defer restoreSources()
+			tc.mutateDigests()
+
+			root := RuntimeAssetCacheRoot(t.TempDir(), "linux", "amd64")
+			if err := os.MkdirAll(root.PlaywrightDriverDir, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			marker := filepath.Join(root.PlaywrightDriverDir, "keep")
+			if err := os.WriteFile(marker, []byte("previous"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			err := installRuntimePlaywrightDriver(context.Background(), root, InstallOptions{ForceReinstall: true})
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("install err = %v, want %q", err, tc.want)
+			}
+			if raw, err := os.ReadFile(marker); err != nil || string(raw) != "previous" {
+				t.Fatalf("previous driver changed after failure: %q, %v", raw, err)
+			}
+			if _, err := os.Stat(filepath.Join(filepath.Dir(root.PlaywrightDriverDir), "escape")); !os.IsNotExist(err) {
+				t.Fatalf("unsafe archive wrote outside staging: %v", err)
+			}
+		})
+	}
+}
+
+func TestDownloadRuntimeAssetBytesBoundsAndStatus(t *testing.T) {
+	origClient := runtimeAssetHTTPClient
+	defer func() { runtimeAssetHTTPClient = origClient }()
+	for _, tc := range []struct {
+		name string
+		body string
+		code int
+		max  int64
+		want string
+	}{
+		{name: "status", code: http.StatusNotFound, max: 8, want: "HTTP 404"},
+		{name: "body cap", code: http.StatusOK, body: "123456789", max: 8, want: "exceeds 8-byte limit"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(tc.code)
+				_, _ = w.Write([]byte(tc.body))
+			}))
+			defer server.Close()
+			runtimeAssetHTTPClient = server.Client()
+			if _, err := downloadRuntimeAssetBytes(context.Background(), server.URL, tc.max); err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("download err = %v, want %q", err, tc.want)
+			}
+		})
 	}
 }
 
@@ -528,6 +769,80 @@ func replaceRuntimeAssetInstallers(t *testing.T) func() {
 	}
 }
 
+func replacePinnedPlaywrightSources(t *testing.T, server *httptest.Server, core []byte, nodeFilename string, node []byte) func() {
+	t.Helper()
+	origClient := runtimeAssetHTTPClient
+	origCoreURL := playwrightCorePackageURL
+	origCoreHash := playwrightCorePackageSHA512
+	origNodeBase := playwrightNodeReleaseBaseURL
+	origNodeAssets := playwrightNodeAssets
+	coreSum := sha512.Sum512(core)
+	nodeSum := sha256.Sum256(node)
+	runtimeAssetHTTPClient = server.Client()
+	playwrightCorePackageURL = server.URL + "/playwright-core.tgz"
+	playwrightCorePackageSHA512 = fmt.Sprintf("%x", coreSum)
+	playwrightNodeReleaseBaseURL = server.URL
+	playwrightNodeAssets = map[string]playwrightNodeAsset{
+		"linux/amd64": {Filename: nodeFilename, SHA256: fmt.Sprintf("%x", nodeSum)},
+	}
+	return func() {
+		runtimeAssetHTTPClient = origClient
+		playwrightCorePackageURL = origCoreURL
+		playwrightCorePackageSHA512 = origCoreHash
+		playwrightNodeReleaseBaseURL = origNodeBase
+		playwrightNodeAssets = origNodeAssets
+	}
+}
+
+func playwrightCoreArchiveFixture(t *testing.T, files map[string]string) []byte {
+	t.Helper()
+	var raw bytes.Buffer
+	gz := gzip.NewWriter(&raw)
+	tw := tar.NewWriter(gz)
+	for name, body := range files {
+		mode := int64(0o644)
+		if strings.HasSuffix(name, "/xdg-open") {
+			mode = 0o755
+		}
+		header := &tar.Header{Name: name, Mode: mode, Size: int64(len(body)), Typeflag: tar.TypeReg}
+		if err := tw.WriteHeader(header); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := tw.Write([]byte(body)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := tw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := gz.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return raw.Bytes()
+}
+
+func playwrightNodeArchiveFixture(t *testing.T, filename, executable string) []byte {
+	t.Helper()
+	var raw bytes.Buffer
+	gz := gzip.NewWriter(&raw)
+	tw := tar.NewWriter(gz)
+	root := strings.TrimSuffix(filename, ".tar.gz")
+	header := &tar.Header{Name: root + "/bin/node", Mode: 0o755, Size: int64(len(executable)), Typeflag: tar.TypeReg}
+	if err := tw.WriteHeader(header); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tw.Write([]byte(executable)); err != nil {
+		t.Fatal(err)
+	}
+	if err := tw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := gz.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return raw.Bytes()
+}
+
 func runtimeBrowserZipFixture(t *testing.T) []byte {
 	t.Helper()
 	tmp := filepath.Join(t.TempDir(), "browser.zip")
@@ -556,6 +871,27 @@ func runtimeBrowserZipFixture(t *testing.T) []byte {
 		t.Fatal(err)
 	}
 	return data
+}
+
+func runtimeBrowserZipManifestSHA256(t *testing.T, data []byte) string {
+	t.Helper()
+	archive := filepath.Join(t.TempDir(), "browser.zip")
+	if err := os.WriteFile(archive, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	extract := t.TempDir()
+	if err := unzipRuntimeAsset(archive, extract); err != nil {
+		t.Fatal(err)
+	}
+	source, err := discoverDownloadedBrowserDir(extract)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sum, err := camoufoxBrowserManifestSHA256(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return sum
 }
 
 func emptyRuntimeZipFixture(t *testing.T) []byte {

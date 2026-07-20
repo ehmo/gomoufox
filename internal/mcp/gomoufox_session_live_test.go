@@ -3,12 +3,16 @@ package mcp
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
@@ -18,6 +22,8 @@ import (
 	"github.com/ehmo/gomoufox"
 	"github.com/ehmo/gomoufox/camoufoxcfg"
 	"github.com/ehmo/gomoufox/internal/a11y"
+	"github.com/ehmo/gomoufox/internal/harcapture"
+	"github.com/ehmo/gomoufox/internal/policy"
 )
 
 func TestLiveMCPHelpersIgnoreHostilePageWorld(t *testing.T) {
@@ -179,6 +185,210 @@ CSS.escape = () => "page-lie";
 	viewportWidth, viewportHeight := session.viewport(ctx)
 	if viewportWidth < 100 || viewportHeight < 100 {
 		t.Fatalf("viewport metrics saw page-world window patch: width=%d height=%d", viewportWidth, viewportHeight)
+	}
+}
+
+func TestLiveMCPFetchFormUploadsExactMultipartBytes(t *testing.T) {
+	skipUnlessLiveMCP(t)
+
+	uploadBytes := []byte{0x00, 0xff, 0x41, 0x80, 0x42}
+	responseBytes := []byte{0xff, 0x00, 0x01}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/login":
+			http.SetCookie(w, &http.Cookie{Name: "sid", Value: "live-cookie", Path: "/"})
+			w.Header().Set("Content-Type", "text/html")
+			_, _ = w.Write([]byte(`<!doctype html><main>logged in</main>`))
+		case "/upload":
+			if r.Method != http.MethodPost {
+				http.Error(w, "bad method", http.StatusMethodNotAllowed)
+				return
+			}
+			if got, err := r.Cookie("sid"); err != nil || got.Value != "live-cookie" {
+				http.Error(w, "missing cookie", http.StatusUnauthorized)
+				return
+			}
+			if err := r.ParseMultipartForm(1 << 20); err != nil {
+				http.Error(w, "bad multipart: "+err.Error(), http.StatusBadRequest)
+				return
+			}
+			if got := r.MultipartForm.Value["title"]; len(got) != 2 || got[0] != "one" || got[1] != "two" {
+				http.Error(w, fmt.Sprintf("bad fields %#v", r.MultipartForm.Value), http.StatusBadRequest)
+				return
+			}
+			files := r.MultipartForm.File["image"]
+			if len(files) != 1 || files[0].Filename != "upload.bin" {
+				http.Error(w, fmt.Sprintf("bad files %#v", r.MultipartForm.File), http.StatusBadRequest)
+				return
+			}
+			part, err := files[0].Open()
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			defer func() { _ = part.Close() }()
+			body, err := io.ReadAll(part)
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			if !bytes.Equal(body, uploadBytes) {
+				http.Error(w, fmt.Sprintf("bad bytes %v", body), http.StatusBadRequest)
+				return
+			}
+			w.Header().Set("Content-Type", "application/octet-stream")
+			w.Header().Set("X-CSRF-Token", "live-secret")
+			_, _ = w.Write(responseBytes)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	uploadPath := filepath.Join(t.TempDir(), "upload.bin")
+	if err := os.WriteFile(uploadPath, uploadBytes, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+	defer cancel()
+	browser, err := gomoufox.New(ctx,
+		gomoufox.WithHeadless(camoufoxcfg.HeadlessTrue),
+		gomoufox.WithMainWorldEval(true),
+		gomoufox.WithUnsafeDirectNetwork(true),
+		gomoufox.WithAutoInstall(false),
+	)
+	if err != nil {
+		t.Fatalf("launch managed Camoufox: %v", err)
+	}
+	t.Cleanup(func() { _ = browser.Close() })
+	page, err := browser.NewPage(ctx)
+	if err != nil {
+		t.Fatalf("new page: %v", err)
+	}
+	adaptedPage := adaptPage(page)
+	if err := verifyMCPInternalEvaluation(ctx, adaptedPage); err != nil {
+		t.Fatalf("internal evaluation startup probe: %v", err)
+	}
+	session := &gomoufoxSession{page: adaptedPage, refs: a11y.NewStore()}
+
+	got, err := session.FetchForm(ctx, fetchFormOptions{
+		URL:           server.URL + "/upload",
+		Method:        "POST",
+		Fields:        []fetchFormField{{Name: "title", Value: "one"}, {Name: "title", Value: "two"}},
+		Files:         []fetchFormFile{{Name: "image", Path: uploadPath}},
+		NavigateFirst: server.URL + "/login",
+		MaxBytes:      64,
+		Timeout:       10 * time.Second,
+	})
+	if err != nil {
+		t.Fatalf("fetch form: %v", err)
+	}
+	if got.Status != http.StatusOK || !bytes.Equal(got.Body, responseBytes) || got.Headers["x-csrf-token"] != "live-secret" || got.Truncated {
+		t.Fatalf("fetch form result = %#v body=%v", got, got.Body)
+	}
+}
+
+func TestLiveMCPHARRecording(t *testing.T) {
+	skipUnlessLiveMCP(t)
+	originalLauncher := newGomoufoxForMCP
+	newGomoufoxForMCP = func(ctx context.Context, opts ...gomoufox.Option) (*gomoufox.Browser, error) {
+		return gomoufox.New(ctx, append(opts, gomoufox.WithAutoInstall(false))...)
+	}
+	t.Cleanup(func() { newGomoufoxForMCP = originalLauncher })
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/first", "/api/second":
+			w.Header().Set("Content-Type", "application/json; charset=utf-8")
+			_, _ = fmt.Fprintf(w, `{"path":%q}`, r.URL.Path)
+		case "/":
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			_, _ = io.WriteString(w, `<!doctype html><main>HAR integration</main><script>
+(async () => {
+  await fetch("/api/first?token=secret-one");
+  await fetch("/api/second?shape=secret-two");
+  const done = document.createElement("p");
+  done.id = "done";
+  done.textContent = "done";
+  document.body.appendChild(done);
+})().catch(error => { document.body.dataset.error = String(error); });
+</script>`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	policyConfig := policy.DefaultConfig()
+	policyConfig.AllowHARRecording = true
+	policyConfig.AllowLocalhost = true
+	mcpServer, err := New(Config{Policy: policyConfig, SessionDir: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = mcpServer.Close() })
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	start := mcpServer.Handle(ctx, "browser_har_start", raw(`{"session_id":"live-har","path":"capture.har","url_filter":"**/api/**","duration_ms":30000}`))
+	if start.IsError {
+		t.Fatalf("HAR start = %#v", start)
+	}
+	navigate := mcpServer.Handle(ctx, "browser_navigate", mustRaw(t, map[string]any{
+		"session_id": "live-har",
+		"url":        server.URL + "/",
+	}))
+	if navigate.IsError {
+		t.Fatalf("navigate = %#v", navigate)
+	}
+	wait := mcpServer.Handle(ctx, "browser_wait_for", raw(`{"session_id":"live-har","selector":"#done","timeout_ms":20000}`))
+	if wait.IsError {
+		t.Fatalf("wait = %#v", wait)
+	}
+	stop := mcpServer.Handle(ctx, "browser_har_stop", raw(`{"session_id":"live-har"}`))
+	if stop.IsError {
+		t.Fatalf("HAR stop = %#v", stop)
+	}
+	routes, ok := stop.Payload["routes"].([]harcapture.Route)
+	if !ok || len(routes) != 2 {
+		t.Fatalf("HAR routes = %#v", stop.Payload["routes"])
+	}
+	firstURL, firstErr := url.Parse(routes[0].URL)
+	secondURL, secondErr := url.Parse(routes[1].URL)
+	if firstErr != nil || secondErr != nil ||
+		firstURL.Path != "/api/first" || firstURL.Query().Get("token") != harcapture.RedactedValue ||
+		secondURL.Path != "/api/second" || secondURL.Query().Get("shape") != harcapture.RedactedValue {
+		t.Fatalf("HAR route order/redaction = %#v", routes)
+	}
+	responseJSON, err := json.Marshal(stop.Payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(responseJSON, []byte("secret-one")) || bytes.Contains(responseJSON, []byte("secret-two")) {
+		t.Fatalf("HAR stop leaked query values: %s", responseJSON)
+	}
+
+	artifactPath := filepath.Join(mcpServer.jail.Root, "capture.har")
+	st, err := os.Stat(artifactPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.Mode().Perm() != 0o600 {
+		t.Fatalf("HAR mode = %o", st.Mode().Perm())
+	}
+	entries, artifactRoutes, truncated, err := harcapture.InspectFile(artifactPath, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if entries != 2 || len(artifactRoutes) != 2 || truncated {
+		t.Fatalf("artifact entries=%d routes=%#v truncated=%t", entries, artifactRoutes, truncated)
+	}
+	artifact, err := os.ReadFile(artifactPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(artifact, []byte("secret-one")) || bytes.Contains(artifact, []byte("secret-two")) || !bytes.Contains(artifact, []byte("redacted")) {
+		t.Fatalf("HAR artifact redaction failed: %s", artifact)
 	}
 }
 

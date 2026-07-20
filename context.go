@@ -3,9 +3,11 @@ package gomoufox
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"path/filepath"
 	"sync"
 
+	"github.com/ehmo/gomoufox/internal/harcapture"
 	"github.com/ehmo/gomoufox/internal/pwbridge"
 )
 
@@ -14,6 +16,13 @@ type Context struct {
 	raw     pwbridge.BrowserContext
 	mu      sync.Mutex
 	routes  map[routeKey]pwbridge.RouteHandler
+
+	har            *harcapture.Recorder
+	harCloseOnce   sync.Once
+	harCloseErr    error
+	harResult      *HARResult
+	harProvisional bool
+	harClosed      bool
 }
 
 func (c *Context) NewPage(ctx context.Context) (*Page, error) {
@@ -132,8 +141,73 @@ func (c *Context) OnResponse(handler func(*Response)) {
 	c.raw.OnResponse(func(r pwbridge.Response) { handler(&Response{raw: r}) })
 }
 
-func (c *Context) Close() error { return c.raw.Close() }
-func (c *Context) Raw() any     { return c.raw.Raw() }
+func (c *Context) Close() error {
+	if c.har == nil {
+		return c.raw.Close()
+	}
+	return c.closeHAR(true)
+}
+
+// Abort closes the context without publishing an in-progress HAR recording.
+// For contexts without HAR recording it is equivalent to Close.
+func (c *Context) Abort() error {
+	if c.har == nil {
+		return c.raw.Close()
+	}
+	return c.closeHAR(false)
+}
+
+func (c *Context) closeHAR(finalize bool) error {
+	c.harCloseOnce.Do(func() {
+		c.mu.Lock()
+		if c.harProvisional {
+			finalize = false
+		}
+		c.harClosed = true
+		c.mu.Unlock()
+		closeErr := c.raw.Close()
+		if !finalize || closeErr != nil {
+			c.harCloseErr = errors.Join(closeErr, c.har.Discard())
+		} else {
+			result, err := c.har.Finalize()
+			c.harCloseErr = err
+			if err == nil {
+				c.mu.Lock()
+				publicResult := publicHARResult(result)
+				c.harResult = &publicResult
+				c.mu.Unlock()
+			}
+		}
+		if c.browser != nil {
+			c.browser.untrackHARContext(c)
+		}
+	})
+	return c.harCloseErr
+}
+
+func (c *Context) commitHAR() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.harClosed {
+		return false
+	}
+	c.harProvisional = false
+	return true
+}
+
+func (c *Context) HARResult() (HARResult, bool) {
+	if c == nil {
+		return HARResult{}, false
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.harResult == nil {
+		return HARResult{}, false
+	}
+	return cloneHARResult(*c.harResult), true
+}
+
+func (c *Context) Raw() any { return c.raw.Raw() }
 
 func writeJSON0600(path string, value any) error {
 	if err := fileMkdirAll(filepath.Dir(path), 0o700); err != nil {

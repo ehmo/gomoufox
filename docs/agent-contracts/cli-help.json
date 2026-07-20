@@ -21,6 +21,10 @@
       "usage": "gomoufox open <url> [--profile <dir>] [--save-session <path>] [--wait]"
     },
     {
+      "name": "record",
+      "usage": "gomoufox record <url> --out <path> [--capture metadata|full] [--cookies-file <state>]"
+    },
+    {
       "name": "get",
       "usage": "gomoufox get <url> [--html|--text|--markdown] [--wait-selector <css>]"
     },

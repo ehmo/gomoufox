@@ -8,7 +8,6 @@ import (
 	"io"
 	"io/fs"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -27,10 +26,9 @@ var (
 			"41dbd88d7bf89ec667586b77bf4ea33518233bca4e4824c61d89d1cc052de4c7",
 		},
 	}
-	camoufoxManifestRel                 = filepath.Rel
-	camoufoxManifestInfo                = func(d fs.DirEntry) (fs.FileInfo, error) { return d.Info() }
-	discoverCamoufoxBrowserDirForEnsure = discoverCamoufoxBrowserDir
-	userCacheDir                        = os.UserCacheDir
+	camoufoxManifestRel  = filepath.Rel
+	camoufoxManifestInfo = func(d fs.DirEntry) (fs.FileInfo, error) { return d.Info() }
+	userCacheDir         = os.UserCacheDir
 )
 
 const (
@@ -50,134 +48,43 @@ var camoufoxSupportedPlatforms = []camoufoxPlatform{
 }
 
 func EnsureBinary(ctx context.Context, venvPython string, opts InstallOptions) error {
-	if offlinePath := firstNonEmpty(opts.CamoufoxPath, os.Getenv(EnvCamoufoxPath)); offlinePath != "" {
-		if err := validateCamoufoxBrowserDir(offlinePath); err != nil {
-			return fmt.Errorf("%w: invalid offline Camoufox browser path %s: %v", ErrNotInstalled, offlinePath, err)
-		}
-		if trustUnverifiedCamoufoxPath() {
-			return nil
-		}
-		if err := verifyCamoufoxManifest(offlinePath); err != nil {
-			return fmt.Errorf("%w: offline Camoufox browser path %s failed manifest verification: %v; set %s=1 only for trusted local builds", ErrVersionMismatch, offlinePath, err, EnvTrustUnverifiedCamoufoxPath)
-		}
-		return nil
+	_ = venvPython // Browser provisioning is Go-managed and does not invoke `camoufox fetch`.
+	if opts.VenvDir == "" {
+		opts.VenvDir = DefaultCacheDir()
 	}
+	root := RuntimeAssetCacheRoot(opts.VenvDir, sidecarGOOS, sidecarGOARCH)
+	if err := os.MkdirAll(filepath.Dir(root.Root), 0o700); err != nil {
+		return err
+	}
+	if err := installRuntimeCamoufoxBrowser(ctx, root, opts); err != nil {
+		return err
+	}
+	_, err := ResolveManagedCamoufoxExecutable(opts.VenvDir)
+	return err
+}
 
-	discovered, discoverErr := discoverCamoufoxBrowserDirForEnsure(ctx, venvPython)
-	if discoverErr == nil && discovered != "" {
-		if err := validateCamoufoxBrowserDir(discovered); err != nil {
-			discoverErr = err
-		} else if err := verifyCamoufoxManifest(discovered); err != nil {
-			return err
-		} else {
-			return nil
+// ResolveManagedCamoufoxExecutable returns the executable from gomoufox's
+// versioned browser cache. Python and node-direct runtimes share this pinned
+// browser tree instead of consulting Camoufox's moving global cache at launch.
+func ResolveManagedCamoufoxExecutable(venvDir string) (string, error) {
+	root := RuntimeAssetCacheRoot(venvDir, sidecarGOOS, sidecarGOARCH)
+	if err := validateCamoufoxBrowserDir(root.BrowserResourcesDir); err != nil {
+		return "", fmt.Errorf("%w: managed Camoufox browser is unavailable: %v", ErrNotInstalled, err)
+	}
+	if !trustUnverifiedCamoufoxPath() {
+		if err := verifyCamoufoxManifest(root.BrowserResourcesDir); err != nil {
+			return "", fmt.Errorf("%w: managed Camoufox browser failed manifest verification: %v", ErrVersionMismatch, err)
 		}
 	}
-
-	if opts.SkipBinaryFetch || os.Getenv("GOMOUFOX_SKIP_FETCH") != "" {
-		if discoverErr != nil {
-			return fmt.Errorf("%w: usable Camoufox browser binary not found and fetch is disabled: %v", ErrNotInstalled, discoverErr)
-		}
-		return fmt.Errorf("%w: usable Camoufox browser binary not found and fetch is disabled", ErrNotInstalled)
-	}
-
-	binarySizeWarningOnce.Do(func() {
-		if binarySizeWarningWriter != nil {
-			_, _ = fmt.Fprintln(binarySizeWarningWriter, "gomoufox: Camoufox browser download is approximately 300-660 MB")
-		}
-	})
-	cmd := exec.CommandContext(ctx, venvPython, "-m", "camoufox", "fetch")
-	if out, err := runInstallCommand(cmd, opts.Verbose); err != nil {
-		return fmt.Errorf("camoufox fetch: %w: %s", err, string(out))
-	}
-
-	discovered, err := discoverCamoufoxBrowserDirForEnsure(ctx, venvPython)
+	executable, err := installedRuntimeBrowserExecutable(root)
 	if err != nil {
-		return fmt.Errorf("%w: camoufox fetch completed but browser binary was not discoverable: %v", ErrNotInstalled, err)
+		return "", fmt.Errorf("%w: locate managed Camoufox browser executable: %v", ErrNotInstalled, err)
 	}
-	if err := validateCamoufoxBrowserDir(discovered); err != nil {
-		return fmt.Errorf("%w: camoufox fetch produced unusable browser directory %s: %v", ErrNotInstalled, discovered, err)
-	}
-	return verifyCamoufoxManifest(discovered)
+	return executable, nil
 }
 
 func trustUnverifiedCamoufoxPath() bool {
 	return os.Getenv(EnvTrustUnverifiedCamoufoxPath) == trustUnverifiedCamoufoxPathEnabled
-}
-
-func discoverCamoufoxBrowserDir(ctx context.Context, venvPython string) (string, error) {
-	if strings.TrimSpace(venvPython) == "" {
-		return "", fmt.Errorf("empty venv python")
-	}
-	const script = `from pathlib import Path
-import os
-import sys
-
-roots = []
-for key in ("CAMOUFOX_BROWSER_PATH", "CAMOUFOX_EXECUTABLE_PATH"):
-    value = os.environ.get(key)
-    if value:
-        roots.append(Path(value))
-try:
-    import camoufox
-    package = Path(camoufox.__file__).resolve().parent
-    roots.append(package)
-except Exception:
-    pass
-
-candidates = (
-    "firefox",
-    "camoufox",
-    "firefox.exe",
-    "camoufox.exe",
-    "Camoufox.app/Contents/MacOS/firefox",
-    "Firefox.app/Contents/MacOS/firefox",
-    "Contents/MacOS/firefox",
-)
-
-def executable(path):
-    try:
-        return path.is_file() and os.access(path, os.X_OK)
-    except OSError:
-        return False
-
-def usable_dir(path):
-    if path.is_file() and executable(path):
-        return path.parent
-    if not path.is_dir():
-        return None
-    for rel in candidates:
-        if executable(path / rel):
-            return path
-    return None
-
-for root in roots:
-    usable = usable_dir(root)
-    if usable:
-        print(usable)
-        raise SystemExit(0)
-    if root.is_dir():
-        for child in root.rglob("*"):
-            usable = usable_dir(child)
-            if usable:
-                print(usable)
-                raise SystemExit(0)
-raise SystemExit(0)
-`
-	out, err := exec.CommandContext(ctx, venvPython, "-c", script).Output()
-	if err != nil {
-		return "", err
-	}
-	path := strings.TrimSpace(string(out))
-	if path != "" {
-		return path, nil
-	}
-	for _, root := range camoufoxBrowserCacheRoots() {
-		if usable, err := discoverUsableBrowserDir(root); err == nil {
-			return usable, nil
-		}
-	}
-	return "", fs.ErrNotExist
 }
 
 func validateCamoufoxBrowserDir(dir string) error {

@@ -76,6 +76,12 @@ func TestWriteLauncherReadsLaunchArgsFromStdin(t *testing.T) {
 	text := string(data)
 	for _, want := range []string{
 		`orjson.loads(sys.stdin.buffer.read())`,
+		`managed_executable_path = launch_kwargs.pop("executable_path", None)`,
+		`camoufox_pkgman.INSTALL_DIR = managed_root`,
+		`camoufox_pkgman.camoufox_path = lambda download_if_missing=True: managed_root`,
+		`camoufox_utils.installed_verstr = lambda: "135.0.1-beta.24"`,
+		`launch_kwargs["exclude_addons"] = [DefaultAddons.UBO]`,
+		`os.path.realpath(config.get("executable_path", ""))`,
 		`persistent_user_data_dir = launch_kwargs.pop("user_data_dir", None)`,
 		`payload["_userDataDir"] = persistent_user_data_dir`,
 		`payload["_sharedBrowser"] = True`,
@@ -85,12 +91,33 @@ func TestWriteLauncherReadsLaunchArgsFromStdin(t *testing.T) {
 			t.Fatalf("launcher missing %q:\n%s", want, text)
 		}
 	}
+	if strings.Contains(text, `launch_kwargs.setdefault("ff_version"`) || strings.Contains(text, "camoufox fetch") {
+		t.Fatalf("launcher can consult Camoufox's moving browser version:\n%s", text)
+	}
 	st, err := os.Stat(path)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if st.Mode().Perm() != 0o600 {
 		t.Fatalf("launcher perms = %o", st.Mode().Perm())
+	}
+}
+
+func TestPythonLaunchPayloadScriptUsesPinnedManagedBrowser(t *testing.T) {
+	for _, want := range []string{
+		`managed_executable_path = launch_kwargs.pop("executable_path", None)`,
+		`camoufox_pkgman.INSTALL_DIR = managed_root`,
+		`camoufox_pkgman.camoufox_path = lambda download_if_missing=True: managed_root`,
+		`camoufox_utils.installed_verstr = lambda: "135.0.1-beta.24"`,
+		`launch_kwargs["exclude_addons"] = [DefaultAddons.UBO]`,
+		`os.path.realpath(config.get("executable_path", ""))`,
+	} {
+		if !strings.Contains(pythonLaunchPayloadScript, want) {
+			t.Fatalf("Python launch payload missing %q:\n%s", want, pythonLaunchPayloadScript)
+		}
+	}
+	if strings.Contains(pythonLaunchPayloadScript, `launch_kwargs.setdefault("ff_version"`) || strings.Contains(pythonLaunchPayloadScript, "camoufox fetch") {
+		t.Fatalf("Python launch payload can consult Camoufox's moving browser version:\n%s", pythonLaunchPayloadScript)
 	}
 }
 
@@ -159,6 +186,7 @@ func TestLaunchArgsJSONIncludesPersonaOptionsAndSanitizesEnv(t *testing.T) {
 	acceptDownloads := false
 	raw, err := launchArgsJSON(Config{
 		Headless:        0,
+		ExecutablePath:  "/managed/camoufox",
 		LaunchProxy:     &ProxyConfig{Server: "http://127.0.0.1:4567", Username: "user", Password: "pass"},
 		GeoIP:           true,
 		Humanize:        &humanize,
@@ -189,6 +217,7 @@ func TestLaunchArgsJSONIncludesPersonaOptionsAndSanitizesEnv(t *testing.T) {
 	}
 	text := string(raw)
 	for _, want := range []string{
+		`"executable_path":"/managed/camoufox"`,
 		`"proxy":{"password":"pass","server":"http://127.0.0.1:4567","username":"user"}`,
 		`"geoip":true`,
 		`"humanize":1.25`,
@@ -878,7 +907,7 @@ while true; do sleep 1; done
 
 func TestManagerStartStopWithFakeNodeDirectPayload(t *testing.T) {
 	venv := fakeNodeDirectRuntimeWithPython(t)
-	manager := New(Config{VenvDir: venv, Runtime: "node-direct", ConnectTimeout: time.Second})
+	manager := New(Config{VenvDir: venv, Runtime: "node-direct", ConnectTimeout: 5 * time.Second})
 	endpoint, err := manager.Start(context.Background())
 	if err != nil {
 		t.Fatal(err)

@@ -2,6 +2,7 @@ package gomoufox
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"sync"
 	"time"
@@ -441,11 +442,12 @@ func (p *Page) FetchBytesWithOptions(ctx context.Context, url, method string, he
 		return FetchBytesResult{}, err
 	}
 	result, err := p.raw.EvaluateInternal(browserFetchExpression, map[string]any{
-		"url":      url,
-		"method":   method,
-		"headers":  fetchHeadersForEvaluation(headers),
-		"body":     string(body),
-		"maxBytes": maxBytes,
+		"url":        url,
+		"method":     method,
+		"headers":    fetchHeadersForEvaluation(headers),
+		"bodyBase64": base64.StdEncoding.EncodeToString(body),
+		"hasBody":    len(body) > 0,
+		"maxBytes":   maxBytes,
 	})
 	if err != nil {
 		return FetchBytesResult{}, &BrowserFetchError{Code: "network_error", URL: url, Method: method, Status: 0, Message: err.Error()}
@@ -455,19 +457,28 @@ func (p *Page) FetchBytesWithOptions(ctx context.Context, url, method string, he
 		return FetchBytesResult{}, err
 	}
 	var payload struct {
-		OK        bool              `json:"ok"`
-		Code      string            `json:"code"`
-		URL       string            `json:"url"`
-		Status    int               `json:"status"`
-		Headers   map[string]string `json:"headers"`
-		Body      string            `json:"body"`
-		Message   string            `json:"message"`
-		Truncated bool              `json:"truncated"`
+		OK           bool              `json:"ok"`
+		Code         string            `json:"code"`
+		URL          string            `json:"url"`
+		Status       int               `json:"status"`
+		Headers      map[string]string `json:"headers"`
+		Body         string            `json:"body"`
+		BodyBase64   string            `json:"body_base64"`
+		BodyEncoding string            `json:"body_encoding"`
+		Message      string            `json:"message"`
+		Truncated    bool              `json:"truncated"`
 	}
 	if err := json.Unmarshal(data, &payload); err != nil {
 		return FetchBytesResult{}, err
 	}
 	responseBody := []byte(payload.Body)
+	if payload.BodyEncoding == "base64" || payload.BodyBase64 != "" {
+		decoded, err := base64.StdEncoding.DecodeString(payload.BodyBase64)
+		if err != nil {
+			return FetchBytesResult{}, err
+		}
+		responseBody = decoded
+	}
 	if maxBytes > 0 {
 		if capped, truncated := policy.Truncate(responseBody, maxBytes); truncated {
 			responseBody = capped
@@ -515,18 +526,32 @@ func (p *Page) Close() error {
 
 func (p *Page) Raw() any { return p.raw.Raw() }
 
-const browserFetchExpression = `async ({url, method, headers, body, maxBytes}) => {
+const browserFetchExpression = `async ({url, method, headers, bodyBase64, hasBody, maxBytes}) => {
   let reader;
   let cancelReader = async () => {};
+  const fromBase64 = (value) => {
+    const binary = atob(value || "");
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+    return bytes;
+  };
+  const toBase64 = (bytes) => {
+    let binary = "";
+    const size = 0x8000;
+    for (let offset = 0; offset < bytes.length; offset += size) {
+      binary += String.fromCharCode(...bytes.subarray(offset, offset + size));
+    }
+    return btoa(binary);
+  };
   try {
-    const response = await fetch(url, {method, headers, body: body || undefined, credentials: "include"});
+    const response = await fetch(url, {method, headers, body: hasBody ? fromBase64(bodyBase64) : undefined, credentials: "include"});
     const headersObject = {};
     if (response.headers && typeof response.headers.forEach === "function") {
       response.headers.forEach((value, key) => { headersObject[key] = value; });
     }
-    if (!response.body) return {ok: true, url: response.url, status: response.status, headers: headersObject, body: "", truncated: false};
+    if (!response.body) return {ok: true, url: response.url, status: response.status, headers: headersObject, body_base64: "", body_encoding: "base64", truncated: false};
     reader = response.body.getReader ? response.body.getReader() : null;
-    if (!reader) return {ok: false, code: "body_unreadable", url: response.url || url, method, status: response.status, headers: headersObject, body: "", message: "streaming response body is unavailable"};
+    if (!reader) return {ok: false, code: "body_unreadable", url: response.url || url, method, status: response.status, headers: headersObject, body_base64: "", body_encoding: "base64", message: "streaming response body is unavailable"};
     cancelReader = async () => { try { await reader.cancel(); } catch (_) {} };
     const limit = Math.max(0, Number(maxBytes) || 0);
     const chunks = [];
@@ -560,8 +585,7 @@ const browserFetchExpression = `async ({url, method, headers, body, maxBytes}) =
       bytes.set(chunk, offset);
       offset += chunk.byteLength;
     }
-    const text = new TextDecoder().decode(bytes);
-    return {ok: true, url: response.url, status: response.status, headers: headersObject, body: text, truncated};
+    return {ok: true, url: response.url, status: response.status, headers: headersObject, body_base64: toBase64(bytes), body_encoding: "base64", truncated};
   } catch (error) {
     await cancelReader();
     const message = error && error.message ? String(error.message) : String(error);
@@ -569,7 +593,7 @@ const browserFetchExpression = `async ({url, method, headers, body, maxBytes}) =
     if (/content security policy|csp/i.test(message)) code = "csp_blocked";
     if (/cors|cross-origin/i.test(message)) code = "cors_denied";
     if (/mixed content/i.test(message)) code = "mixed_content_blocked";
-    return {ok: false, code, url, method, status: 0, body: "", message};
+    return {ok: false, code, url, method, status: 0, body_base64: "", body_encoding: "base64", message};
   }
 }`
 
