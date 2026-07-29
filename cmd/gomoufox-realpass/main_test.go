@@ -300,6 +300,8 @@ func TestRunValidationAndCompareErrors(t *testing.T) {
 		{[]string{"--max-cpu-percent", "-1"}, "max-cpu-percent must be >= 0"},
 		{[]string{"--wait-until", "idle"}, "wait-until must be commit, domcontentloaded, load, or networkidle"},
 		{[]string{"--sidecar-runtime", "bad"}, "sidecar-runtime must be python or node-direct"},
+		{[]string{"--persona-bundle", "missing.json"}, "persona-bundle requires generated-persona"},
+		{[]string{"--generated-persona", "--persona-bundle", "missing.json"}, "load persona bundle"},
 		{[]string{"compare"}, "--go and --python are required"},
 		{[]string{"compare", "--go", "missing", "--python", "missing"}, "read go report"},
 	} {
@@ -348,17 +350,115 @@ func TestLaunchBrowserOptionsAndFailure(t *testing.T) {
 		called = true
 		return &fakeRealpassBrowser{pid: os.Getpid(), page: &fakeRealpassPage{}}, nil
 	}
-	if _, err := launchBrowser(context.Background(), false, false, false, "node-direct", t.TempDir()); err != nil || !called {
+	if _, err := launchBrowser(context.Background(), false, false, false, nil, "node-direct", t.TempDir()); err != nil || !called {
 		t.Fatalf("launch err=%v called=%v", err, called)
 	}
-	if _, err := launchBrowser(context.Background(), false, false, false, "bad", ""); err == nil {
+	if _, err := launchBrowser(context.Background(), false, false, false, nil, "bad", ""); err == nil {
 		t.Fatal("bad sidecar runtime succeeded")
 	}
 	newRealpassBrowser = func(context.Context, ...gomoufox.Option) (realpassBrowser, error) {
 		return nil, errors.New("boom")
 	}
-	if _, err := launchBrowser(context.Background(), true, true, true, "python", ""); err == nil {
+	if _, err := launchBrowser(context.Background(), true, true, true, nil, "python", ""); err == nil {
 		t.Fatal("launch error branch succeeded")
+	}
+}
+
+func TestLoadPersonaBundleAndRecordDigest(t *testing.T) {
+	path := writePersonaBundleForTest(t)
+	bundle, digest, err := loadPersonaBundle(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bundle.PersonaOS != "linux" || len(digest) != 64 {
+		t.Fatalf("bundle=%#v digest=%q", bundle, digest)
+	}
+
+	old := newRealpassBrowser
+	t.Cleanup(func() { newRealpassBrowser = old })
+	page := &fakeRealpassPage{
+		url:      "https://example.com",
+		content:  "<main>ok</main>",
+		evaluate: map[string]any{},
+		response: fakeRealpassResponse{status: 200},
+	}
+	newRealpassBrowser = func(context.Context, ...gomoufox.Option) (realpassBrowser, error) {
+		return &fakeRealpassBrowser{pid: os.Getpid(), page: page}, nil
+	}
+	outDir := t.TempDir()
+	code, _, stderr := runRealpassForTest(t,
+		"--out", outDir,
+		"--target", "example=https://example.com",
+		"--generated-persona",
+		"--persona-bundle", path,
+		"--sidecar-runtime", "node-direct",
+		"--screenshots=false",
+		"--settle", "0s",
+		"--sample-interval", "1h",
+	)
+	if code != 0 {
+		t.Fatalf("persona run code=%d stderr=%q", code, stderr)
+	}
+	rep, err := readReport(filepath.Join(outDir, "report.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rep.Options.PersonaSHA256 != digest || rep.Options.PersonaOS != "linux" || !rep.Options.GeneratedPersona {
+		t.Fatalf("persona report options = %#v", rep.Options)
+	}
+}
+
+func TestLoadPersonaBundleRejectsInvalidInputs(t *testing.T) {
+	if _, _, err := loadPersonaBundle(filepath.Join(t.TempDir(), "missing.json")); err == nil {
+		t.Fatal("missing persona bundle succeeded")
+	}
+
+	for _, tc := range []struct {
+		name string
+		data []byte
+		want string
+	}{
+		{name: "empty", want: "outside"},
+		{name: "oversized", data: bytes.Repeat([]byte("x"), personaBundleMaxBytes+1), want: "outside"},
+		{name: "malformed", data: []byte("{"), want: "decode persona bundle"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "persona.json")
+			if err := os.WriteFile(path, tc.data, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if _, _, err := loadPersonaBundle(path); err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("load error = %v, want %q", err, tc.want)
+			}
+		})
+	}
+
+	for _, tc := range []struct {
+		name   string
+		mutate func(*personaBundle)
+		want   string
+	}{
+		{name: "version", mutate: func(bundle *personaBundle) { bundle.Version = 2 }, want: "version 2 is unsupported"},
+		{name: "OS", mutate: func(bundle *personaBundle) { bundle.PersonaOS = "macos" }, want: `OS "macos" must be "linux"`},
+		{name: "Camoufox version", mutate: func(bundle *personaBundle) { bundle.CamoufoxVersion = "wrong" }, want: `Camoufox version "wrong"`},
+		{name: "config field", mutate: func(bundle *personaBundle) { delete(bundle.Config, "canvas:aaOffset") }, want: `config missing "canvas:aaOffset"`},
+		{name: "Firefox pref", mutate: func(bundle *personaBundle) { delete(bundle.FirefoxUserPrefs, "webgl.force-enabled") }, want: `Firefox prefs missing "webgl.force-enabled"`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			bundle := personaBundleFixture()
+			tc.mutate(&bundle)
+			data, err := json.Marshal(bundle)
+			if err != nil {
+				t.Fatal(err)
+			}
+			path := filepath.Join(t.TempDir(), "persona.json")
+			if err := os.WriteFile(path, data, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if _, _, err := loadPersonaBundle(path); err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("load error = %v, want %q", err, tc.want)
+			}
+		})
 	}
 }
 
@@ -931,6 +1031,8 @@ func TestReportOptionDiffsCoverBenchmarkOptions(t *testing.T) {
 		ReuseBrowser:     true,
 		UnsafeDirect:     true,
 		GeneratedPersona: true,
+		PersonaOS:        "linux",
+		PersonaSHA256:    strings.Repeat("a", 64),
 	}, reportOptions{
 		Timeout:          "2s",
 		WaitUntil:        "load",
@@ -953,6 +1055,8 @@ func TestReportOptionDiffsCoverBenchmarkOptions(t *testing.T) {
 		"runtime option mismatch reuse_browser: go=true python=false",
 		"runtime option mismatch unsafe_direct_network: go=true python=false",
 		"runtime option mismatch generated_persona: go=true python=false",
+		"runtime option mismatch persona_os: go=linux python=<unset>",
+		"runtime option mismatch persona_bundle_sha256: go=" + strings.Repeat("a", 64) + " python=<unset>",
 	} {
 		if !containsSubstring(failures, want) {
 			t.Fatalf("failures missing %q: %#v", want, failures)
@@ -963,6 +1067,15 @@ func TestReportOptionDiffsCoverBenchmarkOptions(t *testing.T) {
 	}
 	if emptyOption("") != "<unset>" || emptyOption("set") != "set" {
 		t.Fatalf("emptyOption mismatch")
+	}
+}
+
+func TestGeneratedPersonaOSValue(t *testing.T) {
+	if got := generatedPersonaOSValue(true); got != "linux" {
+		t.Fatalf("generated persona OS = %q, want linux", got)
+	}
+	if got := generatedPersonaOSValue(false); got != "" {
+		t.Fatalf("disabled generated persona OS = %q, want empty", got)
 	}
 }
 
@@ -1041,6 +1154,48 @@ func TestRunTargetWithBrowserContextClassifiesAndWritesScreenshot(t *testing.T) 
 	}
 	if _, err := os.Stat(filepath.Join(dir, "02-cloudflare.png")); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestRunTargetWithBrowserContextBoundsPageClose(t *testing.T) {
+	oldTimeout := realpassResourceCloseTimeout
+	oldAbort := abortRealpassSidecar
+	realpassResourceCloseTimeout = 20 * time.Millisecond
+	abortedPID := 0
+	abortRealpassSidecar = func(pid int) {
+		abortedPID = pid
+	}
+	t.Cleanup(func() {
+		realpassResourceCloseTimeout = oldTimeout
+		abortRealpassSidecar = oldAbort
+	})
+
+	closeGate := make(chan struct{})
+	t.Cleanup(func() { close(closeGate) })
+	page := &fakeRealpassPage{
+		url:      "https://example.com",
+		content:  "<main>ok</main>",
+		evaluate: map[string]any{},
+		response: fakeRealpassResponse{status: 200},
+		closeFunc: func() error {
+			<-closeGate
+			return nil
+		},
+	}
+	browser := &fakeRealpassBrowser{pid: os.Getpid(), page: page}
+	start := time.Now()
+	res := runTargetWithBrowserContext(context.Background(), browser, targetResult{
+		Name: "close-timeout", URL: "https://example.com", StartedAt: start,
+	}, start, time.Second, "commit", 0, 0, 0, time.Hour, true, false, t.TempDir())
+
+	if res.Outcome != "failed" || !res.InfrastructureFailure || !strings.Contains(res.Error, "close page after 20ms") {
+		t.Fatalf("close timeout result = %#v", res)
+	}
+	if abortedPID != os.Getpid() {
+		t.Fatalf("aborted PID = %d, want %d", abortedPID, os.Getpid())
+	}
+	if elapsed := time.Since(start); elapsed > time.Second {
+		t.Fatalf("bounded page close took %s", elapsed)
 	}
 }
 
@@ -1218,7 +1373,7 @@ func TestLaunchAndRunTargetUseInjectedBrowserFactory(t *testing.T) {
 	newRealpassBrowser = func(context.Context, ...gomoufox.Option) (realpassBrowser, error) {
 		return nil, launchErr
 	}
-	res := runTarget(context.Background(), target{Name: "x", URL: "https://example.com"}, 1, time.Second, "commit", 0, 0, 0, time.Hour, false, true, true, "python", "", false, t.TempDir())
+	res := runTarget(context.Background(), target{Name: "x", URL: "https://example.com"}, 1, time.Second, "commit", 0, 0, 0, time.Hour, false, true, true, nil, "python", "", false, t.TempDir())
 	if res.Outcome != "failed" || res.Error != launchErr.Error() {
 		t.Fatalf("launch failure result = %#v", res)
 	}
@@ -1228,7 +1383,7 @@ func TestLaunchAndRunTargetUseInjectedBrowserFactory(t *testing.T) {
 	newRealpassBrowser = func(context.Context, ...gomoufox.Option) (realpassBrowser, error) {
 		return &fakeRealpassBrowser{pid: os.Getpid(), page: page, closeFunc: func() { closed = true }}, nil
 	}
-	res = runTarget(context.Background(), target{Name: "x", URL: "https://example.com"}, 1, time.Second, "commit", 0, 0, 0, time.Hour, true, true, true, "node-direct", t.TempDir(), false, t.TempDir())
+	res = runTarget(context.Background(), target{Name: "x", URL: "https://example.com"}, 1, time.Second, "commit", 0, 0, 0, time.Hour, true, true, true, nil, "node-direct", t.TempDir(), false, t.TempDir())
 	if res.Outcome != "passed" || !closed {
 		t.Fatalf("run target result=%#v closed=%v", res, closed)
 	}
@@ -1236,6 +1391,86 @@ func TestLaunchAndRunTargetUseInjectedBrowserFactory(t *testing.T) {
 	res = runTargetWithBrowser(context.Background(), &fakeRealpassBrowser{pid: os.Getpid(), page: page}, target{Name: "wrapped", URL: "https://example.com"}, 1, time.Second, "commit", 0, 0, 0, time.Hour, true, false, t.TempDir())
 	if res.Outcome != "passed" {
 		t.Fatalf("wrapped target result=%#v", res)
+	}
+}
+
+func TestRunTargetBoundsBrowserClose(t *testing.T) {
+	oldFactory := newRealpassBrowser
+	oldTimeout := realpassResourceCloseTimeout
+	oldAbort := abortRealpassSidecar
+	realpassResourceCloseTimeout = 20 * time.Millisecond
+	abortedPID := 0
+	abortRealpassSidecar = func(pid int) {
+		abortedPID = pid
+	}
+	t.Cleanup(func() {
+		newRealpassBrowser = oldFactory
+		realpassResourceCloseTimeout = oldTimeout
+		abortRealpassSidecar = oldAbort
+	})
+
+	closeGate := make(chan struct{})
+	t.Cleanup(func() { close(closeGate) })
+	page := &fakeRealpassPage{
+		url:      "https://example.com",
+		content:  "<main>ok</main>",
+		evaluate: map[string]any{},
+		response: fakeRealpassResponse{status: 200},
+	}
+	newRealpassBrowser = func(context.Context, ...gomoufox.Option) (realpassBrowser, error) {
+		return &fakeRealpassBrowser{
+			pid:  os.Getpid(),
+			page: page,
+			closeFunc: func() {
+				<-closeGate
+			},
+		}, nil
+	}
+
+	start := time.Now()
+	res := runTarget(context.Background(), target{Name: "close-timeout", URL: "https://example.com"}, 1, time.Second, "commit", 0, 0, 0, time.Hour, false, true, true, nil, "node-direct", t.TempDir(), false, t.TempDir())
+	if res.Outcome != "failed" || !res.InfrastructureFailure || !strings.Contains(res.Error, "close browser after 20ms") {
+		t.Fatalf("close timeout result = %#v", res)
+	}
+	if abortedPID != os.Getpid() {
+		t.Fatalf("aborted PID = %d, want %d", abortedPID, os.Getpid())
+	}
+	if elapsed := time.Since(start); elapsed > time.Second {
+		t.Fatalf("bounded browser close took %s", elapsed)
+	}
+
+	outDir := t.TempDir()
+	code, _, stderr := runRealpassForTest(t,
+		"--out", outDir,
+		"--target", "first=https://example.com",
+		"--target", "second=https://example.org",
+		"--screenshots=false",
+		"--settle", "0s",
+		"--sample-interval", "1h",
+	)
+	if code != 1 || !strings.Contains(stderr, "stopping after a browser shutdown failure") {
+		t.Fatalf("bounded run code=%d stderr=%q", code, stderr)
+	}
+	report, err := readReport(filepath.Join(outDir, "report.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(report.Results) != 1 || !strings.Contains(report.Results[0].Error, "close browser after 20ms") {
+		t.Fatalf("bounded run results = %#v", report.Results)
+	}
+}
+
+func TestCloseRealpassResourceAndFailureJoin(t *testing.T) {
+	closeErr := errors.New("close failed")
+	if err := closeRealpassResource("page", func() error { return closeErr }); !errors.Is(err, closeErr) || !strings.Contains(err.Error(), "close page") {
+		t.Fatalf("close error = %v", err)
+	}
+
+	result := targetResult{Error: "navigation failed"}
+	recordInfrastructureFailure(&result, closeErr)
+	if result.Outcome != "failed" || !result.InfrastructureFailure ||
+		!strings.Contains(result.Error, "navigation failed") || !strings.Contains(result.Error, closeErr.Error()) {
+		t.Fatalf("joined infrastructure failure = %#v", result)
 	}
 }
 
@@ -1636,6 +1871,41 @@ func containsSubstring(values []string, want string) bool {
 	return false
 }
 
+func writePersonaBundleForTest(t *testing.T) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "persona.json")
+	data, err := json.Marshal(personaBundleFixture())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+func personaBundleFixture() personaBundle {
+	return personaBundle{
+		Version:         1,
+		PersonaOS:       "linux",
+		CamoufoxVersion: "v135.0.1-beta.24",
+		Config: map[string]any{
+			"navigator.userAgent":           "Mozilla/5.0 (X11; Linux x86_64; rv:135.0) Gecko/20100101 Firefox/135.0",
+			"navigator.hardwareConcurrency": 4,
+			"screen.width":                  1920,
+			"screen.height":                 1080,
+			"fonts":                         []string{"Arial"},
+			"webGl:vendor":                  "Mesa",
+			"webGl:renderer":                "llvmpipe",
+			"canvas:aaOffset":               0,
+		},
+		FirefoxUserPrefs: map[string]any{
+			"webgl.enable-webgl2": true,
+			"webgl.force-enabled": true,
+		},
+	}
+}
+
 func intPtr(v int) *int { return &v }
 
 func floatPtr(v float64) *float64 { return &v }
@@ -1679,6 +1949,7 @@ type fakeRealpassPage struct {
 	contentErr    error
 	evaluateErr   error
 	screenshotErr error
+	closeFunc     func() error
 	closed        bool
 }
 
@@ -1722,6 +1993,9 @@ func (p *fakeRealpassPage) ScreenshotToFile(_ context.Context, path string, _ ..
 
 func (p *fakeRealpassPage) Close() error {
 	p.closed = true
+	if p.closeFunc != nil {
+		return p.closeFunc()
+	}
 	return nil
 }
 

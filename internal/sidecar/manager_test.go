@@ -83,6 +83,7 @@ func TestWriteLauncherReadsLaunchArgsFromStdin(t *testing.T) {
 		`launch_kwargs["exclude_addons"] = [DefaultAddons.UBO]`,
 		`os.path.realpath(config.get("executable_path", ""))`,
 		`persistent_user_data_dir = launch_kwargs.pop("user_data_dir", None)`,
+		`payload["host"] = "127.0.0.1"`,
 		`payload["_userDataDir"] = persistent_user_data_dir`,
 		`payload["_sharedBrowser"] = True`,
 		`config.pop("proxy", None)`,
@@ -111,6 +112,7 @@ func TestPythonLaunchPayloadScriptUsesPinnedManagedBrowser(t *testing.T) {
 		`camoufox_utils.installed_verstr = lambda: "135.0.1-beta.24"`,
 		`launch_kwargs["exclude_addons"] = [DefaultAddons.UBO]`,
 		`os.path.realpath(config.get("executable_path", ""))`,
+		`payload["host"] = "127.0.0.1"`,
 	} {
 		if !strings.Contains(pythonLaunchPayloadScript, want) {
 			t.Fatalf("Python launch payload missing %q:\n%s", want, pythonLaunchPayloadScript)
@@ -118,6 +120,71 @@ func TestPythonLaunchPayloadScriptUsesPinnedManagedBrowser(t *testing.T) {
 	}
 	if strings.Contains(pythonLaunchPayloadScript, `launch_kwargs.setdefault("ff_version"`) || strings.Contains(pythonLaunchPayloadScript, "camoufox fetch") {
 		t.Fatalf("Python launch payload can consult Camoufox's moving browser version:\n%s", pythonLaunchPayloadScript)
+	}
+}
+
+func TestPythonLaunchPathsPassIPv4LoopbackBehaviorally(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("behavioral Python launcher stub uses a POSIX executable")
+	}
+	python, err := exec.LookPath("python3")
+	if err != nil {
+		t.Skip("python3 is not installed")
+	}
+	stubs := writePythonLaunchStubModules(t)
+
+	payload, err := BuildPythonLaunchPayload(context.Background(), python, Config{
+		ExtraEnv: []string{"PYTHONPATH=" + stubs},
+	})
+	if err != nil {
+		t.Fatalf("build Python launch payload: %v", err)
+	}
+	if payload["host"] != "127.0.0.1" {
+		t.Fatalf("Python launch payload host = %#v", payload["host"])
+	}
+
+	nodeDir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(nodeDir, "package"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	node := filepath.Join(nodeDir, "node")
+	if err := os.WriteFile(node, []byte("#!/bin/sh\n/bin/cat > \"$GOMOUFOX_TEST_LAUNCH_PAYLOAD\"\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	launchScript := filepath.Join(nodeDir, "launchServer.js")
+	if err := os.WriteFile(launchScript, []byte("// strict launch payload sink\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	payloadPath := filepath.Join(t.TempDir(), "payload.base64")
+	launcher, err := WriteLauncher(t.TempDir(), Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command(python, launcher)
+	cmd.Env = append(os.Environ(),
+		"PYTHONPATH="+stubs,
+		"GOMOUFOX_TEST_NODE="+node,
+		"GOMOUFOX_TEST_LAUNCH_SCRIPT="+launchScript,
+		"GOMOUFOX_TEST_LAUNCH_PAYLOAD="+payloadPath,
+	)
+	cmd.Stdin = strings.NewReader(`{}`)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("run generated Python launcher: %v\n%s", err, out)
+	}
+	encoded, err := os.ReadFile(payloadPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := base64.StdEncoding.DecodeString(strings.TrimSpace(string(encoded)))
+	if err != nil {
+		t.Fatalf("decode generated Python launch payload: %v", err)
+	}
+	var launched map[string]any
+	if err := json.Unmarshal(raw, &launched); err != nil {
+		t.Fatalf("decode generated Python launch JSON: %v", err)
+	}
+	if launched["host"] != "127.0.0.1" {
+		t.Fatalf("generated Python launcher host = %#v", launched["host"])
 	}
 }
 
@@ -924,6 +991,21 @@ func TestManagerStartStopWithFakeNodeDirectPayload(t *testing.T) {
 	}
 }
 
+func TestNodeDirectLaunchCommandBoundsNodeMemory(t *testing.T) {
+	venv := fakeNodeDirectRuntimeWithPython(t)
+	manager := New(Config{VenvDir: venv, Runtime: RuntimeNodeDirect})
+	cmd, err := manager.launchCommand(context.Background(), "", RuntimeNodeDirect)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cmd.Args) != 4 ||
+		cmd.Args[1] != "--max-old-space-size=64" ||
+		cmd.Args[2] != "--max-semi-space-size=4" ||
+		!strings.HasSuffix(cmd.Args[3], filepath.Join("camoufox", "launchServer.js")) {
+		t.Fatalf("node-direct command args = %#v", cmd.Args)
+	}
+}
+
 func TestNodeDirectSpecValidationAndBuildErrors(t *testing.T) {
 	node := fakeExecutable(t, "#!/bin/sh\n")
 	launchScript := filepath.Join(t.TempDir(), "launchServer.js")
@@ -1521,9 +1603,11 @@ func fakeNodeDirectRuntimeWithPython(t *testing.T) string {
 	rootDir := fakeVenv(t, "#!/bin/sh\nexit 99\n")
 	root := RuntimeAssetCacheRoot(rootDir, sidecarGOOS, sidecarGOARCH)
 	writeFakeRuntimeRoot(t, root, `#!/bin/sh
-test "$1" = "`+root.LaunchServerJS+`" || exit 42
+test "$1" = "--max-old-space-size=64" || exit 41
+test "$2" = "--max-semi-space-size=4" || exit 42
+test "$3" = "`+root.LaunchServerJS+`" || exit 43
 payload="$(cat)"
-test -n "$payload" || exit 43
+test -n "$payload" || exit 44
 echo "Websocket endpoint: ws://127.0.0.1:4321/token"
 while true; do sleep 1; done
 `)
@@ -1540,6 +1624,55 @@ func fakeExecutable(t *testing.T, script string) string {
 		t.Fatal(err)
 	}
 	return path
+}
+
+func writePythonLaunchStubModules(t *testing.T) string {
+	t.Helper()
+	root := t.TempDir()
+	files := map[string]string{
+		"orjson.py": `import json
+def loads(value):
+    return json.loads(value)
+def dumps(value):
+    return json.dumps(value, separators=(",", ":")).encode()
+`,
+		"browserforge/__init__.py": "",
+		"browserforge/fingerprints.py": `class Screen:
+    def __init__(self, **values):
+        self.values = values
+`,
+		"camoufox/__init__.py": "",
+		"camoufox/addons.py": `class DefaultAddons:
+    UBO = "ubo"
+`,
+		"camoufox/pkgman.py": `INSTALL_DIR = None
+def camoufox_path(download_if_missing=True):
+    return INSTALL_DIR
+`,
+		"camoufox/utils.py": `def installed_verstr():
+    return ""
+`,
+		"camoufox/server.py": `import os
+from pathlib import Path
+LAUNCH_SCRIPT = Path(os.environ.get("GOMOUFOX_TEST_LAUNCH_SCRIPT", __file__))
+def get_nodejs():
+    return os.environ.get("GOMOUFOX_TEST_NODE", "/bin/false")
+def launch_options(**values):
+    return values
+def to_camel_case_dict(values):
+    return values
+`,
+	}
+	for rel, content := range files {
+		path := filepath.Join(root, filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return root
 }
 
 func waitWithTimeout(cmd *exec.Cmd, timeout time.Duration) error {

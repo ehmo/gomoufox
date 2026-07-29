@@ -58,6 +58,10 @@ jobs:
         run: python3 scripts/format-doc-numbers.py
       - name: Unit tests
         run: go test -count=1 ./...
+      - name: Managed runtime launch
+        env:
+          TMPDIR: ${{ runner.temp }}
+        run: scripts/runtime-launch-gate.sh --venv-dir "${{ runner.temp }}/gomoufox-runtime-cache"
       - name: Agent contracts
         run: python3 scripts/check-agent-contracts.py
       - name: Vet

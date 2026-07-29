@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -21,6 +22,7 @@ import (
 	"github.com/ehmo/gomoufox/camoufoxcfg"
 	"github.com/ehmo/gomoufox/internal/buildinfo"
 	"github.com/ehmo/gomoufox/internal/policy"
+	"github.com/ehmo/gomoufox/internal/sidecar"
 )
 
 type target struct {
@@ -54,6 +56,8 @@ type reportOptions struct {
 	ReuseBrowser     bool   `json:"reuse_browser"`
 	UnsafeDirect     bool   `json:"unsafe_direct_network"`
 	GeneratedPersona bool   `json:"generated_persona"`
+	PersonaOS        string `json:"persona_os,omitempty"`
+	PersonaSHA256    string `json:"persona_bundle_sha256,omitempty"`
 	SidecarRuntime   string `json:"sidecar_runtime,omitempty"`
 	CustomVenv       bool   `json:"custom_venv,omitempty"`
 	ExpectPassed     int    `json:"expect_passed,omitempty"`
@@ -61,6 +65,24 @@ type reportOptions struct {
 	MaxFailed        int    `json:"max_failed"`
 	MaxRSSMiB        string `json:"max_rss_mib,omitempty"`
 	MaxCPUPercent    string `json:"max_cpu_percent,omitempty"`
+}
+
+const generatedPersonaOS = camoufoxcfg.OSLinux
+
+const personaBundleMaxBytes = 1 << 20
+
+var (
+	realpassResourceCloseTimeout = 10 * time.Second
+	abortRealpassSidecar         = abortSidecarProcessTree
+	errRealpassResourceClose     = errors.New("realpass resource close timed out")
+)
+
+type personaBundle struct {
+	Version          int            `json:"version"`
+	PersonaOS        string         `json:"persona_os"`
+	CamoufoxVersion  string         `json:"camoufox_version"`
+	Config           map[string]any `json:"config"`
+	FirefoxUserPrefs map[string]any `json:"firefox_user_prefs"`
 }
 
 type reportSummary struct {
@@ -112,26 +134,27 @@ type gateOptions struct {
 }
 
 type targetResult struct {
-	Name            string            `json:"name"`
-	URL             string            `json:"url"`
-	Kind            string            `json:"kind"`
-	Attempt         int               `json:"attempt"`
-	Outcome         string            `json:"outcome"`
-	Error           string            `json:"error,omitempty"`
-	NavigationError string            `json:"navigation_error,omitempty"`
-	StartedAt       time.Time         `json:"started_at"`
-	DurationMS      int64             `json:"duration_ms"`
-	Status          int               `json:"status,omitempty"`
-	StatusText      string            `json:"status_text,omitempty"`
-	FinalURL        string            `json:"final_url,omitempty"`
-	Title           string            `json:"title,omitempty"`
-	ContentBytes    int               `json:"content_bytes,omitempty"`
-	ScreenshotPath  string            `json:"screenshot_path,omitempty"`
-	ScreenshotBytes int               `json:"screenshot_bytes,omitempty"`
-	Signals         []string          `json:"signals,omitempty"`
-	Detector        map[string]any    `json:"detector,omitempty"`
-	Resources       resourceSummary   `json:"resources"`
-	Headers         map[string]string `json:"headers,omitempty"`
+	Name                  string            `json:"name"`
+	URL                   string            `json:"url"`
+	Kind                  string            `json:"kind"`
+	Attempt               int               `json:"attempt"`
+	Outcome               string            `json:"outcome"`
+	Error                 string            `json:"error,omitempty"`
+	NavigationError       string            `json:"navigation_error,omitempty"`
+	StartedAt             time.Time         `json:"started_at"`
+	DurationMS            int64             `json:"duration_ms"`
+	Status                int               `json:"status,omitempty"`
+	StatusText            string            `json:"status_text,omitempty"`
+	FinalURL              string            `json:"final_url,omitempty"`
+	Title                 string            `json:"title,omitempty"`
+	ContentBytes          int               `json:"content_bytes,omitempty"`
+	ScreenshotPath        string            `json:"screenshot_path,omitempty"`
+	ScreenshotBytes       int               `json:"screenshot_bytes,omitempty"`
+	Signals               []string          `json:"signals,omitempty"`
+	Detector              map[string]any    `json:"detector,omitempty"`
+	Resources             resourceSummary   `json:"resources"`
+	Headers               map[string]string `json:"headers,omitempty"`
+	InfrastructureFailure bool              `json:"-"`
 }
 
 type resourceSummary struct {
@@ -328,7 +351,7 @@ var exitProcess = os.Exit
 
 func main() { exitProcess(run(context.Background(), os.Args[1:], os.Stdout, os.Stderr)) }
 
-func run(ctx context.Context, args []string, stdout, stderr *os.File) int {
+func run(ctx context.Context, args []string, stdout, stderr *os.File) (code int) {
 	if len(args) > 0 && args[0] == "compare" {
 		return runCompare(ctx, args[1:], stdout, stderr)
 	}
@@ -350,6 +373,7 @@ func run(ctx context.Context, args []string, stdout, stderr *os.File) int {
 	reuseBrowser := false
 	unsafeDirectNetwork := false
 	generatedPersona := false
+	personaBundlePath := ""
 	sidecarRuntime := string(gomoufox.SidecarRuntimePython)
 	venvDir := ""
 	expectPassed := 0
@@ -381,6 +405,7 @@ func run(ctx context.Context, args []string, stdout, stderr *os.File) int {
 	fs.BoolVar(&reuseBrowser, "reuse-browser", reuseBrowser, "reuse one browser process across targets")
 	fs.BoolVar(&unsafeDirectNetwork, "unsafe-direct-network", unsafeDirectNetwork, "UNSAFE: bypass gomoufox local filtering proxy and URL guardrails for browser navigations")
 	fs.BoolVar(&generatedPersona, "generated-persona", generatedPersona, "let Camoufox generate launch/context persona defaults")
+	fs.StringVar(&personaBundlePath, "persona-bundle", personaBundlePath, "shared generated persona bundle JSON")
 	fs.StringVar(&sidecarRuntime, "sidecar-runtime", sidecarRuntime, "gomoufox sidecar runtime: python or node-direct")
 	fs.StringVar(&venvDir, "venv-dir", venvDir, "managed gomoufox venv directory; default cache")
 	fs.IntVar(&expectPassed, "expect-passed", expectPassed, "fail if passed target count is lower than this value; 0 disables")
@@ -426,6 +451,20 @@ func run(ctx context.Context, args []string, stdout, stderr *os.File) int {
 	if _, err := parseSidecarRuntime(sidecarRuntime); err != nil {
 		_, _ = fmt.Fprintln(stderr, err)
 		return 2
+	}
+	var sharedPersona *personaBundle
+	personaSHA256 := ""
+	if personaBundlePath != "" {
+		if !generatedPersona {
+			_, _ = fmt.Fprintln(stderr, "persona-bundle requires generated-persona")
+			return 2
+		}
+		var err error
+		sharedPersona, personaSHA256, err = loadPersonaBundle(personaBundlePath)
+		if err != nil {
+			_, _ = fmt.Fprintf(stderr, "load persona bundle: %s\n", policy.Redact(err.Error()))
+			return 2
+		}
 	}
 	reportStyleValue, err := parseReportStyle(reportStyleRaw)
 	if err != nil {
@@ -475,6 +514,8 @@ func run(ctx context.Context, args []string, stdout, stderr *os.File) int {
 			ReuseBrowser:     reuseBrowser,
 			UnsafeDirect:     unsafeDirectNetwork,
 			GeneratedPersona: generatedPersona,
+			PersonaOS:        generatedPersonaOSValue(generatedPersona),
+			PersonaSHA256:    personaSHA256,
 			SidecarRuntime:   sidecarRuntime,
 			CustomVenv:       venvDir != "",
 			ExpectPassed:     expectPassed,
@@ -486,14 +527,21 @@ func run(ctx context.Context, args []string, stdout, stderr *os.File) int {
 	}
 	var sharedBrowser realpassBrowser
 	if reuseBrowser {
-		browser, err := launchBrowser(ctx, headful, unsafeDirectNetwork, generatedPersona, sidecarRuntime, venvDir)
+		browser, err := launchBrowser(ctx, headful, unsafeDirectNetwork, generatedPersona, sharedPersona, sidecarRuntime, venvDir)
 		if err != nil {
 			_, _ = fmt.Fprintf(stderr, "start reusable browser: %s\n", policy.Redact(err.Error()))
 			return 1
 		}
 		sharedBrowser = browser
-		defer func() { _ = sharedBrowser.Close() }()
+		defer func() {
+			if err := closeRealpassBrowser(sharedBrowser); err != nil {
+				_, _ = fmt.Fprintf(stderr, "close reusable browser: %s\n", policy.Redact(err.Error()))
+				code = 1
+			}
+		}()
 	}
+	infrastructureFailure := false
+runTargets:
 	for _, tgt := range targets {
 		for attempt := 1; attempt <= repeats; attempt++ {
 			_, _ = fmt.Fprintf(stderr, "realpass: %s attempt %d -> %s\n", tgt.Name, attempt, policy.Redact(tgt.URL))
@@ -501,10 +549,15 @@ func run(ctx context.Context, args []string, stdout, stderr *os.File) int {
 			if sharedBrowser != nil {
 				res = runTargetWithBrowser(ctx, sharedBrowser, tgt, attempt, timeout, waitUntil, settle, loadStateTimeout, contentMaxBytes, sampleInterval, generatedPersona, screenshots, shotDir)
 			} else {
-				res = runTarget(ctx, tgt, attempt, timeout, waitUntil, settle, loadStateTimeout, contentMaxBytes, sampleInterval, headful, unsafeDirectNetwork, generatedPersona, sidecarRuntime, venvDir, screenshots, shotDir)
+				res = runTarget(ctx, tgt, attempt, timeout, waitUntil, settle, loadStateTimeout, contentMaxBytes, sampleInterval, headful, unsafeDirectNetwork, generatedPersona, sharedPersona, sidecarRuntime, venvDir, screenshots, shotDir)
 			}
 			rep.Results = append(rep.Results, res)
 			_ = appendResultJSONL(outDir, res)
+			if res.InfrastructureFailure {
+				infrastructureFailure = true
+				_, _ = fmt.Fprintln(stderr, "realpass: stopping after a browser shutdown failure")
+				break runTargets
+			}
 		}
 	}
 	rep.FinishedAt = time.Now()
@@ -515,6 +568,9 @@ func run(ctx context.Context, args []string, stdout, stderr *os.File) int {
 	}
 	_, _ = fmt.Fprintf(stdout, "report: %s\n", filepath.Join(outDir, "report.md"))
 	_, _ = fmt.Fprintf(stdout, "json: %s\n", filepath.Join(outDir, "report.json"))
+	if infrastructureFailure {
+		return 1
+	}
 	if failures := evaluateReportGate(rep, gate); len(failures) > 0 {
 		for _, failure := range failures {
 			_, _ = fmt.Fprintf(stderr, "realpass gate: %s\n", policy.Redact(failure))
@@ -537,22 +593,28 @@ func defaultTargets() []target {
 	}
 }
 
-func runTarget(ctx context.Context, tgt target, attempt int, timeout time.Duration, waitUntil string, settle, loadStateTimeout time.Duration, contentMaxBytes int, sampleInterval time.Duration, headful, unsafeDirectNetwork, generatedPersona bool, sidecarRuntime, venvDir string, screenshots bool, shotDir string) (res targetResult) {
+func runTarget(ctx context.Context, tgt target, attempt int, timeout time.Duration, waitUntil string, settle, loadStateTimeout time.Duration, contentMaxBytes int, sampleInterval time.Duration, headful, unsafeDirectNetwork, generatedPersona bool, persona *personaBundle, sidecarRuntime, venvDir string, screenshots bool, shotDir string) (res targetResult) {
 	start := time.Now()
 	res = targetResult{Name: tgt.Name, URL: tgt.URL, Kind: tgt.Kind, Attempt: attempt, StartedAt: start}
 	targetCtx, cancel := context.WithTimeout(ctx, timeout+settle+45*time.Second)
 	defer cancel()
 
-	browser, err := launchBrowser(targetCtx, headful, unsafeDirectNetwork, generatedPersona, sidecarRuntime, venvDir)
+	browser, err := launchBrowser(targetCtx, headful, unsafeDirectNetwork, generatedPersona, persona, sidecarRuntime, venvDir)
 	if err != nil {
 		res.Error = err.Error()
 		res.Outcome = "failed"
 		res.DurationMS = time.Since(start).Milliseconds()
 		return res
 	}
-	defer func() { _ = browser.Close() }()
+	defer func() {
+		if err := closeRealpassBrowser(browser); err != nil {
+			recordInfrastructureFailure(&res, err)
+			res.DurationMS = time.Since(start).Milliseconds()
+		}
+	}()
 
-	return runTargetWithBrowserContext(targetCtx, browser, res, start, timeout, waitUntil, settle, loadStateTimeout, contentMaxBytes, sampleInterval, generatedPersona, screenshots, shotDir)
+	res = runTargetWithBrowserContext(targetCtx, browser, res, start, timeout, waitUntil, settle, loadStateTimeout, contentMaxBytes, sampleInterval, generatedPersona, screenshots, shotDir)
+	return res
 }
 
 func runTargetWithBrowser(ctx context.Context, browser realpassBrowser, tgt target, attempt int, timeout time.Duration, waitUntil string, settle, loadStateTimeout time.Duration, contentMaxBytes int, sampleInterval time.Duration, generatedPersona, screenshots bool, shotDir string) targetResult {
@@ -563,7 +625,7 @@ func runTargetWithBrowser(ctx context.Context, browser realpassBrowser, tgt targ
 	return runTargetWithBrowserContext(targetCtx, browser, res, start, timeout, waitUntil, settle, loadStateTimeout, contentMaxBytes, sampleInterval, generatedPersona, screenshots, shotDir)
 }
 
-func launchBrowser(ctx context.Context, headful, unsafeDirectNetwork, generatedPersona bool, sidecarRuntime, venvDir string) (realpassBrowser, error) {
+func launchBrowser(ctx context.Context, headful, unsafeDirectNetwork, generatedPersona bool, persona *personaBundle, sidecarRuntime, venvDir string) (realpassBrowser, error) {
 	headlessMode := camoufoxcfg.HeadlessTrue
 	if headful {
 		headlessMode = camoufoxcfg.HeadlessFalse
@@ -579,7 +641,16 @@ func launchBrowser(ctx context.Context, headful, unsafeDirectNetwork, generatedP
 	if unsafeDirectNetwork {
 		opts = append(opts, gomoufox.WithUnsafeDirectNetwork(true))
 	}
-	if !generatedPersona {
+	if generatedPersona {
+		opts = append(opts, gomoufox.WithOS(generatedPersonaOS))
+		if persona != nil {
+			opts = append(
+				opts,
+				gomoufox.WithExactFingerprint(camoufoxcfg.FingerprintOverride(persona.Config)),
+				gomoufox.WithFirefoxUserPrefs(camoufoxcfg.FirefoxUserPrefs(persona.FirefoxUserPrefs)),
+			)
+		}
+	} else {
 		opts = append(opts,
 			gomoufox.WithHumanize(1200*time.Millisecond),
 			gomoufox.WithWindow(1365, 768),
@@ -599,6 +670,50 @@ func parseSidecarRuntime(raw string) (gomoufox.SidecarRuntime, error) {
 	default:
 		return "", fmt.Errorf("sidecar-runtime must be %s or %s", gomoufox.SidecarRuntimePython, gomoufox.SidecarRuntimeNodeDirect)
 	}
+}
+
+func loadPersonaBundle(path string) (*personaBundle, string, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, "", err
+	}
+	if len(data) == 0 || len(data) > personaBundleMaxBytes {
+		return nil, "", fmt.Errorf("persona bundle size %d is outside 1..%d bytes", len(data), personaBundleMaxBytes)
+	}
+	var bundle personaBundle
+	if err := json.Unmarshal(data, &bundle); err != nil {
+		return nil, "", fmt.Errorf("decode persona bundle: %w", err)
+	}
+	if bundle.Version != 1 {
+		return nil, "", fmt.Errorf("persona bundle version %d is unsupported", bundle.Version)
+	}
+	if bundle.PersonaOS != string(generatedPersonaOS) {
+		return nil, "", fmt.Errorf("persona bundle OS %q must be %q", bundle.PersonaOS, generatedPersonaOS)
+	}
+	if bundle.CamoufoxVersion != sidecar.CamoufoxBinaryVersion {
+		return nil, "", fmt.Errorf("persona bundle Camoufox version %q must be %q", bundle.CamoufoxVersion, sidecar.CamoufoxBinaryVersion)
+	}
+	for _, key := range []string{
+		"navigator.userAgent",
+		"navigator.hardwareConcurrency",
+		"screen.width",
+		"screen.height",
+		"fonts",
+		"webGl:vendor",
+		"webGl:renderer",
+		"canvas:aaOffset",
+	} {
+		if _, ok := bundle.Config[key]; !ok {
+			return nil, "", fmt.Errorf("persona bundle config missing %q", key)
+		}
+	}
+	for _, key := range []string{"webgl.enable-webgl2", "webgl.force-enabled"} {
+		if _, ok := bundle.FirefoxUserPrefs[key]; !ok {
+			return nil, "", fmt.Errorf("persona bundle Firefox prefs missing %q", key)
+		}
+	}
+	sum := sha256.Sum256(data)
+	return &bundle, fmt.Sprintf("%x", sum[:]), nil
 }
 
 func runTargetWithBrowserContext(targetCtx context.Context, browser realpassBrowser, res targetResult, start time.Time, timeout time.Duration, waitUntil string, settle, loadStateTimeout time.Duration, contentMaxBytes int, sampleInterval time.Duration, generatedPersona, screenshots bool, shotDir string) (out targetResult) {
@@ -621,7 +736,15 @@ func runTargetWithBrowserContext(targetCtx context.Context, browser realpassBrow
 		out.DurationMS = time.Since(start).Milliseconds()
 		return out
 	}
-	defer func() { _ = page.Close() }()
+	defer func() {
+		if err := closeRealpassResource("page", page.Close); err != nil {
+			recordInfrastructureFailure(&out, err)
+			if errors.Is(err, errRealpassResourceClose) {
+				abortRealpassSidecar(browser.Sidecar().PID)
+			}
+		}
+		out.DurationMS = time.Since(start).Milliseconds()
+	}()
 
 	resp, err := page.Goto(targetCtx, out.URL, gomoufox.WaitUntil(waitUntil), gomoufox.WithTimeout(timeout))
 	var navigationErr error
@@ -688,6 +811,42 @@ func runTargetWithBrowserContext(targetCtx context.Context, browser realpassBrow
 	}
 	out.DurationMS = time.Since(start).Milliseconds()
 	return out
+}
+
+func closeRealpassBrowser(browser realpassBrowser) error {
+	err := closeRealpassResource("browser", browser.Close)
+	if errors.Is(err, errRealpassResourceClose) {
+		abortRealpassSidecar(browser.Sidecar().PID)
+	}
+	return err
+}
+
+func closeRealpassResource(name string, closeFn func() error) error {
+	done := make(chan error, 1)
+	go func() {
+		done <- closeFn()
+	}()
+	timer := time.NewTimer(realpassResourceCloseTimeout)
+	defer timer.Stop()
+	select {
+	case err := <-done:
+		if err != nil {
+			return fmt.Errorf("close %s: %w", name, err)
+		}
+		return nil
+	case <-timer.C:
+		return fmt.Errorf("%w: close %s after %s", errRealpassResourceClose, name, realpassResourceCloseTimeout)
+	}
+}
+
+func recordInfrastructureFailure(result *targetResult, err error) {
+	if result.Error == "" {
+		result.Error = err.Error()
+	} else {
+		result.Error = errors.Join(errors.New(result.Error), err).Error()
+	}
+	result.Outcome = "failed"
+	result.InfrastructureFailure = true
 }
 
 const fingerprintDetectorExpression = `() => {
@@ -1280,7 +1439,16 @@ func reportOptionDiffs(goOptions, pythonOptions reportOptions) []string {
 	addBoolDiff("reuse_browser", goOptions.ReuseBrowser, pythonOptions.ReuseBrowser)
 	addBoolDiff("unsafe_direct_network", goOptions.UnsafeDirect, pythonOptions.UnsafeDirect)
 	addBoolDiff("generated_persona", goOptions.GeneratedPersona, pythonOptions.GeneratedPersona)
+	addStringDiff("persona_os", goOptions.PersonaOS, pythonOptions.PersonaOS)
+	addStringDiff("persona_bundle_sha256", goOptions.PersonaSHA256, pythonOptions.PersonaSHA256)
 	return failures
+}
+
+func generatedPersonaOSValue(enabled bool) string {
+	if !enabled {
+		return ""
+	}
+	return string(generatedPersonaOS)
 }
 
 func emptyOption(value string) string {

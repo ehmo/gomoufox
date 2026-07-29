@@ -252,13 +252,13 @@ case "$brew_mode" in
     run command -v brew
     run env HOMEBREW_NO_AUTO_UPDATE=1 brew tap "$tap" "https://github.com/$repo"
     if [ "$dry_run" = "true" ]; then
-      printf '+ if brew commands | grep -qx trust; then brew trust --formula %q; fi\n' "$tap/gomoufox"
+      printf '+ if brew commands | grep -qx trust; then env -u HOMEBREW_NO_REQUIRE_TAP_TRUST HOMEBREW_REQUIRE_TAP_TRUST=1 brew trust --formula %q; fi\n' "$tap/gomoufox"
     elif brew commands 2>/dev/null | grep -qx trust; then
-      run brew trust --formula "$tap/gomoufox"
+      run env -u HOMEBREW_NO_REQUIRE_TAP_TRUST HOMEBREW_REQUIRE_TAP_TRUST=1 brew trust --formula "$tap/gomoufox"
     fi
-    run env HOMEBREW_NO_AUTO_UPDATE=1 brew install "$tap/gomoufox"
-    run brew test gomoufox
-    run brew uninstall --force gomoufox
+    run env -u HOMEBREW_NO_REQUIRE_TAP_TRUST HOMEBREW_REQUIRE_TAP_TRUST=1 HOMEBREW_NO_AUTO_UPDATE=1 brew install "$tap/gomoufox"
+    run env -u HOMEBREW_NO_REQUIRE_TAP_TRUST HOMEBREW_REQUIRE_TAP_TRUST=1 brew test "$tap/gomoufox"
+    run env -u HOMEBREW_NO_REQUIRE_TAP_TRUST HOMEBREW_REQUIRE_TAP_TRUST=1 brew uninstall --force gomoufox
     ;;
 esac
 

@@ -402,41 +402,50 @@ Camoufox without producing Go-only failures?
 Latest checked evidence:
 [docs/BENCHMARKS.md](docs/BENCHMARKS.md),
 [Python-sidecar artifact](docs/benchmarks/2026-06-08-release-gate.json), and
-[node-direct artifact](docs/benchmarks/2026-07-20-node-direct-readiness.json).
+[node-direct artifact](docs/benchmarks/2026-07-29-node-direct-readiness.json).
+The node-direct run used this
+[shared Linux persona](docs/personas/2026-07-29-node-direct-readiness.json)
+for both runtimes.
 
 | Runtime | Passed | Blocked | Failed | Wall ms | Peak RSS MiB | Peak CPU % | Report tokens |
 |---|---:|---:|---:|---:|---:|---:|---:|
-| Python Camoufox | 95 | 5 | **0** | **347,645** | 3,196.3 | 504.8 | 85,222 |
-| gomoufox, Python sidecar | 95 | 5 | **0** | 366,338 | 2,765.3 | 569.9 | 13,059 |
-| gomoufox, node-direct Go | **96** | **4** | **0** | 351,590 | **2,703.4** | **349.6** | **12,941** |
+| Python Camoufox | 91 | 9 | **0** | 346,695 | 3,080.9 | 503.4 | 82,670 |
+| gomoufox, Python sidecar | 95 | 5 | **0** | 366,338 | **2,765.3** | 569.9 | **13,059** |
+| gomoufox, node-direct Go | 91 | 9 | **0** | **346,474** | 2,780.5 | **461.2** | 13,093 |
 
 Bold means best in that column. The sidecar row comes from the previous extended
 release-gate artifact; node-direct comes from the readiness artifact.
 Use the table for direction, not single-run timing claims.
 
-Latest extended validation: 100 targets, 45s timeout, `commit` wait, 3s settle,
+Latest extended validation: 100 targets, 60s timeout, `commit` wait, 3s settle,
 no screenshots, reused browser, compact Go report, 0s extra load-state wait, and
 250,000-byte classification cap.
-gomoufox passed 96, blocked 4, failed 0. Python Camoufox passed 95, blocked 5,
+The checked artifact uses two alternating loops.
+gomoufox passed 91, blocked 9, failed 0. Python Camoufox passed 91, blocked 9,
 failed 0. The run had 0 Go-only regressions and 1 Python-only outcome
 difference. See
-[docs/benchmarks/2026-07-20-node-direct-readiness.json](docs/benchmarks/2026-07-20-node-direct-readiness.json).
+[docs/benchmarks/2026-07-29-node-direct-readiness.json](docs/benchmarks/2026-07-29-node-direct-readiness.json).
 
 | Ratio | node-direct Go / Python Camoufox |
 |---|---:|
-| Wall time | 1.011 |
-| Peak RSS | 0.846 |
-| Peak CPU | 0.693 |
-| Report tokens | 0.152 |
+| Wall time | 0.999 |
+| Peak RSS | 0.903 |
+| Peak CPU | 0.916 |
+| Report tokens | 0.158 |
 
 Wall time stayed at parity. Node-direct used less RSS, less CPU, and produced a
 much smaller agent report. Treat a report-token ratio above 0.50 as a regression.
 Release gates use `--unsafe-direct-network`, block reproducible outcome mismatch,
 and give a new shared block, failure, or performance outlier one focused retry.
+If that retry differs by outcome, the gate runs one paired confirmation in the
+opposite runtime order and blocks a persistent mismatch.
+Release benchmark evidence uses two alternating loops so each runtime runs
+first once.
 
 ```bash
 scripts/benchmark-realpass.py --mode smoke
 scripts/benchmark-realpass.py --mode smoke --loops 2 --run-order alternate
+scripts/benchmark-realpass.py --mode extended --loops 2 --run-order alternate
 scripts/benchmark-realpass.py --mode extended --list-targets
 scripts/fingerprint-audit.py
 ```

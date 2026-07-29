@@ -1,5 +1,36 @@
 # Changelog
 
+## v0.1.21
+
+- Fix clean node-direct installs so `launchServer.js` resolves the pinned
+  `playwright-core` package without an ambient `node_modules`. Existing caches
+  repair on the next install check.
+- Bind node-direct and Python launch servers to IPv4 loopback, preventing
+  dual-stack port collisions from routing WebSocket clients to unrelated
+  localhost services.
+- Add an isolated managed-browser launch gate to nightly CI and release
+  validation, including a weekly cold install and an exact JavaScript-written
+  page marker.
+- Force Homebrew tap trust enforcement in the public release canary.
+- Refresh the hash-locked Python dependencies used by the legacy sidecar
+  release gate.
+- Confirm a mismatched real-site retry once in the opposite runtime order,
+  while keeping persistent Go/Python drift fail-closed.
+- Align the named release shared-block baseline with the checked 100-site
+  benchmark, including recurring Etsy parity, while keeping zero failures.
+- Balance release benchmark evidence across both Go-first and Python-first
+  runtime order, with both harnesses constrained to generated Linux personas.
+- Reuse one recorded persona across both benchmark runtimes and apply its
+  fingerprint without random merge values.
+- Keep node-direct launch add-ons aligned with the Python launch path by
+  loading only add-ons supplied through `WithAddons`.
+- Keep generated node-direct personas aligned with the pinned browser version,
+  default font set, custom font options, and partial fingerprint overrides.
+- Launch node-direct through the pinned Playwright server entry point with
+  bounded Node heap settings.
+- Bound realpass page and browser shutdown, terminate the affected sidecar
+  process group after a timeout, and record a failed partial report.
+
 ## v0.1.20
 
 - Add native HAR recording across the Go API, interactive `gomoufox record`

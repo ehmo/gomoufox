@@ -55,6 +55,7 @@ if managed_executable_path and os.path.realpath(config.get("executable_path", ""
 if config.get("proxy") is None:
     config.pop("proxy", None)
 payload = to_camel_case_dict(config)
+payload["host"] = "127.0.0.1"
 if persistent_user_data_dir:
     payload["_userDataDir"] = persistent_user_data_dir
     payload["_sharedBrowser"] = True

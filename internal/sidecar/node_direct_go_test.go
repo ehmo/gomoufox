@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strconv"
 	"strings"
 	"testing"
@@ -72,8 +73,123 @@ func TestBuildNodeDirectSpecGoExplicitCompleteFingerprint(t *testing.T) {
 	if camouConfig["navigator.userAgent"] != "gomoufox-test" || camouConfig["allowMainWorld"] != true {
 		t.Fatalf("camou config = %#v", camouConfig)
 	}
-	if _, ok := camouConfig["addons"]; !ok {
-		t.Fatalf("camou config missing addons: %#v", camouConfig)
+	if _, ok := camouConfig["addons"]; ok {
+		t.Fatalf("default config includes addons: %#v", camouConfig)
+	}
+}
+
+func TestBuildNodeDirectSpecGoUsesOnlyExplicitAddons(t *testing.T) {
+	venv := fakeNodeDirectRuntime(t)
+	cache := t.TempDir()
+	replaceUserCacheDir(t, cache, nil)
+	fakeCachedBrowser(t, filepath.Join(cache, "camoufox"))
+	explicitAddon := t.TempDir()
+
+	spec, err := buildNodeDirectSpecGo(Config{
+		VenvDir:     venv,
+		Addons:      []string{explicitAddon},
+		BlockWebGL:  true,
+		Fingerprint: explicitCompleteFingerprintForTest(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload := decodeNodeDirectPayloadForTest(t, spec.StdinBase64)
+	camouConfig := decodeCamouConfigForTest(t, payload["env"].(map[string]any))
+	addons, ok := camouConfig["addons"].([]any)
+	if !ok || len(addons) != 1 || addons[0] != explicitAddon {
+		t.Fatalf("addons = %#v, want only %q", camouConfig["addons"], explicitAddon)
+	}
+}
+
+func TestBuildNodeDirectSpecGoAppliesPartialFingerprintOverride(t *testing.T) {
+	venv := fakeNodeDirectRuntime(t)
+	cache := t.TempDir()
+	replaceUserCacheDir(t, cache, nil)
+	fakeCachedBrowser(t, filepath.Join(cache, "camoufox"))
+
+	spec, err := buildNodeDirectSpecGo(Config{
+		VenvDir:    venv,
+		OS:         "linux",
+		BlockWebGL: true,
+		Fingerprint: map[string]any{
+			"navigator.userAgent": "gomoufox-override",
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload := decodeNodeDirectPayloadForTest(t, spec.StdinBase64)
+	config := decodeCamouConfigForTest(t, payload["env"].(map[string]any))
+	if config["navigator.userAgent"] != "gomoufox-override" {
+		t.Fatalf("navigator.userAgent = %#v", config["navigator.userAgent"])
+	}
+	for _, key := range []string{"navigator.platform", "screen.width", "fonts", "canvas:aaOffset"} {
+		if _, ok := config[key]; !ok {
+			t.Fatalf("partial override dropped generated key %s: %#v", key, config)
+		}
+	}
+}
+
+func TestBuildNodeDirectSpecGoAppliesExactFingerprintWithoutGeneratedKeys(t *testing.T) {
+	venv := fakeNodeDirectRuntime(t)
+	cache := t.TempDir()
+	replaceUserCacheDir(t, cache, nil)
+	fakeCachedBrowser(t, filepath.Join(cache, "camoufox"))
+
+	spec, err := buildNodeDirectSpecGo(Config{
+		VenvDir:          venv,
+		Fingerprint:      map[string]any{"navigator.userAgent": "exact"},
+		FingerprintExact: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload := decodeNodeDirectPayloadForTest(t, spec.StdinBase64)
+	config := decodeCamouConfigForTest(t, payload["env"].(map[string]any))
+	if !reflect.DeepEqual(config, map[string]any{"navigator.userAgent": "exact"}) {
+		t.Fatalf("exact fingerprint config = %#v", config)
+	}
+
+	_, err = buildNodeDirectSpecGo(Config{VenvDir: venv, FingerprintExact: true})
+	if err == nil || !strings.Contains(err.Error(), "exact fingerprint config is empty") {
+		t.Fatalf("empty exact fingerprint error = %v", err)
+	}
+}
+
+func TestBuildNodeDirectSpecGoAppliesCustomFontOptions(t *testing.T) {
+	venv := fakeNodeDirectRuntime(t)
+	cache := t.TempDir()
+	replaceUserCacheDir(t, cache, nil)
+	fakeCachedBrowser(t, filepath.Join(cache, "camoufox"))
+
+	spec, err := buildNodeDirectSpecGo(Config{
+		VenvDir:         venv,
+		BlockWebGL:      true,
+		CustomFontsOnly: true,
+		Fonts:           []string{"Gomoufox Test"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload := decodeNodeDirectPayloadForTest(t, spec.StdinBase64)
+	config := decodeCamouConfigForTest(t, payload["env"].(map[string]any))
+	fonts, ok := config["fonts"].([]any)
+	if !ok || len(fonts) != 1 || fonts[0] != "Gomoufox Test" {
+		t.Fatalf("fonts = %#v", config["fonts"])
+	}
+	prefs := payload["firefoxUserPrefs"].(map[string]any)
+	if prefs["gfx.bundled-fonts.activate"] != float64(0) && prefs["gfx.bundled-fonts.activate"] != 0 {
+		t.Fatalf("firefox prefs = %#v", prefs)
+	}
+
+	_, err = buildNodeDirectSpecGo(Config{
+		VenvDir:         venv,
+		BlockWebGL:      true,
+		CustomFontsOnly: true,
+	})
+	if err == nil {
+		t.Fatal("expected custom fonts only without font families to fail")
 	}
 }
 
@@ -110,11 +226,13 @@ func TestBuildNodeDirectSpecGoGeneratedFingerprintDoesNotNeedPython(t *testing.T
 		"fonts:spacing_seed",
 		"canvas:aaOffset",
 		"canvas:aaCapOffset",
-		"addons",
 	} {
 		if _, ok := camouConfig[key]; !ok {
 			t.Fatalf("generated config missing %s: %#v", key, camouConfig)
 		}
+	}
+	if _, ok := camouConfig["addons"]; ok {
+		t.Fatalf("generated default config includes addons: %#v", camouConfig)
 	}
 	prefs := payload["firefoxUserPrefs"].(map[string]any)
 	if prefs["webgl.disabled"] != true || prefs["media.peerconnection.enabled"] != false {
@@ -159,13 +277,18 @@ func TestBuildNodeDirectSpecGoGeneratedPayloadMatchesPythonShapeLive(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
+	executablePath, err := ResolveManagedCamoufoxExecutable("")
+	if err != nil {
+		t.Fatal(err)
+	}
 	cfg := Config{
-		OS:          "linux",
-		BlockWebGL:  true,
-		BlockWebRTC: true,
-		BlockImages: true,
-		Window:      &Size{Width: 1200, Height: 800},
-		Screen:      &Size{Width: 1440, Height: 900},
+		ExecutablePath: executablePath,
+		OS:             "linux",
+		BlockWebGL:     true,
+		BlockWebRTC:    true,
+		BlockImages:    true,
+		Window:         &Size{Width: 1200, Height: 800},
+		Screen:         &Size{Width: 1440, Height: 900},
 		FirefoxPrefs: map[string]any{
 			"browser.test.pref": true,
 		},
@@ -191,6 +314,15 @@ func TestBuildNodeDirectSpecGoGeneratedPayloadMatchesPythonShapeLive(t *testing.
 	}
 	goConfig := decodeCamouConfigForTest(t, goPayload["env"].(map[string]any))
 	pythonConfig := decodeCamouConfigForTest(t, pythonPayload["env"].(map[string]any))
+	for name, config := range map[string]map[string]any{"go": goConfig, "python": pythonConfig} {
+		userAgent, _ := config["navigator.userAgent"].(string)
+		if !strings.Contains(userAgent, "rv:135.0") || !strings.Contains(userAgent, "Firefox/135.0") {
+			t.Fatalf("%s navigator.userAgent = %q, want managed Firefox 135", name, userAgent)
+		}
+	}
+	if !reflect.DeepEqual(goPayload["firefoxUserPrefs"], pythonPayload["firefoxUserPrefs"]) {
+		t.Fatalf("firefox prefs differ: go=%#v python=%#v", goPayload["firefoxUserPrefs"], pythonPayload["firefoxUserPrefs"])
+	}
 	for _, key := range []string{
 		"navigator.userAgent",
 		"navigator.platform",
@@ -206,7 +338,6 @@ func TestBuildNodeDirectSpecGoGeneratedPayloadMatchesPythonShapeLive(t *testing.
 		"fonts:spacing_seed",
 		"canvas:aaOffset",
 		"canvas:aaCapOffset",
-		"addons",
 	} {
 		if _, ok := goConfig[key]; !ok {
 			t.Fatalf("go config missing %s: %#v", key, goConfig)
@@ -214,6 +345,61 @@ func TestBuildNodeDirectSpecGoGeneratedPayloadMatchesPythonShapeLive(t *testing.
 		if _, ok := pythonConfig[key]; !ok {
 			t.Fatalf("python config missing %s: %#v", key, pythonConfig)
 		}
+	}
+	if _, ok := goConfig["addons"]; ok {
+		t.Fatalf("go default config includes addons: %#v", goConfig)
+	}
+	if _, ok := pythonConfig["addons"]; ok {
+		t.Fatalf("python default config includes addons: %#v", pythonConfig)
+	}
+	if !reflect.DeepEqual(goConfig["fonts"], pythonConfig["fonts"]) {
+		t.Fatalf("font lists differ: go=%#v python=%#v", goConfig["fonts"], pythonConfig["fonts"])
+	}
+	for name, config := range map[string]map[string]any{"go": goConfig, "python": pythonConfig} {
+		if config["window.screenY"] != float64(50) && config["window.screenY"] != 50 {
+			t.Fatalf("%s window.screenY = %#v, want centered value 50", name, config["window.screenY"])
+		}
+	}
+}
+
+func TestBuildNodeDirectSpecGoAppliesSharedPythonPersonaExactlyLive(t *testing.T) {
+	if os.Getenv("GOMOUFOX_LIVE") != "1" {
+		t.Skip("set GOMOUFOX_LIVE=1 to compare an exact shared Python persona with the Go launch payload")
+	}
+	python, err := VenvPython("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	executablePath, err := ResolveManagedCamoufoxExecutable("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	base := Config{
+		ExecutablePath: executablePath,
+		OS:             "linux",
+	}
+	pythonPayload, err := BuildPythonLaunchPayload(context.Background(), python, base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pythonConfig := decodeCamouConfigForTest(t, pythonPayload["env"].(map[string]any))
+	pythonPrefs := pythonPayload["firefoxUserPrefs"].(map[string]any)
+
+	shared := base
+	shared.Fingerprint = pythonConfig
+	shared.FirefoxPrefs = pythonPrefs
+	shared.FingerprintExact = true
+	goSpec, err := buildNodeDirectSpecGo(shared)
+	if err != nil {
+		t.Fatal(err)
+	}
+	goPayload := decodeNodeDirectPayloadForTest(t, goSpec.StdinBase64)
+	goConfig := decodeCamouConfigForTest(t, goPayload["env"].(map[string]any))
+	if !reflect.DeepEqual(goConfig, pythonConfig) {
+		t.Fatalf("shared persona config differs: go=%#v python=%#v", goConfig, pythonConfig)
+	}
+	if !reflect.DeepEqual(goPayload["firefoxUserPrefs"], pythonPrefs) {
+		t.Fatalf("shared persona Firefox prefs differ: go=%#v python=%#v", goPayload["firefoxUserPrefs"], pythonPrefs)
 	}
 }
 
@@ -317,6 +503,9 @@ func writeFakeRuntimeRoot(t *testing.T, root RuntimeRoot, nodeScript string) {
 	if err := os.WriteFile(root.LaunchServerJS, []byte(runtimeLaunchServerJS), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	if err := ensureRuntimePlaywrightCoreModule(root, sidecarGOOS); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.MkdirAll(root.BrowserResourcesDir, 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -346,10 +535,6 @@ func fakeCachedBrowser(t *testing.T, root string) {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(exe, []byte("browser"), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	addon := filepath.Join(browserResourcesDirForExecutable(exe), "addons", "UBO")
-	if err := os.MkdirAll(addon, 0o700); err != nil {
 		t.Fatal(err)
 	}
 }

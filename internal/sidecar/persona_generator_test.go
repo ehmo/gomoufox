@@ -2,6 +2,7 @@ package sidecar
 
 import (
 	"math/rand"
+	"strings"
 	"testing"
 )
 
@@ -50,6 +51,65 @@ func TestMergeScreenSampleSkipsFalsyValues(t *testing.T) {
 	}
 }
 
+func TestMergeScreenSampleCentersCustomWindow(t *testing.T) {
+	config := map[string]any{}
+	sample := map[string]any{
+		"screen": map[string]any{
+			"width":       float64(1440),
+			"height":      float64(900),
+			"outerWidth":  float64(1280),
+			"outerHeight": float64(720),
+			"innerWidth":  float64(1260),
+			"innerHeight": float64(680),
+			"screenX":     float64(0),
+		},
+	}
+	mergeScreenSample(config, sample, Config{Window: &Size{Width: 1200, Height: 800}})
+
+	for key, want := range map[string]int{
+		"window.outerWidth":  1200,
+		"window.outerHeight": 800,
+		"window.innerWidth":  1180,
+		"window.innerHeight": 760,
+		"window.screenX":     120,
+		"window.screenY":     50,
+	} {
+		if got := config[key]; got != want {
+			t.Errorf("%s = %v, want %d", key, got, want)
+		}
+	}
+}
+
+func TestPersonaMappingsSkipFalsyValues(t *testing.T) {
+	config := map[string]any{}
+	sample := map[string]any{
+		"maxTouchPoints": float64(0),
+		"extraProperties": map[string]any{
+			"globalPrivacyControl": false,
+		},
+		"battery": map[string]any{
+			"charging":        false,
+			"chargingTime":    float64(0),
+			"dischargingTime": float64(42),
+		},
+	}
+	mergeNavigatorSample(config, sample)
+	mergeExtraPropertiesSample(config, sample)
+	mergeBatterySample(config, sample)
+	if _, ok := config["navigator.maxTouchPoints"]; ok {
+		t.Fatalf("falsy navigator value emitted: %#v", config)
+	}
+	if _, ok := config["navigator.globalPrivacyControl"]; ok {
+		t.Fatalf("falsy extra property emitted: %#v", config)
+	}
+	if _, ok := config["battery:charging"]; ok {
+		t.Fatalf("falsy battery value emitted: %#v", config)
+	}
+	if got := config["battery:dischargingTime"]; got != float64(42) {
+		t.Fatalf("battery:dischargingTime = %#v, want 42", got)
+	}
+}
+
 func TestGeneratedPersonaConfigNeverSpoofsZeroInnerViewport(t *testing.T) {
 	rng := rand.New(rand.NewSource(1))
 	for i := 0; i < 25; i++ {
@@ -64,6 +124,61 @@ func TestGeneratedPersonaConfigNeverSpoofsZeroInnerViewport(t *testing.T) {
 				}
 			}
 		}
+	}
+}
+
+func TestGeneratedPersonaConfigUsesManagedFirefoxVersion(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		config  Config
+		version string
+	}{
+		{name: "managed default", config: Config{OS: "linux"}, version: "135.0"},
+		{name: "explicit override", config: Config{OS: "linux", FFVersion: 149}, version: "149.0"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			config, err := generatePersonaConfig(tc.config, rand.New(rand.NewSource(1)))
+			if err != nil {
+				t.Fatal(err)
+			}
+			userAgent, _ := config["navigator.userAgent"].(string)
+			if !strings.Contains(userAgent, "rv:"+tc.version) || !strings.Contains(userAgent, "Firefox/"+tc.version) {
+				t.Fatalf("navigator.userAgent = %q, want Firefox %s", userAgent, tc.version)
+			}
+		})
+	}
+}
+
+func TestRewritePersonaFirefoxVersionMatchesCamoufoxBoundaries(t *testing.T) {
+	input := "99.0 100.0 135.0 135.01 1135.0 150.0x"
+	want := "99.0 127.0 127.0 135.01 1135.0 127.0x"
+	if got := rewritePersonaFirefoxVersionString(input, 127); got != want {
+		t.Fatalf("rewrite = %q, want %q", got, want)
+	}
+}
+
+func TestApplyPersonaFontsMatchesCamoufoxMerge(t *testing.T) {
+	config := map[string]any{}
+	err := applyPersonaFonts(config, Config{Fonts: []string{"Inter", "Arial"}}, []string{"Arial", "Noto Sans", "Arial"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := config["fonts"].([]string)
+	want := []string{"Arial", "Inter", "Noto Sans"}
+	if len(got) != len(want) {
+		t.Fatalf("fonts = %#v, want %#v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("fonts = %#v, want %#v", got, want)
+		}
+	}
+}
+
+func TestApplyPersonaFontsRejectsEmptyCustomSet(t *testing.T) {
+	err := applyPersonaFonts(map[string]any{}, Config{CustomFontsOnly: true}, nil)
+	if err == nil {
+		t.Fatal("expected custom fonts only without font families to fail")
 	}
 }
 

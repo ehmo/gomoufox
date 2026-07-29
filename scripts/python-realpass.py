@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import argparse
+import hashlib
 import json
 import os
 import pathlib
@@ -19,6 +20,7 @@ from camoufox.utils import launch_options
 
 
 CATALOG_PATH = pathlib.Path(__file__).with_name("realpass-targets.json")
+GENERATED_PERSONA_OS = "linux"
 CAMOUFOX_BINARY_VERSION = "v135.0.1-beta.24"
 
 FINGERPRINT_DETECTOR_EXPRESSION = r"""() => {
@@ -106,12 +108,26 @@ def main() -> int:
     parser.add_argument("--executable-path", default="", help="pinned Camoufox executable; defaults to gomoufox's managed runtime cache")
     parser.add_argument("--screenshots", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--reuse-browser", action="store_true", help="reuse one browser process across targets; each target still gets a fresh page context")
+    parser.add_argument("--persona-bundle", default="", help="shared generated persona bundle JSON")
+    parser.add_argument("--write-persona-bundle", default="", help="generate a shared Linux persona bundle and exit")
     parser.add_argument("--list-targets", action="store_true")
     args = parser.parse_args()
     if args.load_state_timeout < 0:
         parser.error("--load-state-timeout must be >= 0")
     if args.content_max_bytes < 0:
         parser.error("--content-max-bytes must be >= 0")
+    if args.persona_bundle and args.write_persona_bundle:
+        parser.error("--persona-bundle and --write-persona-bundle cannot be used together")
+
+    if args.write_persona_bundle:
+        try:
+            executable_path = managed_camoufox_executable(args.executable_path)
+            write_persona_bundle(pathlib.Path(args.write_persona_bundle), executable_path)
+        except (OSError, RuntimeError, ValueError) as exc:
+            parser.error(str(exc))
+        print(f"persona: {args.write_persona_bundle}")
+        return 0
+
     catalog = load_catalog(pathlib.Path(args.target_file))
 
     if args.list_targets:
@@ -120,7 +136,8 @@ def main() -> int:
 
     try:
         executable_path = managed_camoufox_executable(args.executable_path)
-    except ValueError as exc:
+        persona_bundle, persona_sha256 = load_persona_bundle(args.persona_bundle)
+    except (OSError, ValueError) as exc:
         parser.error(str(exc))
 
     targets = [parse_target(raw) for raw in args.target] if args.target else catalog_targets(catalog, args.target_tier)
@@ -146,22 +163,24 @@ def main() -> int:
             "reuse_browser": args.reuse_browser,
             "generated_persona": True,
             "unsafe_direct_network": True,
+            "persona_os": GENERATED_PERSONA_OS,
+            "persona_bundle_sha256": persona_sha256,
         },
         "summary": {},
         "results": [],
     }
 
     if args.reuse_browser:
-        with managed_camoufox(executable_path, not args.headful) as browser:
+        with managed_camoufox(executable_path, not args.headful, persona_bundle) as browser:
             for target in targets:
                 print(f"python-realpass: {target['name']} -> {target['url']}", file=sys.stderr, flush=True)
-                result = run_target(target, args, shot_dir, executable_path, browser)
+                result = run_target(target, args, shot_dir, executable_path, persona_bundle, browser)
                 report["results"].append(result)
                 append_result_jsonl(out_dir, result)
     else:
         for target in targets:
             print(f"python-realpass: {target['name']} -> {target['url']}", file=sys.stderr, flush=True)
-            result = run_target(target, args, shot_dir, executable_path, None)
+            result = run_target(target, args, shot_dir, executable_path, persona_bundle, None)
             report["results"].append(result)
             append_result_jsonl(out_dir, result)
 
@@ -173,7 +192,7 @@ def main() -> int:
     return 0
 
 
-def run_target(target, args, shot_dir, executable_path, browser=None):
+def run_target(target, args, shot_dir, executable_path, persona_bundle, browser=None):
     started = time.time()
     result = {
         "name": target["name"],
@@ -189,7 +208,7 @@ def run_target(target, args, shot_dir, executable_path, browser=None):
     page = None
     try:
         if browser is None:
-            with managed_camoufox(executable_path, not args.headful) as owned_browser:
+            with managed_camoufox(executable_path, not args.headful, persona_bundle) as owned_browser:
                 run_page_probe(owned_browser, target, args, shot_dir, result)
         else:
             run_page_probe(browser, target, args, shot_dir, result)
@@ -240,21 +259,120 @@ def managed_camoufox_executable(override=""):
     )
 
 
-def managed_camoufox(executable_path, headless):
+def managed_camoufox(executable_path, headless, persona_bundle):
     executable = pathlib.Path(executable_path).resolve()
+    configure_managed_camoufox(executable)
+    config = dict(persona_bundle["config"]) if persona_bundle else None
+    firefox_user_prefs = dict(persona_bundle["firefox_user_prefs"]) if persona_bundle else None
+    options = launch_options(
+        headless=headless,
+        os=GENERATED_PERSONA_OS,
+        exclude_addons=[DefaultAddons.UBO],
+        config=config,
+        firefox_user_prefs=firefox_user_prefs,
+        i_know_what_im_doing=bool(persona_bundle),
+    )
+    if os.path.realpath(options.get("executable_path", "")) != os.path.realpath(executable):
+        raise RuntimeError("Camoufox resolved an unexpected managed browser executable")
+    return Camoufox(from_options=options)
+
+
+def configure_managed_camoufox(executable):
+    executable = pathlib.Path(executable).resolve()
     managed_root = executable.parents[3] if sys.platform == "darwin" else executable.parent
     # Keep every Camoufox package lookup on gomoufox's verified tree. Version
     # 0.4.11 otherwise consults (and may update) its separate global cache.
     camoufox_pkgman.INSTALL_DIR = managed_root
     camoufox_pkgman.camoufox_path = lambda download_if_missing=True: managed_root
     camoufox_utils.installed_verstr = lambda: CAMOUFOX_BINARY_VERSION.removeprefix("v")
+
+
+def write_persona_bundle(path, executable_path):
+    executable = pathlib.Path(executable_path).resolve()
+    configure_managed_camoufox(executable)
     options = launch_options(
-        headless=headless,
+        headless=True,
+        os=GENERATED_PERSONA_OS,
         exclude_addons=[DefaultAddons.UBO],
+        env={},
     )
     if os.path.realpath(options.get("executable_path", "")) != os.path.realpath(executable):
         raise RuntimeError("Camoufox resolved an unexpected managed browser executable")
-    return Camoufox(from_options=options)
+    config = camoufox_config_from_env(options.get("env") or {})
+    bundle = {
+        "version": 1,
+        "persona_os": GENERATED_PERSONA_OS,
+        "camoufox_version": CAMOUFOX_BINARY_VERSION,
+        "config": config,
+        "firefox_user_prefs": options.get("firefox_user_prefs") or {},
+    }
+    validate_persona_bundle(bundle)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(bundle, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    path.chmod(0o600)
+
+
+def camoufox_config_from_env(env):
+    indices = []
+    for key in env:
+        if not key.startswith("CAMOU_CONFIG_"):
+            continue
+        suffix = key.removeprefix("CAMOU_CONFIG_")
+        if not suffix.isdigit() or int(suffix) < 1:
+            raise RuntimeError("Camoufox launch options contained malformed persona chunks")
+        indices.append(int(suffix))
+    indices.sort()
+    if not indices:
+        raise RuntimeError("Camoufox launch options did not contain a persona config")
+    if indices != list(range(1, len(indices) + 1)):
+        raise RuntimeError("Camoufox launch options contained non-contiguous persona chunks")
+    chunks = [str(env[f"CAMOU_CONFIG_{index}"]) for index in indices]
+    return json.loads("".join(chunks))
+
+
+def load_persona_bundle(path_value):
+    if not path_value:
+        return None, ""
+    path = pathlib.Path(path_value)
+    data = path.read_bytes()
+    if not data or len(data) > 1 << 20:
+        raise ValueError(f"persona bundle size {len(data)} is outside 1..{1 << 20} bytes")
+    try:
+        bundle = json.loads(data)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"decode persona bundle: {exc}") from exc
+    validate_persona_bundle(bundle)
+    return bundle, hashlib.sha256(data).hexdigest()
+
+
+def validate_persona_bundle(bundle):
+    if not isinstance(bundle, dict):
+        raise ValueError("persona bundle must be a JSON object")
+    if bundle.get("version") != 1:
+        raise ValueError(f"persona bundle version {bundle.get('version')!r} is unsupported")
+    if bundle.get("persona_os") != GENERATED_PERSONA_OS:
+        raise ValueError(f"persona bundle OS must be {GENERATED_PERSONA_OS}")
+    if bundle.get("camoufox_version") != CAMOUFOX_BINARY_VERSION:
+        raise ValueError(f"persona bundle Camoufox version must be {CAMOUFOX_BINARY_VERSION}")
+    config = bundle.get("config")
+    prefs = bundle.get("firefox_user_prefs")
+    if not isinstance(config, dict) or not isinstance(prefs, dict):
+        raise ValueError("persona bundle config and Firefox prefs must be JSON objects")
+    for key in (
+        "navigator.userAgent",
+        "navigator.hardwareConcurrency",
+        "screen.width",
+        "screen.height",
+        "fonts",
+        "webGl:vendor",
+        "webGl:renderer",
+        "canvas:aaOffset",
+    ):
+        if key not in config:
+            raise ValueError(f"persona bundle config missing {key!r}")
+    for key in ("webgl.enable-webgl2", "webgl.force-enabled"):
+        if key not in prefs:
+            raise ValueError(f"persona bundle Firefox prefs missing {key!r}")
 
 
 def run_page_probe(browser, target, args, shot_dir, result):

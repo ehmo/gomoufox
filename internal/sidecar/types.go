@@ -31,41 +31,42 @@ const (
 )
 
 type Config struct {
-	PythonBin       string
-	VenvDir         string
-	Runtime         string
-	ExecutablePath  string
-	ConnectTimeout  time.Duration
-	Headless        int
-	Persistent      bool
-	UserDataDir     string
-	DirectNetwork   bool
-	Proxy           *ProxyConfig
-	LaunchProxy     *ProxyConfig
-	Policy          policy.Config
-	GeoIP           bool
-	Humanize        *float64
-	OS              string
-	Locale          []string
-	BlockImages     bool
-	BlockWebRTC     bool
-	BlockWebGL      bool
-	Addons          []string
-	Window          *Size
-	Screen          *Size
-	WebGL           *WebGLConfig
-	FirefoxPrefs    map[string]any
-	BrowserArgs     []string
-	CustomFontsOnly bool
-	FFVersion       int
-	CamoufoxDebug   bool
-	Fonts           []string
-	Fingerprint     map[string]any
-	MainWorldEval   bool
-	EnableCache     bool
-	DisableCOOP     bool
-	ExtraEnv        []string
-	AcceptDownloads *bool
+	PythonBin        string
+	VenvDir          string
+	Runtime          string
+	ExecutablePath   string
+	ConnectTimeout   time.Duration
+	Headless         int
+	Persistent       bool
+	UserDataDir      string
+	DirectNetwork    bool
+	Proxy            *ProxyConfig
+	LaunchProxy      *ProxyConfig
+	Policy           policy.Config
+	GeoIP            bool
+	Humanize         *float64
+	OS               string
+	Locale           []string
+	BlockImages      bool
+	BlockWebRTC      bool
+	BlockWebGL       bool
+	Addons           []string
+	Window           *Size
+	Screen           *Size
+	WebGL            *WebGLConfig
+	FirefoxPrefs     map[string]any
+	BrowserArgs      []string
+	CustomFontsOnly  bool
+	FFVersion        int
+	CamoufoxDebug    bool
+	Fonts            []string
+	Fingerprint      map[string]any
+	FingerprintExact bool
+	MainWorldEval    bool
+	EnableCache      bool
+	DisableCOOP      bool
+	ExtraEnv         []string
+	AcceptDownloads  *bool
 }
 
 type ProxyConfig struct {

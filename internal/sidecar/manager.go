@@ -80,7 +80,12 @@ func (m *Manager) launchCommand(ctx context.Context, python, runtimeName string)
 		if err != nil {
 			return nil, err
 		}
-		cmd := exec.Command(spec.NodeJS, spec.LaunchScript)
+		cmd := exec.Command(
+			spec.NodeJS,
+			"--max-old-space-size=64",
+			"--max-semi-space-size=4",
+			spec.LaunchScript,
+		)
 		cmd.Dir = spec.CWD
 		cmd.Stdin = strings.NewReader(spec.StdinBase64)
 		return cmd, nil
@@ -654,6 +659,7 @@ if config.get("proxy") is None:
     config.pop("proxy", None)
 nodejs = get_nodejs()
 payload = to_camel_case_dict(config)
+payload["host"] = "127.0.0.1"
 if persistent_user_data_dir:
     payload["_userDataDir"] = persistent_user_data_dir
     payload["_sharedBrowser"] = True

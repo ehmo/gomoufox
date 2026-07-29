@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"math/rand"
 	"os"
-	"path/filepath"
 	"strconv"
 	"time"
 )
@@ -37,9 +36,13 @@ func buildNodeDirectSpecGo(cfg Config) (nodeDirectSpec, error) {
 	if err != nil {
 		return nodeDirectSpec{}, fmt.Errorf("%w: locate runtime Camoufox browser executable: %v", ErrNotInstalled, err)
 	}
+	rng := rand.New(rand.NewSource(time.Now().UnixNano()))
 	config := cloneStringAnyMap(cfg.Fingerprint)
-	if len(config) == 0 {
-		rng := rand.New(rand.NewSource(time.Now().UnixNano()))
+	if cfg.FingerprintExact {
+		if len(config) == 0 {
+			return nodeDirectSpec{}, fmt.Errorf("%w: exact fingerprint config is empty", ErrSidecarStart)
+		}
+	} else {
 		config, err = generatePersonaConfig(cfg, rng)
 		if err != nil {
 			return nodeDirectSpec{}, err
@@ -64,28 +67,32 @@ func buildNodeDirectSpecGo(cfg Config) (nodeDirectSpec, error) {
 				cfg.FirefoxPrefs["webgl.force-enabled"] = true
 			}
 		}
+		for key, value := range cfg.Fingerprint {
+			config[key] = value
+		}
+		personaData, err := loadPersonaDataset()
+		if err != nil {
+			return nodeDirectSpec{}, fmt.Errorf("%w: load persona data: %v", ErrSidecarStart, err)
+		}
+		if err := applyPersonaFonts(config, cfg, personaData.fonts[targetCamoufoxOS(cfg.OS)]); err != nil {
+			return nodeDirectSpec{}, err
+		}
 	}
 	addons := append([]string(nil), cfg.Addons...)
-	if ubo := defaultUBOAddonPath(executablePath); ubo != "" {
-		addons = append([]string{ubo}, addons...)
-	}
 	if len(addons) > 0 {
 		config["addons"] = addons
 	}
 	if cfg.MainWorldEval {
 		config["allowMainWorld"] = true
 	}
-	if len(cfg.Fonts) > 0 {
-		config["fonts"] = append([]string(nil), cfg.Fonts...)
-	}
-	if cfg.CustomFontsOnly {
-		config["fonts:all"] = false
-	}
 	env, err := nodeDirectGoEnv(config, cfg.ExtraEnv)
 	if err != nil {
 		return nodeDirectSpec{}, err
 	}
 	prefs := cloneStringAnyMap(cfg.FirefoxPrefs)
+	if cfg.CustomFontsOnly {
+		prefs["gfx.bundled-fonts.activate"] = 0
+	}
 	if cfg.BlockWebGL {
 		prefs["webgl.disabled"] = true
 	}
@@ -180,22 +187,6 @@ func nodeExecutableName() string {
 		return "node.exe"
 	}
 	return "node"
-}
-
-func defaultUBOAddonPath(executablePath string) string {
-	addon := filepath.Join(browserResourcesDirForExecutable(executablePath), "addons", "UBO")
-	if st, err := os.Stat(addon); err == nil && st.IsDir() {
-		return addon
-	}
-	return ""
-}
-
-func browserResourcesDirForExecutable(executablePath string) string {
-	dir := filepath.Dir(executablePath)
-	if sidecarGOOS == "darwin" && filepath.Base(dir) == "MacOS" {
-		return filepath.Join(filepath.Dir(dir), "Resources")
-	}
-	return filepath.Join(filepath.Dir(executablePath), "resources")
 }
 
 func cloneStringAnyMap(in map[string]any) map[string]any {

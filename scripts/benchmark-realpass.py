@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import argparse
+import hashlib
 import json
 import os
 import pathlib
@@ -38,6 +39,7 @@ def main() -> int:
         help="runtime execution order for each loop; alternate swaps order on even loops",
     )
     parser.add_argument("--python", default="")
+    parser.add_argument("--persona-bundle", default="", help="existing shared persona bundle; default generates one under --out")
     parser.add_argument("--gomoufox-realpass", default="", help="prebuilt gomoufox-realpass binary; default builds one under --out")
     parser.add_argument("--go-report-style", choices=("compact", "full"), default="compact")
     parser.add_argument("--go-sidecar-runtime", choices=("python", "node-direct"), default="python")
@@ -76,6 +78,21 @@ def main() -> int:
     go_bin, build_cmd = go_runner(args, out_dir)
     commands = []
     runs = []
+    persona_path = pathlib.Path(args.persona_bundle) if args.persona_bundle else out_dir / "persona.json"
+    args.persona_bundle_path = str(persona_path)
+    if not args.persona_bundle:
+        persona_cmd = [
+            python_bin,
+            "scripts/python-realpass.py",
+            "--write-persona-bundle",
+            str(persona_path),
+        ]
+        commands.append(persona_cmd)
+        if not args.dry_run:
+            out_dir.mkdir(parents=True, exist_ok=True)
+            run_command(persona_cmd)
+    elif not args.dry_run and not persona_path.is_file():
+        raise SystemExit(f"persona bundle not found: {persona_path}")
     if build_cmd:
         commands.append(build_cmd)
         if not args.dry_run:
@@ -108,6 +125,8 @@ def main() -> int:
             f"--screenshots={str(args.screenshots).lower()}",
             "--unsafe-direct-network",
             "--generated-persona",
+            "--persona-bundle",
+            str(persona_path),
             "--max-failed=-1",
         ]
         if args.go_venv_dir:
@@ -133,6 +152,8 @@ def main() -> int:
             str(args.content_max_bytes),
             "--sample-interval",
             f"{args.sample_interval:g}",
+            "--persona-bundle",
+            str(persona_path),
         ]
         if not args.screenshots:
             python_cmd.append("--no-screenshots")
@@ -497,6 +518,7 @@ def outcome_groups(outcomes):
 
 
 def build_benchmark(args, runs, targets, catalog):
+    options = benchmark_options(args, runs)
     benchmark = {
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "mode": args.mode,
@@ -506,10 +528,32 @@ def build_benchmark(args, runs, targets, catalog):
         "target_names": [target["name"] for target in targets],
         "target_tags": sorted({tag for target in targets for tag in target.get("tags", [])}),
         "loops": len(runs),
-        "options": benchmark_options(args, runs),
+        "options": options,
         "runs": runs,
         "summary": aggregate(runs),
     }
+    persona_path_value = getattr(args, "persona_bundle_path", "")
+    if persona_path_value:
+        persona_path = pathlib.Path(persona_path_value)
+        data = persona_path.read_bytes()
+        persona = json.loads(data)
+        digest = hashlib.sha256(data).hexdigest()
+        report_digest = options.get("persona_bundle_sha256")
+        if report_digest and report_digest != digest:
+            raise SystemExit(
+                f"persona bundle digest mismatch: reports={report_digest} artifact={digest}"
+            )
+        options["persona_bundle_sha256"] = digest
+        config = persona.get("config") or {}
+        benchmark["persona_bundle"] = {
+            "artifact": display_path(persona_path),
+            "sha256": digest,
+            "persona_os": persona.get("persona_os"),
+            "camoufox_version": persona.get("camoufox_version"),
+            "hardware_concurrency": config.get("navigator.hardwareConcurrency"),
+            "screen_width": config.get("screen.width"),
+            "screen_height": config.get("screen.height"),
+        }
     benchmark_readiness = python_removal_readiness(benchmark)
     benchmark["go_python_benchmark_readiness"] = benchmark_readiness
     benchmark["python_removal_readiness"] = benchmark_readiness
@@ -579,6 +623,21 @@ def options_from_reports(go_report, python_report):
         if go_reuse != python_reuse:
             raise SystemExit(f"report option mismatch for reuse_browser: go={go_reuse!r} python={python_reuse!r}")
         out["reuse_browser"] = bool(go_reuse)
+    go_persona_os = go_options.get("persona_os")
+    python_persona_os = python_options.get("persona_os")
+    if go_persona_os is not None or python_persona_os is not None:
+        if go_persona_os != python_persona_os:
+            raise SystemExit(f"report option mismatch for persona_os: go={go_persona_os!r} python={python_persona_os!r}")
+        out["persona_os"] = go_persona_os
+    go_persona_digest = go_options.get("persona_bundle_sha256")
+    python_persona_digest = python_options.get("persona_bundle_sha256")
+    if go_persona_digest is not None or python_persona_digest is not None:
+        if not go_persona_digest or go_persona_digest != python_persona_digest:
+            raise SystemExit(
+                "report option mismatch for persona_bundle_sha256: "
+                f"go={go_persona_digest!r} python={python_persona_digest!r}"
+            )
+        out["persona_bundle_sha256"] = go_persona_digest
     go_content_max = go_options.get("content_max_bytes")
     python_content_max = python_options.get("content_max_bytes")
     if go_content_max is not None or python_content_max is not None:
@@ -649,6 +708,15 @@ def python_removal_readiness(benchmark):
             "name": "go_sidecar_runtime_is_node_direct",
             "passed": options.get("go_sidecar_runtime") == "node-direct",
             "detail": f"go_sidecar_runtime={options.get('go_sidecar_runtime', 'python')}",
+        },
+        {
+            "name": "shared_linux_persona_bundle",
+            "passed": options.get("persona_os") == "linux"
+            and bool(re.fullmatch(r"[0-9a-f]{64}", str(options.get("persona_bundle_sha256") or ""))),
+            "detail": (
+                f"persona_os={options.get('persona_os')} "
+                f"persona_bundle_sha256={options.get('persona_bundle_sha256') or '<unset>'}"
+            ),
         },
         {
             "name": "extended_target_matrix",
@@ -763,11 +831,13 @@ def markdown_report(benchmark):
         f"- Go sidecar runtime: {benchmark['options'].get('go_sidecar_runtime', 'python')}",
         f"- Go custom venv: {yes_no(benchmark['options'].get('go_custom_venv'))}",
         f"- Reuse browser: {yes_no(benchmark['options'].get('reuse_browser'))}",
+        f"- Generated persona OS: {benchmark['options'].get('persona_os', 'unconstrained')}",
+        f"- Shared persona SHA-256: {benchmark['options'].get('persona_bundle_sha256', 'not recorded')}",
         f"- Go report style: {benchmark['options'].get('go_report_style', 'compact')}",
         "",
         "This benchmark runs gomoufox and Python Camoufox against the same target set.",
         "It records outcome parity, wall time, browser work duration, peak RSS, peak CPU, and agent-output token footprint.",
-        "For parity, gomoufox runs with `--unsafe-direct-network` and generated personas. Local URL guardrails are tested elsewhere.",
+        "For parity, both runtimes use `--unsafe-direct-network` and the same generated Linux persona bundle. Local URL guardrails are tested elsewhere.",
         runner_interpretation(benchmark["options"].get("go_runner", "built_binary")),
         "Resource samples cover the gomoufox sidecar process tree and the Python Camoufox harness process tree.",
         "",
@@ -788,7 +858,7 @@ def markdown_report(benchmark):
         "Run the extended matrix before release candidates or major runtime changes:",
         "",
         "```bash",
-        "scripts/benchmark-realpass.py --mode extended --go-report-style compact --out dist/benchmarks/extended",
+        "scripts/benchmark-realpass.py --mode extended --loops 2 --run-order alternate --go-report-style compact --out dist/benchmarks/extended",
         "```",
         "",
         "Run the local fingerprint audit when changing Camoufox pins, launch options,",
@@ -810,11 +880,12 @@ def markdown_report(benchmark):
         "",
         "- Go-only blocked, failed, or missing targets block release.",
         "- Go-only JS-visible fingerprint drift between gomoufox Python sidecar and gomoufox node-direct blocks release unless the changed field is explicitly allowlisted with evidence.",
-        "- Go/Python outcome mismatches that reproduce on retry block release.",
+        "- Go/Python outcome mismatches that persist through the paired confirmation block release.",
         "- Shared Go+Python blocked or failed targets are reported as site or upstream Camoufox behavior, not a gomoufox-only failure.",
         "- Known recurring shared blocks should stay in the explicit release-gate allowlist.",
         "- In release mode, a new shared block, failure, or performance outlier gets one focused retry.",
-        "- The retry must confirm Go/Python outcome parity and stay under absolute RSS and CPU caps.",
+        "- If the focused retry differs by outcome, the gate runs one confirmation with Python first. A persistent mismatch blocks release.",
+        "- Retry and confirmation samples must stay under absolute RSS and CPU caps.",
         "- The gate merges focused retry measurements back into the full report and reruns the strict required-target, resource-ratio, timing-ratio, and report-token checks against that merged evidence.",
         f"- Release gate defaults block peak RSS above {fmt_int(6000)} MiB, peak CPU above 900%, Go RSS above Python * 1.50, and Go CPU above Python * 1.50.",
         "- Full and release gates block Go wall time above Python * 1.05, Go target duration above Python * 1.05, and Go report tokens above Python * 0.50.",

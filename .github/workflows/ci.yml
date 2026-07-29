@@ -1,6 +1,8 @@
 name: ci
 
 on:
+  schedule:
+    - cron: "43 7 * * *"
   pull_request:
   push:
     branches:
@@ -38,6 +40,52 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  runtime-launch:
+    if: github.event_name == 'schedule'
+    runs-on: ubicloud-standard-2
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Resolve runtime cache policy
+        id: runtime
+        run: |
+          camoufox_version="$(sed -n 's/^[[:space:]]*CamoufoxBinaryVersion[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' internal/sidecar/types.go)"
+          playwright_version="$(sed -n 's/^[[:space:]]*RequiredPlaywrightJSON[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' internal/sidecar/types.go)"
+          schema_version="$(sed -n 's/^[[:space:]]*runtimeAssetManifestSchemaVersion[[:space:]]*=[[:space:]]*\([0-9][0-9]*\).*/\1/p' internal/sidecar/runtime_assets.go)"
+          test -n "$camoufox_version"
+          test -n "$playwright_version"
+          test -n "$schema_version"
+          uncached="false"
+          if [ "$(date -u +%u)" = "1" ]; then
+            uncached="true"
+          fi
+          {
+            printf 'camoufox_version=%s\n' "$camoufox_version"
+            printf 'playwright_version=%s\n' "$playwright_version"
+            printf 'schema_version=%s\n' "$schema_version"
+            printf 'uncached=%s\n' "$uncached"
+          } >> "$GITHUB_OUTPUT"
+      - uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
+        if: steps.runtime.outputs.uncached != 'true'
+        with:
+          path: ${{ runner.temp }}/gomoufox-runtime-cache/runtime
+          key: gomoufox-runtime-${{ runner.os }}-${{ runner.arch }}-${{ steps.runtime.outputs.camoufox_version }}-${{ steps.runtime.outputs.playwright_version }}-schema-${{ steps.runtime.outputs.schema_version }}
+      - name: Clear runtime cache for weekly cold install
+        if: steps.runtime.outputs.uncached == 'true'
+        run: |
+          case "$RUNNER_TEMP" in
+            ""|"/") echo "unsafe RUNNER_TEMP: $RUNNER_TEMP" >&2; exit 1 ;;
+          esac
+          rm -rf "$RUNNER_TEMP/gomoufox-runtime-cache"
+      - name: Install and launch managed browser
+        env:
+          TMPDIR: ${{ runner.temp }}
+        run: scripts/runtime-launch-gate.sh --venv-dir "${{ runner.temp }}/gomoufox-runtime-cache"
+
   python-compat:
     runs-on: ubicloud-standard-2
     timeout-minutes: 20

@@ -8,12 +8,14 @@ import (
 	"context"
 	"crypto/sha256"
 	"crypto/sha512"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -86,14 +88,232 @@ func TestEnsureRuntimeAssetsWritesManifestCacheLayout(t *testing.T) {
 	}
 }
 
+func TestEnsureRuntimeAssetsProvidesPlaywrightCoreModule(t *testing.T) {
+	restorePlatform := overrideSidecarPlatform(t, "linux", "amd64")
+	defer restorePlatform()
+	restoreAssets := replaceRuntimeAssetInstallers(t)
+	defer restoreAssets()
+
+	layout, err := EnsureRuntimeAssets(context.Background(), InstallOptions{
+		VenvDir: t.TempDir(),
+		Runtime: RuntimeNodeDirect,
+	})
+	if err != nil {
+		t.Fatalf("EnsureRuntimeAssets: %v", err)
+	}
+
+	info, err := os.Lstat(layout.PlaywrightCoreModule)
+	if err != nil {
+		t.Fatalf("playwright-core module missing: %v", err)
+	}
+	if info.Mode()&os.ModeSymlink == 0 {
+		t.Fatalf("playwright-core module mode = %v; want symlink", info.Mode())
+	}
+	resolved, err := filepath.EvalSymlinks(layout.PlaywrightCoreModule)
+	if err != nil {
+		t.Fatalf("resolve playwright-core module: %v", err)
+	}
+	if !sameCanonicalFileTree(resolved, layout.PlaywrightPackageDir) {
+		t.Fatalf("playwright-core module resolves to %q, want %q", resolved, layout.PlaywrightPackageDir)
+	}
+}
+
+func TestResolveRuntimeAssetsRejectsMissingPlaywrightCoreModuleAndEnsureRepairsIt(t *testing.T) {
+	restorePlatform := overrideSidecarPlatform(t, "linux", "amd64")
+	defer restorePlatform()
+	restoreAssets := replaceRuntimeAssetInstallers(t)
+	defer restoreAssets()
+
+	cacheRoot := t.TempDir()
+	layout, err := EnsureRuntimeAssets(context.Background(), InstallOptions{
+		VenvDir: cacheRoot,
+		Runtime: RuntimeNodeDirect,
+	})
+	if err != nil {
+		t.Fatalf("initial EnsureRuntimeAssets: %v", err)
+	}
+	if err := os.RemoveAll(layout.PlaywrightCoreModule); err != nil {
+		t.Fatalf("remove playwright-core module: %v", err)
+	}
+
+	if _, _, err := ResolveRuntimeAssets(cacheRoot); !errors.Is(err, ErrNotInstalled) {
+		t.Fatalf("ResolveRuntimeAssets missing module err = %v; want ErrNotInstalled", err)
+	}
+	if _, err := EnsureRuntimeAssets(context.Background(), InstallOptions{
+		VenvDir: cacheRoot,
+		Runtime: RuntimeNodeDirect,
+	}); err != nil {
+		t.Fatalf("repair EnsureRuntimeAssets: %v", err)
+	}
+	if _, err := os.Stat(layout.PlaywrightCoreModule); err != nil {
+		t.Fatalf("repaired playwright-core module missing: %v", err)
+	}
+}
+
+func TestEnsureRuntimePlaywrightCoreModuleCopiesPackageOnWindows(t *testing.T) {
+	root := RuntimeAssetCacheRoot(t.TempDir(), "windows", "amd64")
+	if err := os.MkdirAll(root.PlaywrightPackageDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root.PlaywrightPackageDir, "package.json"), []byte(`{"name":"playwright-core"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(root.PlaywrightPackageDir, "lib"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root.PlaywrightPackageDir, "lib", "entry.js"), []byte("module.exports = {};\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := ensureRuntimePlaywrightCoreModule(root, "windows"); err != nil {
+		t.Fatalf("ensure Windows playwright-core module: %v", err)
+	}
+	info, err := os.Lstat(root.PlaywrightCoreModule)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
+		t.Fatalf("Windows playwright-core module mode = %v; want copied directory", info.Mode())
+	}
+	sourceSum, err := treeSHA256(root.PlaywrightPackageDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	moduleSum, err := treeSHA256(root.PlaywrightCoreModule)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sourceSum != moduleSum {
+		t.Fatalf("Windows playwright-core module checksum = %s, want %s", moduleSum, sourceSum)
+	}
+
+	if err := os.WriteFile(filepath.Join(root.PlaywrightCoreModule, "tampered.js"), []byte("bad\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := ensureRuntimePlaywrightCoreModule(root, "windows"); err != nil {
+		t.Fatalf("repair Windows playwright-core module: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(root.PlaywrightCoreModule, "tampered.js")); !os.IsNotExist(err) {
+		t.Fatalf("tampered Windows module entry survived repair: %v", err)
+	}
+}
+
+func TestRuntimePlaywrightCoreModuleResolvesWithoutAmbientNodeModules(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node is not installed")
+	}
+	if !runtimeAssetPlatformSupported(runtime.GOOS, runtime.GOARCH) {
+		t.Skipf("runtime assets unsupported for %s/%s", runtime.GOOS, runtime.GOARCH)
+	}
+	restorePlatform := overrideSidecarPlatform(t, runtime.GOOS, runtime.GOARCH)
+	defer restorePlatform()
+	restoreAssets := replaceRuntimeAssetInstallers(t)
+	defer restoreAssets()
+
+	layout, err := EnsureRuntimeAssets(context.Background(), InstallOptions{
+		VenvDir: t.TempDir(),
+		Runtime: RuntimeNodeDirect,
+	})
+	if err != nil {
+		t.Fatalf("EnsureRuntimeAssets: %v", err)
+	}
+
+	for name, cwd := range map[string]string{
+		"unrelated working directory": t.TempDir(),
+		"launcher working directory":  layout.PlaywrightPackageDir,
+	} {
+		t.Run(name, func(t *testing.T) {
+			cmd := exec.Command(
+				node,
+				"-e",
+				`const { createRequire } = require("module"); process.stdout.write(createRequire(process.argv[1]).resolve("playwright-core"));`,
+				layout.LaunchServerJS,
+			)
+			cmd.Dir = cwd
+			for _, entry := range os.Environ() {
+				key := strings.ToUpper(strings.SplitN(entry, "=", 2)[0])
+				if key == "HOME" || key == "NODE_PATH" || key == "NODE_OPTIONS" {
+					continue
+				}
+				cmd.Env = append(cmd.Env, entry)
+			}
+			cmd.Env = append(cmd.Env, "HOME="+t.TempDir())
+			out, err := cmd.CombinedOutput()
+			if err != nil {
+				t.Fatalf("resolve playwright-core from launchServer.js: %v\n%s", err, out)
+			}
+			resolved, err := filepath.EvalSymlinks(strings.TrimSpace(string(out)))
+			if err != nil {
+				t.Fatalf("resolve returned module path: %v", err)
+			}
+			want, err := filepath.EvalSymlinks(filepath.Join(layout.PlaywrightPackageDir, "index.js"))
+			if err != nil {
+				t.Fatalf("resolve expected module path: %v", err)
+			}
+			if !sameCanonicalFileTree(resolved, want) {
+				t.Fatalf("playwright-core resolved to %q, want %q", resolved, want)
+			}
+		})
+	}
+}
+
 func TestRuntimeLaunchServerDecodesBase64Payload(t *testing.T) {
 	for _, want := range []string{
 		`Buffer.from(encoded, "base64").toString("utf8")`,
 		`JSON.parse(Buffer.from(encoded, "base64").toString("utf8"))`,
+		`payload.host = "127.0.0.1"`,
+		`new BrowserServerLauncherImpl("firefox").launchServer(payload)`,
 	} {
 		if !strings.Contains(runtimeLaunchServerJS, want) {
 			t.Fatalf("runtime launch server missing %q:\n%s", want, runtimeLaunchServerJS)
 		}
+	}
+}
+
+func TestRuntimeLaunchServerPinsIPv4Loopback(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node is not installed")
+	}
+	root := t.TempDir()
+	launchScript := filepath.Join(root, "camoufox", "launchServer.js")
+	moduleDir := filepath.Join(root, "camoufox", "node_modules", "playwright-core")
+	internalDir := filepath.Join(moduleDir, "lib")
+	if err := os.MkdirAll(internalDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(launchScript, []byte(runtimeLaunchServerJS), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(moduleDir, "index.js"), []byte(""), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	stub := `exports.BrowserServerLauncherImpl = class {
+  constructor(browserName) {
+    if (browserName !== "firefox")
+      throw new Error("launch server did not select Firefox");
+  }
+  async launchServer(options) {
+    if (options.host !== "127.0.0.1")
+      throw new Error("launch server did not pin IPv4 loopback");
+    return {
+      wsEndpoint: () => "ws://" + options.host + ":4321/token",
+      close: async () => {}
+    };
+  }
+};`
+	if err := os.WriteFile(filepath.Join(internalDir, "browserServerImpl.js"), []byte(stub), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command(node, launchScript)
+	cmd.Stdin = strings.NewReader(base64.StdEncoding.EncodeToString([]byte(`{}`)))
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("run launch server: %v\n%s", err, out)
+	}
+	if got := strings.TrimSpace(string(out)); got != "ws://127.0.0.1:4321/token" {
+		t.Fatalf("endpoint = %q", got)
 	}
 }
 
@@ -105,6 +325,175 @@ func TestSameFileTreeComparesAbsolutePaths(t *testing.T) {
 	}
 	if sameFileTree(dir, filepath.Join(dir, "other")) {
 		t.Fatalf("sameFileTree treated different paths as equal")
+	}
+}
+
+func TestCanonicalFileTreeComparisonDoesNotMakeBrowserDestinationExternal(t *testing.T) {
+	source := filepath.Join(t.TempDir(), "source")
+	if err := os.MkdirAll(source, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	sourceMarker := filepath.Join(source, "marker")
+	if err := os.WriteFile(sourceMarker, []byte("verified"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	root := RuntimeAssetCacheRoot(t.TempDir(), "linux", "amd64")
+	if err := os.MkdirAll(filepath.Dir(root.BrowserResourcesDir), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(source, root.BrowserResourcesDir); err != nil {
+		t.Fatal(err)
+	}
+	if !sameCanonicalFileTree(source, root.BrowserResourcesDir) {
+		t.Fatal("canonical comparison did not resolve the browser destination symlink")
+	}
+	if sameFileTree(source, root.BrowserResourcesDir) {
+		t.Fatal("lexical comparison treated a distinct browser destination as the source")
+	}
+	if _, err := treeSHA256(root.BrowserResourcesDir); err == nil {
+		t.Fatal("tree hash accepted a symlink root")
+	}
+
+	if err := copyRuntimeCamoufoxBrowser(source, root); err != nil {
+		t.Fatalf("copy browser from symlinked destination: %v", err)
+	}
+	info, err := os.Lstat(root.BrowserResourcesDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
+		t.Fatalf("browser destination mode = %v; want managed directory", info.Mode())
+	}
+	before, err := treeSHA256(root.BrowserResourcesDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(sourceMarker, []byte("changed"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	after, err := treeSHA256(root.BrowserResourcesDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after != before {
+		t.Fatalf("managed browser checksum changed with external source: before=%s after=%s", before, after)
+	}
+}
+
+func TestVerifyRuntimePlaywrightCoreModuleRejectsInvalidLayouts(t *testing.T) {
+	tests := []struct {
+		name       string
+		goos       string
+		arrange    func(t *testing.T, root RuntimeRoot)
+		wantError  error
+		wantDetail string
+	}{
+		{
+			name: "unix directory instead of symlink",
+			goos: "linux",
+			arrange: func(t *testing.T, root RuntimeRoot) {
+				t.Helper()
+				if err := os.MkdirAll(root.PlaywrightCoreModule, 0o700); err != nil {
+					t.Fatal(err)
+				}
+			},
+			wantError:  ErrVersionMismatch,
+			wantDetail: "not a symlink",
+		},
+		{
+			name: "unix dangling symlink",
+			goos: "linux",
+			arrange: func(t *testing.T, root RuntimeRoot) {
+				t.Helper()
+				if err := os.MkdirAll(filepath.Dir(root.PlaywrightCoreModule), 0o700); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Symlink("missing-package", root.PlaywrightCoreModule); err != nil {
+					t.Fatal(err)
+				}
+			},
+			wantError:  ErrNotInstalled,
+			wantDetail: "resolve playwright-core module",
+		},
+		{
+			name: "unix symlink outside installed package",
+			goos: "linux",
+			arrange: func(t *testing.T, root RuntimeRoot) {
+				t.Helper()
+				if err := os.MkdirAll(filepath.Dir(root.PlaywrightCoreModule), 0o700); err != nil {
+					t.Fatal(err)
+				}
+				other := filepath.Join(t.TempDir(), "other-package")
+				if err := os.MkdirAll(other, 0o700); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Symlink(other, root.PlaywrightCoreModule); err != nil {
+					t.Fatal(err)
+				}
+			},
+			wantError:  ErrVersionMismatch,
+			wantDetail: "points outside",
+		},
+		{
+			name: "windows symlink instead of copied directory",
+			goos: "windows",
+			arrange: func(t *testing.T, root RuntimeRoot) {
+				t.Helper()
+				if err := os.MkdirAll(filepath.Dir(root.PlaywrightCoreModule), 0o700); err != nil {
+					t.Fatal(err)
+				}
+				target := t.TempDir()
+				if err := os.Symlink(target, root.PlaywrightCoreModule); err != nil {
+					t.Fatal(err)
+				}
+			},
+			wantError:  ErrVersionMismatch,
+			wantDetail: "not a copied directory",
+		},
+		{
+			name: "windows installed package missing",
+			goos: "windows",
+			arrange: func(t *testing.T, root RuntimeRoot) {
+				t.Helper()
+				if err := os.MkdirAll(root.PlaywrightCoreModule, 0o700); err != nil {
+					t.Fatal(err)
+				}
+			},
+			wantError:  ErrNotInstalled,
+			wantDetail: "hash playwright-core package",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			root := RuntimeAssetCacheRoot(t.TempDir(), "linux", "amd64")
+			tc.arrange(t, root)
+			err := verifyRuntimePlaywrightCoreModule(root, tc.goos)
+			if !errors.Is(err, tc.wantError) || !strings.Contains(err.Error(), tc.wantDetail) {
+				t.Fatalf("verify error = %v; want %v containing %q", err, tc.wantError, tc.wantDetail)
+			}
+		})
+	}
+}
+
+func TestTreeSHA256HandlesNonRegularEntriesAndMissingRoot(t *testing.T) {
+	root := t.TempDir()
+	target := filepath.Join(root, "target")
+	if err := os.WriteFile(target, []byte("target\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("target", filepath.Join(root, "link")); err != nil {
+		t.Fatal(err)
+	}
+	sum, err := treeSHA256(root)
+	if err != nil {
+		t.Fatalf("hash tree containing symlink: %v", err)
+	}
+	if sum == "" {
+		t.Fatal("hash tree containing symlink returned an empty checksum")
+	}
+	if _, err := treeSHA256(filepath.Join(root, "missing")); !os.IsNotExist(err) {
+		t.Fatalf("missing tree error = %v; want os.ErrNotExist", err)
 	}
 }
 
@@ -730,7 +1119,9 @@ func TestEnsureManagedPlaywrightDriverDefaultCacheAndLockFailure(t *testing.T) {
 
 func TestDownloadRuntimeAssetBytesBoundsAndStatus(t *testing.T) {
 	origClient := runtimeAssetHTTPClient
-	defer func() { runtimeAssetHTTPClient = origClient }()
+	defer func() {
+		runtimeAssetHTTPClient = origClient
+	}()
 	for _, tc := range []struct {
 		name   string
 		body   string
@@ -885,7 +1276,7 @@ func TestVerifyPinnedPlaywrightDriverFailureBranches(t *testing.T) {
 	}
 }
 
-func TestReplaceRuntimeDirectoryRollsBackPreviousDriver(t *testing.T) {
+func TestReplaceRuntimeAssetRollsBackPreviousAsset(t *testing.T) {
 	parent := t.TempDir()
 	target := filepath.Join(parent, "driver")
 	if err := os.MkdirAll(target, 0o700); err != nil {
@@ -895,13 +1286,15 @@ func TestReplaceRuntimeDirectoryRollsBackPreviousDriver(t *testing.T) {
 	if err := os.WriteFile(marker, []byte("previous"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := replaceRuntimeDirectory(filepath.Join(parent, "missing-source"), target); err == nil {
+	if err := replaceRuntimeAsset(filepath.Join(parent, "missing-source"), target); err == nil {
 		t.Fatal("replacement with missing source succeeded")
+	} else if !strings.Contains(err.Error(), target) {
+		t.Fatalf("replacement error does not identify target %q: %v", target, err)
 	}
 	if raw, err := os.ReadFile(marker); err != nil || string(raw) != "previous" {
 		t.Fatalf("previous driver was not restored: %q, %v", raw, err)
 	}
-	if backups, err := filepath.Glob(filepath.Join(parent, ".playwright-backup-*")); err != nil || len(backups) != 0 {
+	if backups, err := filepath.Glob(filepath.Join(parent, ".runtime-asset-backup-*")); err != nil || len(backups) != 0 {
 		t.Fatalf("rollback backups = %v, %v", backups, err)
 	}
 
@@ -909,7 +1302,7 @@ func TestReplaceRuntimeDirectoryRollsBackPreviousDriver(t *testing.T) {
 	if err := os.WriteFile(blockingFile, []byte("file"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := replaceRuntimeDirectory(filepath.Join(parent, "source"), filepath.Join(blockingFile, "driver")); err == nil {
+	if err := replaceRuntimeAsset(filepath.Join(parent, "source"), filepath.Join(blockingFile, "driver")); err == nil {
 		t.Fatal("replacement through non-directory target succeeded")
 	}
 }
@@ -1060,7 +1453,10 @@ func replaceRuntimeAssetInstallers(t *testing.T) func() {
 		if err := os.WriteFile(root.NodeJS, []byte("#!/bin/sh\n"), 0o700); err != nil {
 			return err
 		}
-		return os.WriteFile(filepath.Join(root.PlaywrightPackageDir, "package.json"), []byte(`{"version":"`+RequiredPlaywrightJSON+`"}`), 0o600)
+		if err := os.WriteFile(filepath.Join(root.PlaywrightPackageDir, "package.json"), []byte(`{"name":"playwright-core","version":"`+RequiredPlaywrightJSON+`","main":"index.js"}`), 0o600); err != nil {
+			return err
+		}
+		return os.WriteFile(filepath.Join(root.PlaywrightPackageDir, "index.js"), []byte("module.exports = {};\n"), 0o600)
 	}
 	installCamoufoxBrowserForRuntime = func(ctx context.Context, root RuntimeRoot, opts InstallOptions) error {
 		t.Helper()

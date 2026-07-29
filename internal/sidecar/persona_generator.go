@@ -4,11 +4,16 @@ import (
 	"encoding/json"
 	"fmt"
 	"math/rand"
+	"regexp"
+	"sort"
+	"strconv"
 	"strings"
 	"sync"
 )
 
 const stringifiedPrefix = "*STRINGIFIED*"
+
+var personaFirefoxVersionPattern = regexp.MustCompile(`1[0-9]{2}\.0`)
 
 type personaNetwork struct {
 	Nodes []personaNode `json:"nodes"`
@@ -98,32 +103,136 @@ func generatePersonaConfig(cfg Config, rng *rand.Rand) (map[string]any, error) {
 	if err != nil {
 		return nil, err
 	}
+	firefoxVersion, err := personaFirefoxVersion(cfg)
+	if err != nil {
+		return nil, err
+	}
+	sample = rewritePersonaFirefoxVersion(sample, firefoxVersion).(map[string]any)
 	config := map[string]any{}
 	mergeNavigatorSample(config, sample)
 	mergeScreenSample(config, sample, cfg)
 	if headers, ok := sample["headers"].(map[string]any); ok {
-		if value, ok := headers["Accept-Encoding"]; ok && value != "" {
+		if value, ok := headers["Accept-Encoding"]; ok && !isFalsyPersonaValue(value) {
 			config["headers.Accept-Encoding"] = value
 		}
 	}
-	if extra, ok := sample["extraProperties"].(map[string]any); ok {
-		if value, ok := extra["globalPrivacyControl"]; ok {
-			config["navigator.globalPrivacyControl"] = value
-		}
-	}
-	if _, ok := config["navigator.globalPrivacyControl"]; !ok {
-		config["navigator.globalPrivacyControl"] = false
-	}
-	if fonts := cfg.Fonts; len(fonts) > 0 {
-		config["fonts"] = append([]string(nil), fonts...)
-	} else if !cfg.CustomFontsOnly {
-		config["fonts"] = append([]string(nil), data.fonts[targetCamoufoxOS(osName)]...)
+	mergeExtraPropertiesSample(config, sample)
+	mergeBatterySample(config, sample)
+	if err := applyPersonaFonts(config, cfg, data.fonts[targetCamoufoxOS(osName)]); err != nil {
+		return nil, err
 	}
 	config["window.history.length"] = rng.Intn(5) + 1
 	config["fonts:spacing_seed"] = rng.Intn(1_073_741_824)
 	config["canvas:aaOffset"] = rng.Intn(101) - 50
 	config["canvas:aaCapOffset"] = true
 	return config, nil
+}
+
+func personaFirefoxVersion(cfg Config) (int, error) {
+	if cfg.FFVersion > 0 {
+		return cfg.FFVersion, nil
+	}
+	version := strings.TrimPrefix(CamoufoxBinaryVersion, "v")
+	major, _, ok := strings.Cut(version, ".")
+	if !ok {
+		return 0, fmt.Errorf("%w: invalid Camoufox browser version %q", ErrSidecarStart, CamoufoxBinaryVersion)
+	}
+	value, err := strconv.Atoi(major)
+	if err != nil || value <= 0 {
+		return 0, fmt.Errorf("%w: invalid Camoufox browser version %q", ErrSidecarStart, CamoufoxBinaryVersion)
+	}
+	return value, nil
+}
+
+func rewritePersonaFirefoxVersion(value any, version int) any {
+	switch typed := value.(type) {
+	case map[string]any:
+		out := make(map[string]any, len(typed))
+		for key, child := range typed {
+			out[key] = rewritePersonaFirefoxVersion(child, version)
+		}
+		return out
+	case []any:
+		out := make([]any, len(typed))
+		for i, child := range typed {
+			out[i] = rewritePersonaFirefoxVersion(child, version)
+		}
+		return out
+	case string:
+		return rewritePersonaFirefoxVersionString(typed, version)
+	default:
+		return value
+	}
+}
+
+func rewritePersonaFirefoxVersionString(value string, version int) string {
+	matches := personaFirefoxVersionPattern.FindAllStringIndex(value, -1)
+	if len(matches) == 0 {
+		return value
+	}
+	replacement := strconv.Itoa(version) + ".0"
+	var out strings.Builder
+	cursor := 0
+	for _, match := range matches {
+		start, end := match[0], match[1]
+		if start > 0 && value[start-1] >= '0' && value[start-1] <= '9' {
+			continue
+		}
+		if end < len(value) && value[end] >= '0' && value[end] <= '9' {
+			continue
+		}
+		out.WriteString(value[cursor:start])
+		out.WriteString(replacement)
+		cursor = end
+	}
+	if cursor == 0 {
+		return value
+	}
+	out.WriteString(value[cursor:])
+	return out.String()
+}
+
+func applyPersonaFonts(config map[string]any, cfg Config, defaults []string) error {
+	if cfg.CustomFontsOnly {
+		if len(cfg.Fonts) == 0 {
+			return fmt.Errorf("%w: custom fonts only requires at least one font family", ErrSidecarStart)
+		}
+		config["fonts"] = append([]string(nil), cfg.Fonts...)
+		return nil
+	}
+	extras := cfg.Fonts
+	if len(extras) == 0 {
+		switch existing := config["fonts"].(type) {
+		case []string:
+			extras = existing
+		case []any:
+			for _, value := range existing {
+				if family, ok := value.(string); ok {
+					extras = append(extras, family)
+				}
+			}
+		}
+	}
+	families := append(append([]string(nil), defaults...), extras...)
+	sort.Strings(families)
+	families = dedupeSortedStrings(families)
+	config["fonts"] = families
+	return nil
+}
+
+func dedupeSortedStrings(values []string) []string {
+	if len(values) < 2 {
+		return values
+	}
+	write := 1
+	for read := 1; read < len(values); read++ {
+		if values[read] == values[write-1] {
+			continue
+		}
+		values[write] = values[read]
+		write++
+	}
+	return values[:write]
 }
 
 func sampleWebGLConfig(cfg Config, rng *rand.Rand) (map[string]any, bool, error) {
@@ -294,9 +403,29 @@ func mergeNavigatorSample(config map[string]any, sample map[string]any) {
 		"product":             "navigator.product",
 		"maxTouchPoints":      "navigator.maxTouchPoints",
 	} {
-		if value, ok := sample[source]; ok && value != nil {
+		if value, ok := sample[source]; ok && !isFalsyPersonaValue(value) {
 			config[target] = value
 		}
+	}
+}
+
+func mergeBatterySample(config map[string]any, sample map[string]any) {
+	battery, _ := sample["battery"].(map[string]any)
+	for source, target := range map[string]string{
+		"charging":        "battery:charging",
+		"chargingTime":    "battery:chargingTime",
+		"dischargingTime": "battery:dischargingTime",
+	} {
+		if value, ok := battery[source]; ok && !isFalsyPersonaValue(value) {
+			config[target] = value
+		}
+	}
+}
+
+func mergeExtraPropertiesSample(config map[string]any, sample map[string]any) {
+	extra, _ := sample["extraProperties"].(map[string]any)
+	if value, ok := extra["globalPrivacyControl"]; ok && !isFalsyPersonaValue(value) {
+		config["navigator.globalPrivacyControl"] = value
 	}
 }
 
@@ -337,6 +466,23 @@ func mergeScreenSample(config map[string]any, sample map[string]any, cfg Config)
 		config["screen.availHeight"] = cfg.Screen.Height
 	}
 	if cfg.Window != nil {
+		screenWidth, hasScreenWidth := personaInt(config["screen.width"])
+		screenHeight, hasScreenHeight := personaInt(config["screen.height"])
+		oldOuterWidth, hasOuterWidth := personaInt(config["window.outerWidth"])
+		oldOuterHeight, hasOuterHeight := personaInt(config["window.outerHeight"])
+		if innerWidth, ok := personaInt(config["window.innerWidth"]); ok && innerWidth != 0 && hasOuterWidth {
+			config["window.innerWidth"] = max(cfg.Window.Width-oldOuterWidth+innerWidth, 0)
+		}
+		if innerHeight, ok := personaInt(config["window.innerHeight"]); ok && innerHeight != 0 && hasOuterHeight {
+			config["window.innerHeight"] = max(cfg.Window.Height-oldOuterHeight+innerHeight, 0)
+		}
+		if hasScreenWidth {
+			screenX, _ := personaInt(config["window.screenX"])
+			config["window.screenX"] = screenX + (screenWidth-cfg.Window.Width)/2
+		}
+		if hasScreenHeight {
+			config["window.screenY"] = (screenHeight - cfg.Window.Height) / 2
+		}
 		config["window.outerWidth"] = cfg.Window.Width
 		config["window.outerHeight"] = cfg.Window.Height
 	}
@@ -345,6 +491,17 @@ func mergeScreenSample(config map[string]any, sample map[string]any, cfg Config)
 	}
 	if _, ok := config["window.screenX"]; !ok {
 		config["window.screenX"] = 0
+	}
+}
+
+func personaInt(value any) (int, bool) {
+	switch typed := value.(type) {
+	case int:
+		return typed, true
+	case float64:
+		return int(typed), true
+	default:
+		return 0, false
 	}
 }
 

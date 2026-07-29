@@ -125,6 +125,18 @@ func WithFingerprintOverride(overrides camoufoxcfg.FingerprintOverride) Option {
 	}
 }
 
+// WithExactFingerprint replaces generated fingerprint values with a complete
+// Camoufox config. Use WithFingerprintOverride for partial overrides.
+func WithExactFingerprint(config camoufoxcfg.FingerprintOverride) Option {
+	return func(c *launchConfig) {
+		c.fingerprint = camoufoxcfg.FingerprintOverride{}
+		for k, v := range config {
+			c.fingerprint[k] = v
+		}
+		c.fingerprintExact = true
+	}
+}
+
 func WithIdleTimeout(d time.Duration) Option { return func(c *launchConfig) { c.idleTimeout = d } }
 func WithAutoInstall(auto bool) Option       { return func(c *launchConfig) { c.autoInstall = auto } }
 func WithPythonBin(path string) Option       { return func(c *launchConfig) { c.pythonBin = path } }

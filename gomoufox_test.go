@@ -333,6 +333,22 @@ func TestOptionsLaterWinsAndMergeFingerprint(t *testing.T) {
 	}
 }
 
+func TestExactFingerprintReplacesGeneratedConfigAndAcceptsLaterOverrides(t *testing.T) {
+	cfg := defaultLaunchConfig()
+	WithFingerprintOverride(camoufoxcfg.FingerprintOverride{"stale": true})(&cfg)
+	WithExactFingerprint(camoufoxcfg.FingerprintOverride{"navigator.userAgent": "exact"})(&cfg)
+	WithFingerprintOverride(camoufoxcfg.FingerprintOverride{"screen.width": 1920})(&cfg)
+	if !cfg.fingerprintExact {
+		t.Fatal("exact fingerprint option did not mark the config exact")
+	}
+	if _, ok := cfg.fingerprint["stale"]; ok {
+		t.Fatalf("exact fingerprint retained prior override: %#v", cfg.fingerprint)
+	}
+	if cfg.fingerprint["navigator.userAgent"] != "exact" || cfg.fingerprint["screen.width"] != 1920 {
+		t.Fatalf("exact fingerprint = %#v", cfg.fingerprint)
+	}
+}
+
 func TestPublicOptionCoverageAndConversions(t *testing.T) {
 	cfg := defaultLaunchConfig()
 	WithHumanize(1500 * time.Millisecond)(&cfg)
@@ -431,7 +447,7 @@ func TestSidecarManagerReceivesLaunchOptions(t *testing.T) {
 	WithFirefoxVersion(135)(&cfg)
 	WithCamoufoxDebug(true)(&cfg)
 	WithFonts("Inter")(&cfg)
-	WithFingerprintOverride(camoufoxcfg.FingerprintOverride{"navigator.userAgent": "ua"})(&cfg)
+	WithExactFingerprint(camoufoxcfg.FingerprintOverride{"navigator.userAgent": "ua"})(&cfg)
 	WithMainWorldEval(true)(&cfg)
 	WithEnableCache(true)(&cfg)
 	WithDisableCOOP(true)(&cfg)
@@ -462,7 +478,7 @@ func TestSidecarManagerReceivesLaunchOptions(t *testing.T) {
 	if scfg.FirefoxPrefs["pref"] != true || scfg.BrowserArgs[0] != "--safe-mode" || !scfg.CustomFontsOnly || scfg.FFVersion != 135 || !scfg.CamoufoxDebug {
 		t.Fatalf("python parity options not mapped: %#v", scfg)
 	}
-	if scfg.Fingerprint["navigator.userAgent"] != "ua" || !scfg.MainWorldEval || !scfg.EnableCache || !scfg.DisableCOOP || scfg.ExtraEnv[0] != "A=B" {
+	if scfg.Fingerprint["navigator.userAgent"] != "ua" || !scfg.FingerprintExact || !scfg.MainWorldEval || !scfg.EnableCache || !scfg.DisableCOOP || scfg.ExtraEnv[0] != "A=B" {
 		t.Fatalf("advanced options not mapped: %#v", scfg)
 	}
 	if scfg.AcceptDownloads == nil || *scfg.AcceptDownloads {
