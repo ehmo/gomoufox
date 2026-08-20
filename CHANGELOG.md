@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.1.23
+
+- Build with Go 1.26.6 to fix five reachable standard-library
+  vulnerabilities found by the public release gate.
+
 ## v0.1.22
 
 - Recognize the upstream `camoufox-bin` executable in Linux managed browser

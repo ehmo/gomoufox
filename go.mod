@@ -1,6 +1,6 @@
 module github.com/ehmo/gomoufox
 
-go 1.26.5
+go 1.26.6
 
 require (
 	github.com/playwright-community/playwright-go v0.5700.1
