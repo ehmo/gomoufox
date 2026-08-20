@@ -171,8 +171,10 @@ func browserExecutableCandidates() []string {
 		}
 	case "windows":
 		return []string{"firefox.exe", "camoufox.exe"}
-	default:
+	case "linux":
 		return []string{"camoufox-bin", "camoufox", "firefox"}
+	default:
+		return []string{"firefox", "camoufox"}
 	}
 }
 
@@ -180,8 +182,10 @@ func isBrowserExecutableName(name string) bool {
 	switch sidecarGOOS {
 	case "windows":
 		return strings.EqualFold(name, "firefox.exe") || strings.EqualFold(name, "camoufox.exe")
-	default:
+	case "linux":
 		return name == "camoufox-bin" || name == "camoufox" || name == "firefox"
+	default:
+		return name == "firefox" || name == "camoufox"
 	}
 }
 

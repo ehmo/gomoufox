@@ -45,6 +45,7 @@ alone unless you pass `--force`.
 |---|---|
 | Go browser automation | `github.com/ehmo/gomoufox` |
 | Shell automation | `gomoufox get`, `gomoufox screenshot`, `gomoufox fetch` |
+| Containerized remote browser | `ghcr.io/ehmo/gomoufox` plus `gomoufox --server` |
 | Interactive traffic capture | `gomoufox record` |
 | Agent browser tools | `gomoufox mcp` |
 | Guided setup | `gomoufox setup`, `gomoufox agents install` |
@@ -104,6 +105,50 @@ gomoufox doctor
 Install through the tap. The release `gomoufox.rb` file is there for audit and
 tap metadata; Homebrew wants formulae inside taps. Run `brew trust` only if your
 Homebrew build still has that command.
+
+## Docker and remote commands
+
+The official Linux amd64 image runs the authenticated gomoufox daemon with the
+pinned node-direct runtime already installed. Keep the host port on loopback
+when the client runs on the same host:
+
+```bash
+export GOMOUFOX_DAEMON_TOKEN="$(openssl rand -hex 32)"
+docker run --detach --rm --init \
+  --name gomoufox \
+  --publish 127.0.0.1:3741:3741 \
+  --env GOMOUFOX_DAEMON_TOKEN \
+  ghcr.io/ehmo/gomoufox:latest
+
+gomoufox \
+  --server http://127.0.0.1:3741 \
+  get https://example.com \
+  --markdown
+```
+
+Pin `ghcr.io/ehmo/gomoufox:vX.Y.Z` in deployment manifests. For connections
+across hosts, put the daemon behind a private network or an HTTPS reverse proxy;
+the bearer token does not encrypt plain HTTP. The remote API supports `get`,
+`screenshot`, `fetch`, `eval`, and session import or export. It does not expose
+the raw Playwright WebSocket, which would bypass gomoufox's network and data
+guardrails.
+
+The container defaults to the same conservative URL policy as local commands.
+Arguments after the image name replace its default command, so include `serve`
+and the container bind when overriding daemon flags:
+
+```bash
+docker run --rm --init \
+  --publish 127.0.0.1:3741:3741 \
+  --env GOMOUFOX_DAEMON_TOKEN \
+  ghcr.io/ehmo/gomoufox:vX.Y.Z \
+  serve --bind 0.0.0.0 --session-dir /opt/gomoufox/sessions \
+  --allowed-hosts example.com
+```
+
+Add `--enable-eval` to allow remote `eval`, or `--allow-session-export` to
+allow session export. Session files live under `/opt/gomoufox/sessions`; mount
+that directory only when the deployment needs persistent session state.
 
 | Path | Status | Use it when |
 |---|---|---|
@@ -395,23 +440,23 @@ MCP defaults:
 The benchmark answers one question: did the Go path stay close to Python
 Camoufox without producing Go-only failures?
 
-![node-direct](https://img.shields.io/badge/node--direct-candidate-2ea44f)
+![node-direct](https://img.shields.io/badge/node--direct-default-2ea44f)
 ![python-sidecar](https://img.shields.io/badge/python--sidecar-baseline-64748b)
 ![upstream](https://img.shields.io/badge/Python%20Camoufox-upstream-2563eb)
 
 Latest checked evidence:
 [docs/BENCHMARKS.md](docs/BENCHMARKS.md),
 [Python-sidecar artifact](docs/benchmarks/2026-06-08-release-gate.json), and
-[node-direct artifact](docs/benchmarks/2026-07-29-node-direct-readiness.json).
+[node-direct artifact](docs/benchmarks/2026-08-20-node-direct-readiness.json).
 The node-direct run used this
-[shared Linux persona](docs/personas/2026-07-29-node-direct-readiness.json)
+[shared Linux persona](docs/personas/2026-08-20-node-direct-readiness.json)
 for both runtimes.
 
 | Runtime | Passed | Blocked | Failed | Wall ms | Peak RSS MiB | Peak CPU % | Report tokens |
 |---|---:|---:|---:|---:|---:|---:|---:|
-| Python Camoufox | 91 | 9 | **0** | 346,695 | 3,080.9 | 503.4 | 82,670 |
-| gomoufox, Python sidecar | 95 | 5 | **0** | 366,338 | **2,765.3** | 569.9 | **13,059** |
-| gomoufox, node-direct Go | 91 | 9 | **0** | **346,474** | 2,780.5 | **461.2** | 13,093 |
+| Python Camoufox | 91 | 9 | **0** | 925,972 | **2,383.3** | **401.4** | 82,221 |
+| gomoufox, Python sidecar | **95** | **5** | **0** | 366,338 | 2,765.3 | 569.9 | **13,059** |
+| gomoufox, node-direct Go | 91 | 9 | **0** | **361,018** | 2,591.9 | 544.2 | 13,064 |
 
 Bold means best in that column. The sidecar row comes from the previous extended
 release-gate artifact; node-direct comes from the readiness artifact.
@@ -422,25 +467,27 @@ no screenshots, reused browser, compact Go report, 0s extra load-state wait, and
 250,000-byte classification cap.
 The checked artifact uses two alternating loops.
 gomoufox passed 91, blocked 9, failed 0. Python Camoufox passed 91, blocked 9,
-failed 0. The run had 0 Go-only regressions and 1 Python-only outcome
-difference. See
-[docs/benchmarks/2026-07-29-node-direct-readiness.json](docs/benchmarks/2026-07-29-node-direct-readiness.json).
+failed 0. The run had 0 persistent Go-only regressions and 3 paired outcome
+mismatches. See
+[docs/benchmarks/2026-08-20-node-direct-readiness.json](docs/benchmarks/2026-08-20-node-direct-readiness.json).
 
 | Ratio | node-direct Go / Python Camoufox |
 |---|---:|
-| Wall time | 0.999 |
-| Peak RSS | 0.903 |
-| Peak CPU | 0.916 |
-| Report tokens | 0.158 |
+| Wall time | 0.390 |
+| Peak RSS | 1.088 |
+| Peak CPU | 1.356 |
+| Report tokens | 0.159 |
 
-Wall time stayed at parity. Node-direct used less RSS, less CPU, and produced a
-much smaller agent report. Treat a report-token ratio above 0.50 as a regression.
+Node-direct stayed within the release RSS and CPU caps and produced a much
+smaller agent report. Treat a report-token ratio above 0.50 as a regression.
 Release gates use `--unsafe-direct-network`, block reproducible outcome mismatch,
 and give a new shared block, failure, or performance outlier one focused retry.
 If that retry differs by outcome, the gate runs one paired confirmation in the
 opposite runtime order and blocks a persistent mismatch.
 Release benchmark evidence uses two alternating loops so each runtime runs
-first once.
+first once. Across those loops, a target counts as Go-only only when its Go-only
+outcome persists in every paired observation. The artifact still records every
+paired mismatch.
 
 ```bash
 scripts/benchmark-realpass.py --mode smoke

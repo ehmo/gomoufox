@@ -1,0 +1,4098 @@
+{
+  "generated_at": "2026-08-20T15:56:58.066505+00:00",
+  "mode": "extended",
+  "target_count": 100,
+  "target_tier_counts": {
+    "extended": 100,
+    "full": 8,
+    "smoke": 2
+  },
+  "target_catalog": "scripts/realpass-targets.json",
+  "target_names": [
+    "nowsecure-cloudflare",
+    "cloudflare-home",
+    "sannysoft",
+    "pixelscan",
+    "creepjs",
+    "incolumitas",
+    "datadome",
+    "g2",
+    "example",
+    "wikipedia",
+    "github",
+    "gitlab",
+    "stackoverflow",
+    "npmjs",
+    "pypi",
+    "crates",
+    "rubygems",
+    "docker-hub",
+    "go-dev",
+    "pkg-go-dev",
+    "python-org",
+    "nodejs",
+    "rust-lang",
+    "kubernetes",
+    "docker-docs",
+    "playwright",
+    "selenium",
+    "mdn",
+    "chrome-dev",
+    "web-dev",
+    "cloudflare-docs",
+    "fastly",
+    "akamai",
+    "imperva",
+    "mozilla",
+    "shopify",
+    "stripe",
+    "paypal",
+    "ebay",
+    "etsy",
+    "booking",
+    "airbnb",
+    "bbc",
+    "guardian",
+    "reuters",
+    "cnn",
+    "openai",
+    "anthropic",
+    "microsoft",
+    "apple",
+    "vercel",
+    "netlify",
+    "supabase",
+    "firebase",
+    "aws",
+    "google-cloud",
+    "azure",
+    "digitalocean",
+    "oracle-cloud",
+    "linode",
+    "cloudflare-radar",
+    "nginx",
+    "postgres",
+    "sqlite",
+    "mysql",
+    "redis",
+    "elastic",
+    "grafana",
+    "prometheus",
+    "terraform",
+    "ansible",
+    "react",
+    "vue",
+    "angular",
+    "svelte",
+    "nextjs",
+    "vite",
+    "tailwind",
+    "astro",
+    "django",
+    "flask",
+    "rails",
+    "spring",
+    "huggingface",
+    "cohere",
+    "mistral-ai",
+    "perplexity",
+    "yahoo-news",
+    "ap-news",
+    "npr",
+    "ycombinator",
+    "hacker-news",
+    "walmart",
+    "target",
+    "bestbuy",
+    "ikea",
+    "costco",
+    "nike",
+    "adidas",
+    "uniqlo"
+  ],
+  "target_tags": [
+    "auth-entry",
+    "bot-detection",
+    "cdn-security",
+    "cloud-platform",
+    "cloudflare",
+    "developer-platform",
+    "docs",
+    "ecommerce",
+    "media-heavy",
+    "spa",
+    "static"
+  ],
+  "loops": 2,
+  "options": {
+    "timeout_seconds": 60.0,
+    "wait_until": "commit",
+    "settle_seconds": 3.0,
+    "load_state_timeout_seconds": 0.0,
+    "content_max_bytes": 250000,
+    "sample_interval_seconds": 0.5,
+    "run_order": "alternate",
+    "go_runner": "prebuilt_binary",
+    "go_sidecar_runtime": "node-direct",
+    "go_custom_venv": false,
+    "screenshots": false,
+    "max_targets": 0,
+    "reuse_browser": true,
+    "go_report_style": "compact",
+    "persona_os": "linux",
+    "persona_bundle_sha256": "239a4cd650fa9a992289e3b06775d73ae02e4382684d57a04d2b40313bd3b02f"
+  },
+  "runs": [
+    {
+      "loop": 1,
+      "run_order": [
+        "go",
+        "python"
+      ],
+      "go_report": "dist/benchmarks/v0.1.22-lock-final-3/extended-loop-1/go/report.json",
+      "python_report": "dist/benchmarks/v0.1.22-lock-final-3/extended-loop-1/python/report.json",
+      "options": {
+        "timeout_seconds": 60.0,
+        "settle_seconds": 3.0,
+        "load_state_timeout_seconds": 0.0,
+        "sample_interval_seconds": 0.5,
+        "screenshots": false,
+        "wait_until": "commit",
+        "reuse_browser": true,
+        "persona_os": "linux",
+        "persona_bundle_sha256": "239a4cd650fa9a992289e3b06775d73ae02e4382684d57a04d2b40313bd3b02f",
+        "content_max_bytes": 250000,
+        "go_report_style": "compact",
+        "go_sidecar_runtime": "node-direct"
+      },
+      "go": {
+        "total": 100,
+        "passed": 92,
+        "blocked": 8,
+        "failed": 0,
+        "wall_ms": 364882,
+        "target_duration_ms": 362877,
+        "avg_target_ms": 3628,
+        "peak_rss_mib": 2555.03125,
+        "peak_cpu_percent": 329.0,
+        "report_json_bytes": 43124,
+        "report_markdown_bytes": 9066,
+        "report_json_estimated_tokens": 10781,
+        "report_markdown_estimated_tokens": 2267,
+        "report_total_estimated_tokens": 13048
+      },
+      "python": {
+        "total": 100,
+        "passed": 92,
+        "blocked": 7,
+        "failed": 1,
+        "wall_ms": 1383983,
+        "target_duration_ms": 1334094,
+        "avg_target_ms": 13340,
+        "peak_rss_mib": 1692.859375,
+        "peak_cpu_percent": 106.10000000000001,
+        "report_json_bytes": 318939,
+        "report_markdown_bytes": 8956,
+        "report_json_estimated_tokens": 79735,
+        "report_markdown_estimated_tokens": 2239,
+        "report_total_estimated_tokens": 81974
+      },
+      "ratios": {
+        "wall_time": 0.26364630201382533,
+        "target_duration": 0.27200257253237026,
+        "peak_rss": 1.5092991702278873,
+        "peak_cpu": 3.1008482563619224,
+        "report_tokens": 0.15917242052358066
+      },
+      "target_outcomes": [
+        {
+          "target": "adidas",
+          "kind": "marketplace",
+          "tags": [
+            "ecommerce",
+            "auth-entry",
+            "media-heavy",
+            "spa"
+          ],
+          "go_outcome": "blocked",
+          "python_outcome": "blocked",
+          "go_duration_ms": 4744,
+          "python_duration_ms": 9242,
+          "go_signals": [
+            "http_403",
+            "access_denied"
+          ],
+          "python_signals": [
+            "http_403",
+            "robot_detection",
+            "akamai"
+          ]
+        },
+        {
+          "target": "airbnb",
+          "kind": "travel-platform",
+          "tags": [
+            "ecommerce",
+            "auth-entry",
+            "media-heavy",
+            "spa"
+          ],
+          "go_outcome": "passed",
+          "python_outcome": "passed",
+          "go_duration_ms": 3608,
+          "python_duration_ms": 13442,
+          "go_signals": [
+            "robot_detection"
+          ],
+          "python_signals": [
+            "captcha",
+            "robot_detection",
+            "datadome"
+          ]
+        },
+        {
+          "target": "akamai",
+          "kind": "cdn-security-vendor",
+          "tags": [
+            "cdn-security",
+            "media-heavy"
+          ],
+          "go_outcome": "passed",
+          "python_outcome": "passed",
+          "go_duration_ms": 3353,
+          "python_duration_ms": 15123,
+          "go_signals": [
+            "akamai"
+          ],
+          "python_signals": [
+            "robot_detection",
+            "akamai"
+          ]
+        },
+        {
+          "target": "angular",
+          "kind": "framework-docs",
+          "tags": [
+            "docs",
+            "spa"
+          ],
+          "go_outcome": "passed",
+          "python_outcome": "passed",
+          "go_duration_ms": 3352,
+          "python_duration_ms": 20108,
+          "go_signals": [
+            "robot_detection"
+          ],
+          "python_signals": [
+            "robot_detection"
+          ]
+        },
+        {
+          "target": "ansible",
+          "kind": "platform-docs",
+          "tags": [
+            "docs",
+            "media-heavy"
+          ],
+          "go_outcome": "passed",
+          "python_outcome": "passed",
+          "go_duration_ms": 3784,
+          "python_duration_ms": 5419,
+          "go_signals": [],
+          "python_signals": []
+        },
+        {
+          "target": "anthropic",
+          "kind": "ai-platform",
+          "tags": [
+            "auth-entry",
+            "media-heavy"
+          ],
+          "go_outcome": "passed",
+          "python_outcome": "passed",
+          "go_duration_ms": 3281,
+          "python_duration_ms": 11260,
+          "go_signals": [],
+          "python_signals": []
+        },
+        {
+          "target": "ap-news",
+          "kind": "news-site",
+          "tags": [
+            "media-heavy"
+          ],
+          "go_outcome": "blocked",
+          "python_outcome": "passed",
+          "go_duration_ms": 3314,
+          "python_duration_ms": 18011,
+          "go_signals": [
+            "cloudflare_challenge",
+            "captcha",
+            "robot_detection"
+          ],
+          "python_signals": [
+            "captcha",
+            "robot_detection"
+          ]
+        },
+        {
+          "target": "apple",
+          "kind": "tech-platform",
+          "tags": [
+            "media-heavy",
+            "spa"
+          ],
+          "go_outcome": "passed",
+          "python_outcome": "passed",
+          "go_duration_ms": 3843,
+          "python_duration_ms": 15368,
+          "go_signals": [],
+          "python_signals": []
+        },
+        {
+          "target": "astro",
+          "kind": "framework-docs",
+          "tags": [
+            "docs",
+            "static"
+          ],
+          "go_outcome": "passed",
+          "python_outcome": "passed",
+          "go_duration_ms": 3589,
+          "python_duration_ms": 5387,
+          "go_signals": [
+            "robot_detection"
+          ],
+          "python_signals": [
+            "robot_detection"
+          ]
+        },
+        {
+          "target": "aws",
+          "kind": "cloud-platform",
+          "tags": [
+            "auth-entry",
+            "cloud-platform",
+            "media-heavy"
+          ],
+          "go_outcome": "passed",
+          "python_outcome": "passed",
+          "go_duration_ms": 3388,
+          "python_duration_ms": 11493,
+          "go_signals": [
+            "robot_detection"
+          ],
+          "python_signals": []
+        },
+        {
+          "target": "azure",
+          "kind": "cloud-platform",
+          "tags": [
+            "auth-entry",
+            "cloud-platform",
+            "docs",
+            "spa"
+          ],
+          "go_outcome": "passed",
+          "python_outcome": "passed",
+          "go_duration_ms": 3849,
+          "python_duration_ms": 20108,
+          "go_signals": [
+            "robot_detection",
+            "akamai"
+          ],
+          "python_signals": [
+            "robot_detection",
+            "akamai"
+          ]
+        },
+        {
+          "target": "bbc",
+          "kind": "news-site",
+          "tags": [
+            "media-heavy"
+          ],
+          "go_outcome": "passed",
+          "python_outcome": "passed",
+          "go_duration_ms": 3320,
+          "python_duration_ms": 14188,
+          "go_signals": [
+            "robot_detection"
+          ],
+          "python_signals": [
+            "robot_detection"
+          ]
+        },
+        {
+          "target": "bestbuy",
+          "kind": "marketplace",
+          "tags": [
+            "ecommerce",
+            "auth-entry",
+            "media-heavy"
+          ],
+          "go_outcome": "passed",
+          "python_outcome": "passed",
+          "go_duration_ms": 4870,
+          "python_duration_ms": 17327,
+          "go_signals": [
+            "captcha",
+            "akamai"
+          ],
+          "python_signals": [
+            "captcha"
+          ]
+        },
+        {
+          "target": "booking",
+          "kind": "travel-platform",
+          "tags": [
+            "ecommerce",
+            "auth-entry",
+            "media-heavy"
+          ],
+          "go_outcome": "passed",
+          "python_outcome": "passed",
+          "go_duration_ms": 3548,
+          "python_duration_ms": 10321,
+          "go_signals": [
+            "robot_detection"
+          ],
+          "python_signals": [
+            "robot_detection"
+          ]
+        },
+        {
+          "target": "chrome-dev",
+          "kind": "browser-docs",
+          "tags": [
+            "docs"
+          ],
+          "go_outcome": "passed",
+          "python_outcome": "passed",
+          "go_duration_ms": 3756,
+          "python_duration_ms": 16627,
+          "go_signals": [
+            "captcha",
+            "robot_detection"
+          ],
+          "python_signals": [
+            "captcha",
+            "robot_detection"
+          ]
+        },
+        {
+          "target": "cloudflare-docs",
+          "kind": "cdn-security-docs",
+          "tags": [
+            "cloudflare",
+            "cdn-security",
+            "docs"
+          ],
+          "go_outcome": "passed",
+          "python_outcome": "passed",
+          "go_duration_ms": 3320,
+          "python_duration_ms": 11710,
+          "go_signals": [
+            "cloudflare_turnstile",
+            "captcha"
+          ],
+          "python_signals": [
+            "cloudflare_turnstile",
+            "captcha"
+          ]
+        },
+        {
+          "target": "cloudflare-home",
+          "kind": "cloudflare-edge",
+          "tags": [
+            "cloudflare",
+            "cdn-security",
+            "spa"
+          ],
+          "go_outcome": "passed",
+          "python_outcome": "passed",
+          "go_duration_ms": 3821,
+          "python_duration_ms": 12413,
+          "go_signals": [
+            "cloudflare_turnstile",
+            "captcha",
+            "robot_detection"
+          ],
+          "python_signals": [
+            "cloudflare_turnstile",
+            "captcha"
+          ]
+        },
+        {
+          "target": "cloudflare-radar",
+          "kind": "cdn-security-docs",
+          "tags": [
+            "cloudflare",
+            "cdn-security",
+            "docs",
+            "spa"
+          ],
+          "go_outcome": "passed",
+          "python_outcome": "passed",
+          "go_duration_ms": 3900,
+          "python_duration_ms": 16928,
+          "go_signals": [
+            "cloudflare_turnstile",
+            "akamai"
+          ],
+          "python_signals": [
+            "cloudflare_turnstile"
+          ]
+        },
+        {
+          "target": "cnn",
+          "kind": "news-site",
+          "tags": [
+            "media-heavy",
+            "spa"
+          ],
+          "go_outcome": "passed",
+          "python_outcome": "passed",
+          "go_duration_ms": 3497,
+          "python_duration_ms": 20483,
+          "go_signals": [],
+          "python_signals": []
+        },
+        {
+          "target": "cohere",
+          "kind": "ai-platform",
+          "tags": [
+            "auth-entry",
+            "media-heavy",
+            "spa"
+          ],
+          "go_outcome": "passed",
+          "python_outcome": "passed",
+          "go_duration_ms": 3708,
+          "python_duration_ms": 20598,
+          "go_signals": [],
+          "python_signals": []
+        },
+        {
+          "target": "costco",
+          "kind": "marketplace",
+          "tags": [
+            "ecommerce",
+            "auth-entry",
+            "media-heavy"
+          ],
+          "go_outcome": "passed",
+          "python_outcome": "passed",
+          "go_duration_ms": 3825,
+          "python_duration_ms": 10935,
+          "go_signals": [
+            "robot_detection",
+            "akamai"
+          ],
+          "python_signals": [
+            "robot_detection",
+            "akamai"
+          ]
+        },
+        {
+          "target": "crates",
+          "kind": "package-registry",
+          "tags": [
+            "docs"
+          ],
+          "go_outcome": "passed",
+          "python_outcome": "passed",
+          "go_duration_ms": 3454,
+          "python_duration_ms": 16537,
+          "go_signals": [],
+          "python_signals": []
+        },
+        {
+          "target": "creepjs",
+          "kind": "fingerprint-test",
+          "tags": [
+            "bot-detection",
+            "static"
+          ],
+          "go_outcome": "passed",
+          "python_outcome": "passed",
+          "go_duration_ms": 3277,
+          "python_duration_ms": 7587,
+          "go_signals": [
+            "robot_detection"
+          ],
+          "python_signals": []
+        },
+        {
+          "target": "datadome",
+          "kind": "bot-defense-vendor",
+          "tags": [
+            "bot-detection",
+            "cdn-security"
+          ],
+          "go_outcome": "passed",
+          "python_outcome": "passed",
+          "go_duration_ms": 3977,
+          "python_duration_ms": 9282,
+          "go_signals": [
+            "captcha",
+            "robot_detection",
+            "datadome"
+          ],
+          "python_signals": [
+            "captcha",
+            "robot_detection",
+            "datadome"
+          ]
+        },
+        {
+          "target": "digitalocean",
+          "kind": "cloud-platform",
+          "tags": [
+            "auth-entry",
+            "cloud-platform",
+            "docs"
+          ],
+          "go_outcome": "passed",
+          "python_outcome": "passed",
+          "go_duration_ms": 3303,
+          "python_duration_ms": 21179,
+          "go_signals": [],
+          "python_signals": []
+        },
+        {
+          "target": "django",
+          "kind": "framework-docs",
+          "tags": [
+            "docs",
+            "static"
+          ],
+          "go_outcome": "passed",
+          "python_outcome": "passed",
+          "go_duration_ms": 3397,
+          "python_duration_ms": 7768,
+          "go_signals": [
+            "robot_detection"
+          ],
+          "python_signals": [
+            "robot_detection"
+          ]
+        },
+        {
+          "target": "docker-docs",
+          "kind": "platform-docs",
+          "tags": [
+            "docs",
+            "spa"
+          ],
+          "go_outcome": "passed",
+          "python_outcome": "passed",
+          "go_duration_ms": 3370,
+          "python_duration_ms": 9333,
+          "go_signals": [
+            "robot_detection"
+          ],
+          "python_signals": [
+            "robot_detection"
+          ]
+        },
+        {
+          "target": "docker-hub",
+          "kind": "package-registry",
+          "tags": [
+            "auth-entry",
+            "spa"
+          ],
+          "go_outcome": "passed",
+          "python_outcome": "passed",
+          "go_duration_ms": 4473,
+          "python_duration_ms": 16765,
+          "go_signals": [
+            "robot_detection"
+          ],
+          "python_signals": [
+            "robot_detection"
+          ]
+        },
+        {
+          "target": "ebay",
+          "kind": "marketplace",
+          "tags": [
+            "ecommerce",
+            "auth-entry",
+            "media-heavy"
+          ],
+          "go_outcome": "passed",
+          "python_outcome": "blocked",
+          "go_duration_ms": 3664,
+          "python_duration_ms": 11493,
+          "go_signals": [
+            "captcha"
+          ],
+          "python_signals": [
+            "http_403",
+            "robot_detection"
+          ]
+        },
+        {
+          "target": "elastic",
+          "kind": "platform-docs",
+          "tags": [
+            "auth-entry",
+            "docs",
+            "spa"
+          ],
+          "go_outcome": "passed",
+          "python_outcome": "passed",
+          "go_duration_ms": 3751,
+          "python_duration_ms": 14659,
+          "go_signals": [
+            "robot_detection"
+          ],
+          "python_signals": [
+            "robot_detection"
+          ]
+        },
+        {
+          "target": "etsy",
+          "kind": "marketplace",
+          "tags": [
+            "ecommerce",
+            "auth-entry",
+            "media-heavy"
+          ],
+          "go_outcome": "passed",
+          "python_outcome": "passed",
+          "go_duration_ms": 3681,
+          "python_duration_ms": 10749,
+          "go_signals": [
+            "captcha"
+          ],
+          "python_signals": [
+            "captcha"
+          ]
+        },
+        {
+          "target": "example",
+          "kind": "reference-site",
+          "tags": [
+            "static"
+          ],
+          "go_outcome": "passed",
+          "python_outcome": "passed",
+          "go_duration_ms": 3315,
+          "python_duration_ms": 6941,
+          "go_signals": [],
+          "python_signals": []
+        },
+        {
+          "target": "fastly",
+          "kind": "cdn-security-vendor",
+          "tags": [
+            "cdn-security",
+            "media-heavy"
+          ],
+          "go_outcome": "passed",
+          "python_outcome": "passed",
+          "go_duration_ms": 3266,
+          "python_duration_ms": 11713,
+          "go_signals": [
+            "robot_detection"
+          ],
+          "python_signals": [
+            "robot_detection"
+          ]
+        },
+        {
+          "target": "firebase",
+          "kind": "cloud-platform",
+          "tags": [
+            "cloud-platform",
+            "docs",
+            "spa"
+          ],
+          "go_outcome": "passed",
+          "python_outcome": "passed",
+          "go_duration_ms": 3654,
+          "python_duration_ms": 15372,
+          "go_signals": [
+            "robot_detection"
+          ],
+          "python_signals": [
+            "robot_detection"
+          ]
+        },
+        {
+          "target": "flask",
+          "kind": "framework-docs",
+          "tags": [
+            "docs",
+            "static"
+          ],
+          "go_outcome": "passed",
+          "python_outcome": "passed",
+          "go_duration_ms": 3407,
+          "python_duration_ms": 12486,
+          "go_signals": [
+            "robot_detection"
+          ],
+          "python_signals": []
+        },
+        {
+          "target": "g2",
+          "kind": "real-site-anti-bot",
+          "tags": [
+            "bot-detection",
+            "auth-entry",
+            "spa"
+          ],
+          "go_outcome": "blocked",
+          "python_outcome": "blocked",
+          "go_duration_ms": 3301,
+          "python_duration_ms": 8931,
+          "go_signals": [
+            "http_403",
+            "robot_detection"
+          ],
+          "python_signals": [
+            "http_403",
+            "cloudflare_challenge",
+            "captcha",
+            "datadome"
+          ]
+        },
+        {
+          "target": "github",
+          "kind": "developer-platform",
+          "tags": [
+            "auth-entry",
+            "developer-platform",
+            "spa"
+          ],
+          "go_outcome": "passed",
+          "python_outcome": "passed",
+          "go_duration_ms": 3437,
+          "python_duration_ms": 13461,
+          "go_signals": [
+            "captcha"
+          ],
+          "python_signals": [
+            "captcha"
+          ]
+        },
+        {
+          "target": "gitlab",
+          "kind": "developer-platform",
+          "tags": [
+            "auth-entry",
+            "developer-platform",
+            "spa"
+          ],
+          "go_outcome": "passed",
+          "python_outcome": "passed",
+          "go_duration_ms": 3559,
+          "python_duration_ms": 12980,
+          "go_signals": [
+            "robot_detection"
+          ],
+          "python_signals": [
+            "robot_detection"
+          ]
+        },
+        {
+          "target": "go-dev",
+          "kind": "language-docs",
+          "tags": [
+            "docs",
+            "static"
+          ],
+          "go_outcome": "passed",
+          "python_outcome": "passed",
+          "go_duration_ms": 3355,
+          "python_duration_ms": 8197,
+          "go_signals": [],
+          "python_signals": []
+        },
+        {
+          "target": "google-cloud",
+          "kind": "cloud-platform",
+          "tags": [
+            "auth-entry",
+            "cloud-platform",
+            "docs",
+            "spa"
+          ],
+          "go_outcome": "passed",
+          "python_outcome": "passed",
+          "go_duration_ms": 3490,
+          "python_duration_ms": 14572,
+          "go_signals": [
+            "captcha",
+            "robot_detection"
+          ],
+          "python_signals": [
+            "captcha",
+            "robot_detection"
+          ]
+        },
+        {
+          "target": "grafana",
+          "kind": "platform-docs",
+          "tags": [
+            "auth-entry",
+            "docs",
+            "spa"
+          ],
+          "go_outcome": "passed",
+          "python_outcome": "passed",
+          "go_duration_ms": 3372,
+          "python_duration_ms": 17370,
+          "go_signals": [
+            "robot_detection"
+          ],
+          "python_signals": [
+            "robot_detection"
+          ]
+        },
+        {
+          "target": "guardian",
+          "kind": "news-site",
+          "tags": [
+            "media-heavy"
+          ],
+          "go_outcome": "passed",
+          "python_outcome": "passed",
+          "go_duration_ms": 3290,
+          "python_duration_ms": 20201,
+          "go_signals": [
+            "captcha",
+            "robot_detection"
+          ],
+          "python_signals": [
+            "captcha",
+            "robot_detection"
+          ]
+        },
+        {
+          "target": "hacker-news",
+          "kind": "community-site",
+          "tags": [
+            "auth-entry",
+            "static"
+          ],
+          "go_outcome": "passed",
+          "python_outcome": "passed",
+          "go_duration_ms": 3939,
+          "python_duration_ms": 12934,
+          "go_signals": [],
+          "python_signals": []
+        },
+        {
+          "target": "huggingface",
+          "kind": "ai-platform",
+          "tags": [
+            "auth-entry",
+            "media-heavy",
+            "spa"
+          ],
+          "go_outcome": "blocked",
+          "python_outcome": "blocked",
+          "go_duration_ms": 3243,
+          "python_duration_ms": 12365,
+          "go_signals": [
+            "human_verification",
+            "captcha",
+            "robot_detection"
+          ],
+          "python_signals": [
+            "human_verification",
+            "captcha",
+            "robot_detection"
+          ]
+        },
+        {
+          "target": "ikea",
+          "kind": "marketplace",
+          "tags": [
+            "ecommerce",
+            "auth-entry",
+            "media-heavy"
+          ],
+          "go_outcome": "passed",
+          "python_outcome": "passed",
+          "go_duration_ms": 4799,
+          "python_duration_ms": 15238,
+          "go_signals": [
+            "robot_detection"
+          ],
+          "python_signals": [
+            "robot_detection"
+          ]
+        },
+        {
+          "target": "imperva",
+          "kind": "bot-defense-vendor",
+          "tags": [
+            "bot-detection",
+            "cdn-security"
+          ],
+          "go_outcome": "passed",
+          "python_outcome": "passed",
+          "go_duration_ms": 3579,
+          "python_duration_ms": 15196,
+          "go_signals": [
+            "robot_detection",
+            "bot_detection"
+          ],
+          "python_signals": [
+            "robot_detection",
+            "bot_detection"
+          ]
+        },
+        {
+          "target": "incolumitas",
+          "kind": "bot-fingerprint-test",
+          "tags": [
+            "bot-detection"
+          ],
+          "go_outcome": "passed",
+          "python_outcome": "passed",
+          "go_duration_ms": 3947,
+          "python_duration_ms": 10652,
+          "go_signals": [
+            "captcha",
+            "robot_detection",
+            "bot_detection",
+            "datadome",
+            "akamai",
+            "perimeterx",
+            "imperva_incapsula",
+            "distil"
+          ],
+          "python_signals": [
+            "captcha",
+            "robot_detection",
+            "bot_detection",
+            "datadome",
+            "akamai",
+            "perimeterx",
+            "imperva_incapsula",
+            "distil"
+          ]
+        },
+        {
+          "target": "kubernetes",
+          "kind": "platform-docs",
+          "tags": [
+            "docs",
+            "spa"
+          ],
+          "go_outcome": "passed",
+          "python_outcome": "passed",
+          "go_duration_ms": 3514,
+          "python_duration_ms": 9129,
+          "go_signals": [
+            "robot_detection"
+          ],
+          "python_signals": [
+            "robot_detection"
+          ]
+        },
+        {
+          "target": "linode",
+          "kind": "cloud-platform",
+          "tags": [
+            "auth-entry",
+            "cloud-platform",
+            "docs"
+          ],
+          "go_outcome": "passed",
+          "python_outcome": "passed",
+          "go_duration_ms": 3445,
+          "python_duration_ms": 14297,
+          "go_signals": [
+            "akamai"
+          ],
+          "python_signals": [
+            "akamai"
+          ]
+        },
+        {
+          "target": "mdn",
+          "kind": "browser-docs",
+          "tags": [
+            "docs",
+            "media-heavy"
+          ],
+          "go_outcome": "passed",
+          "python_outcome": "passed",
+          "go_duration_ms": 3553,
+          "python_duration_ms": 10505,
+          "go_signals": [],
+          "python_signals": []
+        },
+        {
+          "target": "microsoft",
+          "kind": "tech-platform",
+          "tags": [
+            "auth-entry",
+            "media-heavy"
+          ],
+          "go_outcome": "passed",
+          "python_outcome": "passed",
+          "go_duration_ms": 3415,
+          "python_duration_ms": 19443,
+          "go_signals": [
+            "robot_detection",
+            "akamai"
+          ],
+          "python_signals": [
+            "robot_detection",
+            "akamai"
+          ]
+        },
+        {
+          "target": "mistral-ai",
+          "kind": "ai-platform",
+          "tags": [
+            "auth-entry",
+            "media-heavy",
+            "spa"
+          ],
+          "go_outcome": "passed",
+          "python_outcome": "passed",
+          "go_duration_ms": 3476,
+          "python_duration_ms": 17543,
+          "go_signals": [
+            "robot_detection"
+          ],
+          "python_signals": [
+            "robot_detection"
+          ]
+        },
+        {
+          "target": "mozilla",
+          "kind": "browser-platform",
+          "tags": [
+            "docs",
+            "media-heavy"
+          ],
+          "go_outcome": "passed",
+          "python_outcome": "passed",
+          "go_duration_ms": 3352,
+          "python_duration_ms": 16098,
+          "go_signals": [],
+          "python_signals": []
+        },
+        {
+          "target": "mysql",
+          "kind": "database-docs",
+          "tags": [
+            "docs",
+            "media-heavy"
+          ],
+          "go_outcome": "passed",
+          "python_outcome": "passed",
+          "go_duration_ms": 3386,
+          "python_duration_ms": 17386,
+          "go_signals": [
+            "akamai"
+          ],
+          "python_signals": [
+            "akamai"
+          ]
+        },
+        {
+          "target": "netlify",
+          "kind": "cloud-platform",
+          "tags": [
+            "auth-entry",
+            "cloud-platform",
+            "docs",
+            "spa"
+          ],
+          "go_outcome": "passed",
+          "python_outcome": "passed",
+          "go_duration_ms": 3336,
+          "python_duration_ms": 16127,
+          "go_signals": [
+            "captcha",
+            "robot_detection"
+          ],
+          "python_signals": [
+            "robot_detection"
+          ]
+        },
+        {
+          "target": "nextjs",
+          "kind": "framework-docs",
+          "tags": [
+            "docs",
+            "spa"
+          ],
+          "go_outcome": "passed",
+          "python_outcome": "passed",
+          "go_duration_ms": 3376,
+          "python_duration_ms": 8795,
+          "go_signals": [
+            "robot_detection"
+          ],
+          "python_signals": [
+            "robot_detection"
+          ]
+        },
+        {
+          "target": "nginx",
+          "kind": "platform-docs",
+          "tags": [
+            "docs",
+            "static"
+          ],
+          "go_outcome": "passed",
+          "python_outcome": "passed",
+          "go_duration_ms": 3967,
+          "python_duration_ms": 9083,
+          "go_signals": [],
+          "python_signals": []
+        },
+        {
+          "target": "nike",
+          "kind": "marketplace",
+          "tags": [
+            "ecommerce",
+            "auth-entry",
+            "media-heavy",
+            "spa"
+          ],
+          "go_outcome": "passed",
+          "python_outcome": "passed",
+          "go_duration_ms": 3647,
+          "python_duration_ms": 19466,
+          "go_signals": [
+            "robot_detection",
+            "akamai"
+          ],
+          "python_signals": [
+            "robot_detection",
+            "akamai"
+          ]
+        },
+        {
+          "target": "nodejs",
+          "kind": "language-docs",
+          "tags": [
+            "docs"
+          ],
+          "go_outcome": "passed",
+          "python_outcome": "passed",
+          "go_duration_ms": 4993,
+          "python_duration_ms": 9791,
+          "go_signals": [
+            "robot_detection"
+          ],
+          "python_signals": [
+            "robot_detection"
+          ]
+        },
+        {
+          "target": "nowsecure-cloudflare",
+          "kind": "cloudflare-challenge-test",
+          "tags": [
+            "cloudflare",
+            "bot-detection"
+          ],
+          "go_outcome": "blocked",
+          "python_outcome": "blocked",
+          "go_duration_ms": 4273,
+          "python_duration_ms": 21485,
+          "go_signals": [
+            "cloudflare_challenge",
+            "cloudflare_turnstile"
+          ],
+          "python_signals": [
+            "cloudflare_challenge",
+            "cloudflare_turnstile"
+          ]
+        },
+        {
+          "target": "npmjs",
+          "kind": "package-registry",
+          "tags": [
+            "auth-entry",
+            "spa"
+          ],
+          "go_outcome": "passed",
+          "python_outcome": "passed",
+          "go_duration_ms": 3306,
+          "python_duration_ms": 13362,
+          "go_signals": [],
+          "python_signals": []
+        },
+        {
+          "target": "npr",
+          "kind": "news-site",
+          "tags": [
+            "media-heavy"
+          ],
+          "go_outcome": "passed",
+          "python_outcome": "passed",
+          "go_duration_ms": 5512,
+          "python_duration_ms": 13732,
+          "go_signals": [
+            "captcha",
+            "robot_detection",
+            "akamai"
+          ],
+          "python_signals": [
+            "captcha",
+            "robot_detection",
+            "akamai"
+          ]
+        },
+        {
+          "target": "openai",
+          "kind": "ai-platform",
+          "tags": [
+            "auth-entry",
+            "media-heavy",
+            "spa"
+          ],
+          "go_outcome": "passed",
+          "python_outcome": "passed",
+          "go_duration_ms": 3455,
+          "python_duration_ms": 19115,
+          "go_signals": [
+            "robot_detection"
+          ],
+          "python_signals": [
+            "robot_detection"
+          ]
+        },
+        {
+          "target": "oracle-cloud",
+          "kind": "cloud-platform",
+          "tags": [
+            "auth-entry",
+            "cloud-platform",
+            "media-heavy"
+          ],
+          "go_outcome": "blocked",
+          "python_outcome": "blocked",
+          "go_duration_ms": 3825,
+          "python_duration_ms": 11050,
+          "go_signals": [
+            "http_403"
+          ],
+          "python_signals": [
+            "http_403"
+          ]
+        },
+        {
+          "target": "paypal",
+          "kind": "payments-platform",
+          "tags": [
+            "ecommerce",
+            "auth-entry"
+          ],
+          "go_outcome": "passed",
+          "python_outcome": "passed",
+          "go_duration_ms": 3596,
+          "python_duration_ms": 12315,
+          "go_signals": [
+            "captcha",
+            "robot_detection"
+          ],
+          "python_signals": [
+            "captcha",
+            "robot_detection"
+          ]
+        },
+        {
+          "target": "perplexity",
+          "kind": "ai-platform",
+          "tags": [
+            "auth-entry",
+            "media-heavy",
+            "spa"
+          ],
+          "go_outcome": "blocked",
+          "python_outcome": "blocked",
+          "go_duration_ms": 3403,
+          "python_duration_ms": 15666,
+          "go_signals": [
+            "http_403",
+            "cloudflare_challenge",
+            "cloudflare_turnstile",
+            "robot_detection"
+          ],
+          "python_signals": [
+            "http_403",
+            "cloudflare_challenge",
+            "cloudflare_turnstile",
+            "robot_detection"
+          ]
+        },
+        {
+          "target": "pixelscan",
+          "kind": "bot-fingerprint-test",
+          "tags": [
+            "bot-detection"
+          ],
+          "go_outcome": "passed",
+          "python_outcome": "passed",
+          "go_duration_ms": 4220,
+          "python_duration_ms": 11132,
+          "go_signals": [
+            "captcha",
+            "robot_detection",
+            "bot_detection"
+          ],
+          "python_signals": [
+            "robot_detection",
+            "bot_detection"
+          ]
+        },
+        {
+          "target": "pkg-go-dev",
+          "kind": "language-docs",
+          "tags": [
+            "docs",
+            "static"
+          ],
+          "go_outcome": "passed",
+          "python_outcome": "passed",
+          "go_duration_ms": 3430,
+          "python_duration_ms": 13795,
+          "go_signals": [],
+          "python_signals": []
+        },
+        {
+          "target": "playwright",
+          "kind": "browser-automation-docs",
+          "tags": [
+            "docs",
+            "static"
+          ],
+          "go_outcome": "passed",
+          "python_outcome": "passed",
+          "go_duration_ms": 3279,
+          "python_duration_ms": 7623,
+          "go_signals": [],
+          "python_signals": []
+        },
+        {
+          "target": "postgres",
+          "kind": "database-docs",
+          "tags": [
+            "docs",
+            "static"
+          ],
+          "go_outcome": "passed",
+          "python_outcome": "passed",
+          "go_duration_ms": 3467,
+          "python_duration_ms": 9419,
+          "go_signals": [],
+          "python_signals": []
+        },
+        {
+          "target": "prometheus",
+          "kind": "platform-docs",
+          "tags": [
+            "docs",
+            "static"
+          ],
+          "go_outcome": "passed",
+          "python_outcome": "passed",
+          "go_duration_ms": 3361,
+          "python_duration_ms": 10578,
+          "go_signals": [
+            "captcha",
+            "robot_detection"
+          ],
+          "python_signals": [
+            "robot_detection"
+          ]
+        },
+        {
+          "target": "pypi",
+          "kind": "package-registry",
+          "tags": [
+            "docs",
+            "static"
+          ],
+          "go_outcome": "passed",
+          "python_outcome": "passed",
+          "go_duration_ms": 3261,
+          "python_duration_ms": 11834,
+          "go_signals": [
+            "robot_detection"
+          ],
+          "python_signals": [
+            "robot_detection"
+          ]
+        },
+        {
+          "target": "python-org",
+          "kind": "language-docs",
+          "tags": [
+            "docs"
+          ],
+          "go_outcome": "passed",
+          "python_outcome": "passed",
+          "go_duration_ms": 3263,
+          "python_duration_ms": 8469,
+          "go_signals": [
+            "robot_detection"
+          ],
+          "python_signals": [
+            "robot_detection"
+          ]
+        },
+        {
+          "target": "rails",
+          "kind": "framework-docs",
+          "tags": [
+            "docs",
+            "static"
+          ],
+          "go_outcome": "passed",
+          "python_outcome": "passed",
+          "go_duration_ms": 3539,
+          "python_duration_ms": 9988,
+          "go_signals": [],
+          "python_signals": []
+        },
+        {
+          "target": "react",
+          "kind": "framework-docs",
+          "tags": [
+            "docs",
+            "spa"
+          ],
+          "go_outcome": "passed",
+          "python_outcome": "passed",
+          "go_duration_ms": 3289,
+          "python_duration_ms": 8210,
+          "go_signals": [],
+          "python_signals": []
+        },
+        {
+          "target": "redis",
+          "kind": "database-docs",
+          "tags": [
+            "docs",
+            "spa"
+          ],
+          "go_outcome": "passed",
+          "python_outcome": "passed",
+          "go_duration_ms": 3393,
+          "python_duration_ms": 18244,
+          "go_signals": [
+            "robot_detection"
+          ],
+          "python_signals": [
+            "robot_detection"
+          ]
+        },
+        {
+          "target": "reuters",
+          "kind": "news-site",
+          "tags": [
+            "media-heavy"
+          ],
+          "go_outcome": "passed",
+          "python_outcome": "passed",
+          "go_duration_ms": 3367,
+          "python_duration_ms": 13670,
+          "go_signals": [
+            "robot_detection"
+          ],
+          "python_signals": [
+            "robot_detection"
+          ]
+        },
+        {
+          "target": "rubygems",
+          "kind": "package-registry",
+          "tags": [
+            "docs"
+          ],
+          "go_outcome": "passed",
+          "python_outcome": "passed",
+          "go_duration_ms": 3297,
+          "python_duration_ms": 13380,
+          "go_signals": [],
+          "python_signals": []
+        },
+        {
+          "target": "rust-lang",
+          "kind": "language-docs",
+          "tags": [
+            "docs",
+            "static"
+          ],
+          "go_outcome": "passed",
+          "python_outcome": "passed",
+          "go_duration_ms": 3324,
+          "python_duration_ms": 9503,
+          "go_signals": [],
+          "python_signals": []
+        },
+        {
+          "target": "sannysoft",
+          "kind": "bot-fingerprint-test",
+          "tags": [
+            "bot-detection"
+          ],
+          "go_outcome": "passed",
+          "python_outcome": "passed",
+          "go_duration_ms": 3353,
+          "python_duration_ms": 7634,
+          "go_signals": [],
+          "python_signals": []
+        },
+        {
+          "target": "selenium",
+          "kind": "browser-automation-docs",
+          "tags": [
+            "docs"
+          ],
+          "go_outcome": "passed",
+          "python_outcome": "passed",
+          "go_duration_ms": 3434,
+          "python_duration_ms": 6708,
+          "go_signals": [
+            "robot_detection"
+          ],
+          "python_signals": [
+            "robot_detection"
+          ]
+        },
+        {
+          "target": "shopify",
+          "kind": "commerce-platform",
+          "tags": [
+            "ecommerce",
+            "auth-entry",
+            "spa"
+          ],
+          "go_outcome": "passed",
+          "python_outcome": "passed",
+          "go_duration_ms": 3331,
+          "python_duration_ms": 19858,
+          "go_signals": [],
+          "python_signals": []
+        },
+        {
+          "target": "spring",
+          "kind": "framework-docs",
+          "tags": [
+            "docs",
+            "spa"
+          ],
+          "go_outcome": "passed",
+          "python_outcome": "passed",
+          "go_duration_ms": 3314,
+          "python_duration_ms": 8442,
+          "go_signals": [
+            "robot_detection"
+          ],
+          "python_signals": [
+            "robot_detection"
+          ]
+        },
+        {
+          "target": "sqlite",
+          "kind": "database-docs",
+          "tags": [
+            "docs",
+            "static"
+          ],
+          "go_outcome": "passed",
+          "python_outcome": "passed",
+          "go_duration_ms": 3508,
+          "python_duration_ms": 12063,
+          "go_signals": [
+            "robot_detection"
+          ],
+          "python_signals": [
+            "robot_detection"
+          ]
+        },
+        {
+          "target": "stackoverflow",
+          "kind": "developer-platform",
+          "tags": [
+            "auth-entry",
+            "developer-platform"
+          ],
+          "go_outcome": "blocked",
+          "python_outcome": "failed",
+          "go_duration_ms": 3520,
+          "python_duration_ms": 22293,
+          "go_signals": [
+            "http_403",
+            "cloudflare_challenge",
+            "robot_detection"
+          ],
+          "python_signals": []
+        },
+        {
+          "target": "stripe",
+          "kind": "payments-platform",
+          "tags": [
+            "ecommerce",
+            "auth-entry",
+            "media-heavy"
+          ],
+          "go_outcome": "passed",
+          "python_outcome": "passed",
+          "go_duration_ms": 3476,
+          "python_duration_ms": 21226,
+          "go_signals": [],
+          "python_signals": []
+        },
+        {
+          "target": "supabase",
+          "kind": "developer-platform",
+          "tags": [
+            "auth-entry",
+            "developer-platform",
+            "docs",
+            "spa"
+          ],
+          "go_outcome": "passed",
+          "python_outcome": "passed",
+          "go_duration_ms": 3311,
+          "python_duration_ms": 16361,
+          "go_signals": [
+            "robot_detection"
+          ],
+          "python_signals": [
+            "robot_detection"
+          ]
+        },
+        {
+          "target": "svelte",
+          "kind": "framework-docs",
+          "tags": [
+            "docs",
+            "spa"
+          ],
+          "go_outcome": "passed",
+          "python_outcome": "passed",
+          "go_duration_ms": 3327,
+          "python_duration_ms": 14851,
+          "go_signals": [],
+          "python_signals": []
+        },
+        {
+          "target": "tailwind",
+          "kind": "framework-docs",
+          "tags": [
+            "docs",
+            "spa"
+          ],
+          "go_outcome": "passed",
+          "python_outcome": "passed",
+          "go_duration_ms": 3368,
+          "python_duration_ms": 7216,
+          "go_signals": [],
+          "python_signals": []
+        },
+        {
+          "target": "target",
+          "kind": "marketplace",
+          "tags": [
+            "ecommerce",
+            "auth-entry",
+            "media-heavy"
+          ],
+          "go_outcome": "passed",
+          "python_outcome": "passed",
+          "go_duration_ms": 5232,
+          "python_duration_ms": 23167,
+          "go_signals": [
+            "captcha",
+            "robot_detection",
+            "perimeterx"
+          ],
+          "python_signals": [
+            "captcha",
+            "robot_detection"
+          ]
+        },
+        {
+          "target": "terraform",
+          "kind": "platform-docs",
+          "tags": [
+            "docs"
+          ],
+          "go_outcome": "passed",
+          "python_outcome": "passed",
+          "go_duration_ms": 3566,
+          "python_duration_ms": 14210,
+          "go_signals": [],
+          "python_signals": []
+        },
+        {
+          "target": "uniqlo",
+          "kind": "marketplace",
+          "tags": [
+            "ecommerce",
+            "auth-entry",
+            "media-heavy",
+            "spa"
+          ],
+          "go_outcome": "passed",
+          "python_outcome": "passed",
+          "go_duration_ms": 3525,
+          "python_duration_ms": 14182,
+          "go_signals": [
+            "akamai"
+          ],
+          "python_signals": [
+            "akamai"
+          ]
+        },
+        {
+          "target": "vercel",
+          "kind": "cloud-platform",
+          "tags": [
+            "auth-entry",
+            "cloud-platform",
+            "docs",
+            "spa"
+          ],
+          "go_outcome": "passed",
+          "python_outcome": "passed",
+          "go_duration_ms": 3309,
+          "python_duration_ms": 10581,
+          "go_signals": [
+            "robot_detection"
+          ],
+          "python_signals": [
+            "robot_detection"
+          ]
+        },
+        {
+          "target": "vite",
+          "kind": "framework-docs",
+          "tags": [
+            "docs",
+            "spa"
+          ],
+          "go_outcome": "passed",
+          "python_outcome": "passed",
+          "go_duration_ms": 3387,
+          "python_duration_ms": 8209,
+          "go_signals": [],
+          "python_signals": []
+        },
+        {
+          "target": "vue",
+          "kind": "framework-docs",
+          "tags": [
+            "docs",
+            "spa"
+          ],
+          "go_outcome": "passed",
+          "python_outcome": "passed",
+          "go_duration_ms": 3270,
+          "python_duration_ms": 11558,
+          "go_signals": [],
+          "python_signals": []
+        },
+        {
+          "target": "walmart",
+          "kind": "marketplace",
+          "tags": [
+            "ecommerce",
+            "auth-entry",
+            "media-heavy"
+          ],
+          "go_outcome": "passed",
+          "python_outcome": "passed",
+          "go_duration_ms": 4747,
+          "python_duration_ms": 15144,
+          "go_signals": [
+            "captcha",
+            "robot_detection",
+            "akamai",
+            "perimeterx"
+          ],
+          "python_signals": [
+            "captcha",
+            "robot_detection",
+            "akamai",
+            "perimeterx"
+          ]
+        },
+        {
+          "target": "web-dev",
+          "kind": "browser-docs",
+          "tags": [
+            "docs",
+            "static"
+          ],
+          "go_outcome": "passed",
+          "python_outcome": "passed",
+          "go_duration_ms": 4152,
+          "python_duration_ms": 12015,
+          "go_signals": [
+            "captcha",
+            "robot_detection"
+          ],
+          "python_signals": [
+            "captcha",
+            "robot_detection"
+          ]
+        },
+        {
+          "target": "wikipedia",
+          "kind": "reference-site",
+          "tags": [
+            "static",
+            "media-heavy"
+          ],
+          "go_outcome": "passed",
+          "python_outcome": "passed",
+          "go_duration_ms": 3287,
+          "python_duration_ms": 6788,
+          "go_signals": [
+            "robot_detection"
+          ],
+          "python_signals": [
+            "robot_detection"
+          ]
+        },
+        {
+          "target": "yahoo-news",
+          "kind": "news-site",
+          "tags": [
+            "media-heavy",
+            "spa"
+          ],
+          "go_outcome": "passed",
+          "python_outcome": "passed",
+          "go_duration_ms": 3972,
+          "python_duration_ms": 12964,
+          "go_signals": [
+            "robot_detection"
+          ],
+          "python_signals": []
+        },
+        {
+          "target": "ycombinator",
+          "kind": "startup-platform",
+          "tags": [
+            "auth-entry",
+            "static"
+          ],
+          "go_outcome": "passed",
+          "python_outcome": "passed",
+          "go_duration_ms": 4198,
+          "python_duration_ms": 17939,
+          "go_signals": [
+            "robot_detection"
+          ],
+          "python_signals": [
+            "robot_detection"
+          ]
+        }
+      ],
+      "outcome_groups": {
+        "shared_blocked_targets": [
+          "adidas",
+          "g2",
+          "huggingface",
+          "nowsecure-cloudflare",
+          "oracle-cloud",
+          "perplexity"
+        ],
+        "shared_failed_targets": [],
+        "go_only_regressions": [
+          "ap-news"
+        ],
+        "python_only_differences": [
+          "ebay"
+        ]
+      },
+      "outcome_mismatches": [
+        {
+          "target": "ap-news",
+          "go": "blocked",
+          "python": "passed"
+        },
+        {
+          "target": "ebay",
+          "go": "passed",
+          "python": "blocked"
+        },
+        {
+          "target": "stackoverflow",
+          "go": "blocked",
+          "python": "failed"
+        }
+      ]
+    },
+    {
+      "loop": 2,
+      "run_order": [
+        "python",
+        "go"
+      ],
+      "go_report": "dist/benchmarks/v0.1.22-lock-final-3/extended-loop-2/go/report.json",
+      "python_report": "dist/benchmarks/v0.1.22-lock-final-3/extended-loop-2/python/report.json",
+      "options": {
+        "timeout_seconds": 60.0,
+        "settle_seconds": 3.0,
+        "load_state_timeout_seconds": 0.0,
+        "sample_interval_seconds": 0.5,
+        "screenshots": false,
+        "wait_until": "commit",
+        "reuse_browser": true,
+        "persona_os": "linux",
+        "persona_bundle_sha256": "239a4cd650fa9a992289e3b06775d73ae02e4382684d57a04d2b40313bd3b02f",
+        "content_max_bytes": 250000,
+        "go_report_style": "compact",
+        "go_sidecar_runtime": "node-direct"
+      },
+      "go": {
+        "total": 100,
+        "passed": 91,
+        "blocked": 9,
+        "failed": 0,
+        "wall_ms": 357154,
+        "target_duration_ms": 352781,
+        "avg_target_ms": 3527,
+        "peak_rss_mib": 2591.890625,
+        "peak_cpu_percent": 544.2,
+        "report_json_bytes": 43232,
+        "report_markdown_bytes": 9087,
+        "report_json_estimated_tokens": 10808,
+        "report_markdown_estimated_tokens": 2272,
+        "report_total_estimated_tokens": 13080
+      },
+      "python": {
+        "total": 100,
+        "passed": 91,
+        "blocked": 9,
+        "failed": 0,
+        "wall_ms": 467962,
+        "target_duration_ms": 442533,
+        "avg_target_ms": 4425,
+        "peak_rss_mib": 2383.3125,
+        "peak_cpu_percent": 401.4,
+        "report_json_bytes": 320807,
+        "report_markdown_bytes": 9067,
+        "report_json_estimated_tokens": 80202,
+        "report_markdown_estimated_tokens": 2267,
+        "report_total_estimated_tokens": 82469
+      },
+      "ratios": {
+        "wall_time": 0.7632115428175792,
+        "target_duration": 0.7971857465996887,
+        "peak_rss": 1.0875160622033408,
+        "peak_cpu": 1.3557548579970107,
+        "report_tokens": 0.15860505159514485
+      },
+      "target_outcomes": [
+        {
+          "target": "adidas",
+          "kind": "marketplace",
+          "tags": [
+            "ecommerce",
+            "auth-entry",
+            "media-heavy",
+            "spa"
+          ],
+          "go_outcome": "blocked",
+          "python_outcome": "blocked",
+          "go_duration_ms": 3498,
+          "python_duration_ms": 3794,
+          "go_signals": [
+            "http_403",
+            "robot_detection",
+            "akamai"
+          ],
+          "python_signals": [
+            "http_403",
+            "robot_detection",
+            "akamai"
+          ]
+        },
+        {
+          "target": "airbnb",
+          "kind": "travel-platform",
+          "tags": [
+            "ecommerce",
+            "auth-entry",
+            "media-heavy",
+            "spa"
+          ],
+          "go_outcome": "passed",
+          "python_outcome": "passed",
+          "go_duration_ms": 4065,
+          "python_duration_ms": 4555,
+          "go_signals": [
+            "robot_detection"
+          ],
+          "python_signals": [
+            "robot_detection"
+          ]
+        },
+        {
+          "target": "akamai",
+          "kind": "cdn-security-vendor",
+          "tags": [
+            "cdn-security",
+            "media-heavy"
+          ],
+          "go_outcome": "passed",
+          "python_outcome": "passed",
+          "go_duration_ms": 3349,
+          "python_duration_ms": 3468,
+          "go_signals": [
+            "akamai"
+          ],
+          "python_signals": [
+            "akamai"
+          ]
+        },
+        {
+          "target": "angular",
+          "kind": "framework-docs",
+          "tags": [
+            "docs",
+            "spa"
+          ],
+          "go_outcome": "passed",
+          "python_outcome": "passed",
+          "go_duration_ms": 3377,
+          "python_duration_ms": 3356,
+          "go_signals": [
+            "robot_detection"
+          ],
+          "python_signals": [
+            "robot_detection"
+          ]
+        },
+        {
+          "target": "ansible",
+          "kind": "platform-docs",
+          "tags": [
+            "docs",
+            "media-heavy"
+          ],
+          "go_outcome": "passed",
+          "python_outcome": "passed",
+          "go_duration_ms": 3497,
+          "python_duration_ms": 3588,
+          "go_signals": [],
+          "python_signals": []
+        },
+        {
+          "target": "anthropic",
+          "kind": "ai-platform",
+          "tags": [
+            "auth-entry",
+            "media-heavy"
+          ],
+          "go_outcome": "passed",
+          "python_outcome": "passed",
+          "go_duration_ms": 3374,
+          "python_duration_ms": 3592,
+          "go_signals": [],
+          "python_signals": []
+        },
+        {
+          "target": "ap-news",
+          "kind": "news-site",
+          "tags": [
+            "media-heavy"
+          ],
+          "go_outcome": "blocked",
+          "python_outcome": "blocked",
+          "go_duration_ms": 3522,
+          "python_duration_ms": 3292,
+          "go_signals": [
+            "cloudflare_challenge",
+            "captcha",
+            "robot_detection"
+          ],
+          "python_signals": [
+            "cloudflare_challenge",
+            "captcha",
+            "robot_detection"
+          ]
+        },
+        {
+          "target": "apple",
+          "kind": "tech-platform",
+          "tags": [
+            "media-heavy",
+            "spa"
+          ],
+          "go_outcome": "passed",
+          "python_outcome": "passed",
+          "go_duration_ms": 3376,
+          "python_duration_ms": 3831,
+          "go_signals": [],
+          "python_signals": []
+        },
+        {
+          "target": "astro",
+          "kind": "framework-docs",
+          "tags": [
+            "docs",
+            "static"
+          ],
+          "go_outcome": "passed",
+          "python_outcome": "passed",
+          "go_duration_ms": 3405,
+          "python_duration_ms": 3365,
+          "go_signals": [
+            "robot_detection"
+          ],
+          "python_signals": [
+            "robot_detection"
+          ]
+        },
+        {
+          "target": "aws",
+          "kind": "cloud-platform",
+          "tags": [
+            "auth-entry",
+            "cloud-platform",
+            "media-heavy"
+          ],
+          "go_outcome": "passed",
+          "python_outcome": "passed",
+          "go_duration_ms": 3352,
+          "python_duration_ms": 3782,
+          "go_signals": [
+            "robot_detection"
+          ],
+          "python_signals": [
+            "robot_detection"
+          ]
+        },
+        {
+          "target": "azure",
+          "kind": "cloud-platform",
+          "tags": [
+            "auth-entry",
+            "cloud-platform",
+            "docs",
+            "spa"
+          ],
+          "go_outcome": "passed",
+          "python_outcome": "passed",
+          "go_duration_ms": 3552,
+          "python_duration_ms": 3576,
+          "go_signals": [
+            "robot_detection",
+            "akamai"
+          ],
+          "python_signals": [
+            "robot_detection",
+            "akamai"
+          ]
+        },
+        {
+          "target": "bbc",
+          "kind": "news-site",
+          "tags": [
+            "media-heavy"
+          ],
+          "go_outcome": "passed",
+          "python_outcome": "passed",
+          "go_duration_ms": 3754,
+          "python_duration_ms": 4032,
+          "go_signals": [
+            "robot_detection"
+          ],
+          "python_signals": [
+            "robot_detection"
+          ]
+        },
+        {
+          "target": "bestbuy",
+          "kind": "marketplace",
+          "tags": [
+            "ecommerce",
+            "auth-entry",
+            "media-heavy"
+          ],
+          "go_outcome": "passed",
+          "python_outcome": "passed",
+          "go_duration_ms": 3810,
+          "python_duration_ms": 3791,
+          "go_signals": [
+            "captcha",
+            "akamai"
+          ],
+          "python_signals": [
+            "captcha",
+            "akamai"
+          ]
+        },
+        {
+          "target": "booking",
+          "kind": "travel-platform",
+          "tags": [
+            "ecommerce",
+            "auth-entry",
+            "media-heavy"
+          ],
+          "go_outcome": "passed",
+          "python_outcome": "passed",
+          "go_duration_ms": 3484,
+          "python_duration_ms": 3583,
+          "go_signals": [
+            "robot_detection"
+          ],
+          "python_signals": [
+            "robot_detection"
+          ]
+        },
+        {
+          "target": "chrome-dev",
+          "kind": "browser-docs",
+          "tags": [
+            "docs"
+          ],
+          "go_outcome": "passed",
+          "python_outcome": "passed",
+          "go_duration_ms": 4172,
+          "python_duration_ms": 3734,
+          "go_signals": [
+            "captcha",
+            "robot_detection"
+          ],
+          "python_signals": [
+            "captcha",
+            "robot_detection"
+          ]
+        },
+        {
+          "target": "cloudflare-docs",
+          "kind": "cdn-security-docs",
+          "tags": [
+            "cloudflare",
+            "cdn-security",
+            "docs"
+          ],
+          "go_outcome": "passed",
+          "python_outcome": "passed",
+          "go_duration_ms": 3331,
+          "python_duration_ms": 3341,
+          "go_signals": [
+            "cloudflare_turnstile",
+            "captcha"
+          ],
+          "python_signals": [
+            "cloudflare_turnstile",
+            "captcha"
+          ]
+        },
+        {
+          "target": "cloudflare-home",
+          "kind": "cloudflare-edge",
+          "tags": [
+            "cloudflare",
+            "cdn-security",
+            "spa"
+          ],
+          "go_outcome": "passed",
+          "python_outcome": "passed",
+          "go_duration_ms": 4314,
+          "python_duration_ms": 5813,
+          "go_signals": [
+            "cloudflare_turnstile",
+            "captcha",
+            "robot_detection"
+          ],
+          "python_signals": [
+            "cloudflare_turnstile",
+            "captcha"
+          ]
+        },
+        {
+          "target": "cloudflare-radar",
+          "kind": "cdn-security-docs",
+          "tags": [
+            "cloudflare",
+            "cdn-security",
+            "docs",
+            "spa"
+          ],
+          "go_outcome": "passed",
+          "python_outcome": "passed",
+          "go_duration_ms": 4218,
+          "python_duration_ms": 4167,
+          "go_signals": [
+            "cloudflare_turnstile"
+          ],
+          "python_signals": [
+            "cloudflare_turnstile",
+            "akamai"
+          ]
+        },
+        {
+          "target": "cnn",
+          "kind": "news-site",
+          "tags": [
+            "media-heavy",
+            "spa"
+          ],
+          "go_outcome": "passed",
+          "python_outcome": "passed",
+          "go_duration_ms": 3404,
+          "python_duration_ms": 3251,
+          "go_signals": [],
+          "python_signals": []
+        },
+        {
+          "target": "cohere",
+          "kind": "ai-platform",
+          "tags": [
+            "auth-entry",
+            "media-heavy",
+            "spa"
+          ],
+          "go_outcome": "passed",
+          "python_outcome": "passed",
+          "go_duration_ms": 3601,
+          "python_duration_ms": 3533,
+          "go_signals": [],
+          "python_signals": []
+        },
+        {
+          "target": "costco",
+          "kind": "marketplace",
+          "tags": [
+            "ecommerce",
+            "auth-entry",
+            "media-heavy"
+          ],
+          "go_outcome": "passed",
+          "python_outcome": "passed",
+          "go_duration_ms": 3514,
+          "python_duration_ms": 3755,
+          "go_signals": [
+            "robot_detection",
+            "akamai"
+          ],
+          "python_signals": [
+            "robot_detection",
+            "akamai"
+          ]
+        },
+        {
+          "target": "crates",
+          "kind": "package-registry",
+          "tags": [
+            "docs"
+          ],
+          "go_outcome": "passed",
+          "python_outcome": "passed",
+          "go_duration_ms": 3309,
+          "python_duration_ms": 3360,
+          "go_signals": [],
+          "python_signals": []
+        },
+        {
+          "target": "creepjs",
+          "kind": "fingerprint-test",
+          "tags": [
+            "bot-detection",
+            "static"
+          ],
+          "go_outcome": "passed",
+          "python_outcome": "passed",
+          "go_duration_ms": 3290,
+          "python_duration_ms": 9371,
+          "go_signals": [
+            "robot_detection"
+          ],
+          "python_signals": []
+        },
+        {
+          "target": "datadome",
+          "kind": "bot-defense-vendor",
+          "tags": [
+            "bot-detection",
+            "cdn-security"
+          ],
+          "go_outcome": "passed",
+          "python_outcome": "passed",
+          "go_duration_ms": 3360,
+          "python_duration_ms": 8136,
+          "go_signals": [
+            "captcha",
+            "robot_detection",
+            "datadome"
+          ],
+          "python_signals": [
+            "captcha",
+            "robot_detection",
+            "datadome"
+          ]
+        },
+        {
+          "target": "digitalocean",
+          "kind": "cloud-platform",
+          "tags": [
+            "auth-entry",
+            "cloud-platform",
+            "docs"
+          ],
+          "go_outcome": "passed",
+          "python_outcome": "passed",
+          "go_duration_ms": 3835,
+          "python_duration_ms": 3290,
+          "go_signals": [],
+          "python_signals": []
+        },
+        {
+          "target": "django",
+          "kind": "framework-docs",
+          "tags": [
+            "docs",
+            "static"
+          ],
+          "go_outcome": "passed",
+          "python_outcome": "passed",
+          "go_duration_ms": 3519,
+          "python_duration_ms": 3386,
+          "go_signals": [
+            "robot_detection"
+          ],
+          "python_signals": [
+            "robot_detection"
+          ]
+        },
+        {
+          "target": "docker-docs",
+          "kind": "platform-docs",
+          "tags": [
+            "docs",
+            "spa"
+          ],
+          "go_outcome": "passed",
+          "python_outcome": "passed",
+          "go_duration_ms": 3421,
+          "python_duration_ms": 3875,
+          "go_signals": [
+            "robot_detection"
+          ],
+          "python_signals": [
+            "robot_detection"
+          ]
+        },
+        {
+          "target": "docker-hub",
+          "kind": "package-registry",
+          "tags": [
+            "auth-entry",
+            "spa"
+          ],
+          "go_outcome": "passed",
+          "python_outcome": "passed",
+          "go_duration_ms": 3362,
+          "python_duration_ms": 3371,
+          "go_signals": [
+            "robot_detection"
+          ],
+          "python_signals": [
+            "robot_detection"
+          ]
+        },
+        {
+          "target": "ebay",
+          "kind": "marketplace",
+          "tags": [
+            "ecommerce",
+            "auth-entry",
+            "media-heavy"
+          ],
+          "go_outcome": "blocked",
+          "python_outcome": "blocked",
+          "go_duration_ms": 3341,
+          "python_duration_ms": 3467,
+          "go_signals": [
+            "http_403",
+            "robot_detection"
+          ],
+          "python_signals": [
+            "http_403",
+            "robot_detection"
+          ]
+        },
+        {
+          "target": "elastic",
+          "kind": "platform-docs",
+          "tags": [
+            "auth-entry",
+            "docs",
+            "spa"
+          ],
+          "go_outcome": "passed",
+          "python_outcome": "passed",
+          "go_duration_ms": 3297,
+          "python_duration_ms": 3445,
+          "go_signals": [
+            "robot_detection"
+          ],
+          "python_signals": [
+            "robot_detection"
+          ]
+        },
+        {
+          "target": "etsy",
+          "kind": "marketplace",
+          "tags": [
+            "ecommerce",
+            "auth-entry",
+            "media-heavy"
+          ],
+          "go_outcome": "passed",
+          "python_outcome": "passed",
+          "go_duration_ms": 3563,
+          "python_duration_ms": 3573,
+          "go_signals": [
+            "captcha"
+          ],
+          "python_signals": [
+            "captcha"
+          ]
+        },
+        {
+          "target": "example",
+          "kind": "reference-site",
+          "tags": [
+            "static"
+          ],
+          "go_outcome": "passed",
+          "python_outcome": "passed",
+          "go_duration_ms": 3286,
+          "python_duration_ms": 6084,
+          "go_signals": [],
+          "python_signals": []
+        },
+        {
+          "target": "fastly",
+          "kind": "cdn-security-vendor",
+          "tags": [
+            "cdn-security",
+            "media-heavy"
+          ],
+          "go_outcome": "passed",
+          "python_outcome": "passed",
+          "go_duration_ms": 3240,
+          "python_duration_ms": 3330,
+          "go_signals": [
+            "robot_detection"
+          ],
+          "python_signals": [
+            "robot_detection"
+          ]
+        },
+        {
+          "target": "firebase",
+          "kind": "cloud-platform",
+          "tags": [
+            "cloud-platform",
+            "docs",
+            "spa"
+          ],
+          "go_outcome": "passed",
+          "python_outcome": "passed",
+          "go_duration_ms": 3662,
+          "python_duration_ms": 4345,
+          "go_signals": [
+            "robot_detection"
+          ],
+          "python_signals": [
+            "robot_detection"
+          ]
+        },
+        {
+          "target": "flask",
+          "kind": "framework-docs",
+          "tags": [
+            "docs",
+            "static"
+          ],
+          "go_outcome": "passed",
+          "python_outcome": "passed",
+          "go_duration_ms": 3451,
+          "python_duration_ms": 3442,
+          "go_signals": [
+            "robot_detection"
+          ],
+          "python_signals": [
+            "robot_detection"
+          ]
+        },
+        {
+          "target": "g2",
+          "kind": "real-site-anti-bot",
+          "tags": [
+            "bot-detection",
+            "auth-entry",
+            "spa"
+          ],
+          "go_outcome": "blocked",
+          "python_outcome": "blocked",
+          "go_duration_ms": 3288,
+          "python_duration_ms": 6984,
+          "go_signals": [
+            "http_403",
+            "robot_detection"
+          ],
+          "python_signals": [
+            "http_403",
+            "cloudflare_challenge",
+            "captcha",
+            "datadome"
+          ]
+        },
+        {
+          "target": "github",
+          "kind": "developer-platform",
+          "tags": [
+            "auth-entry",
+            "developer-platform",
+            "spa"
+          ],
+          "go_outcome": "passed",
+          "python_outcome": "passed",
+          "go_duration_ms": 3456,
+          "python_duration_ms": 20162,
+          "go_signals": [
+            "captcha"
+          ],
+          "python_signals": [
+            "captcha"
+          ]
+        },
+        {
+          "target": "gitlab",
+          "kind": "developer-platform",
+          "tags": [
+            "auth-entry",
+            "developer-platform",
+            "spa"
+          ],
+          "go_outcome": "passed",
+          "python_outcome": "passed",
+          "go_duration_ms": 3488,
+          "python_duration_ms": 4720,
+          "go_signals": [
+            "robot_detection"
+          ],
+          "python_signals": [
+            "robot_detection"
+          ]
+        },
+        {
+          "target": "go-dev",
+          "kind": "language-docs",
+          "tags": [
+            "docs",
+            "static"
+          ],
+          "go_outcome": "passed",
+          "python_outcome": "passed",
+          "go_duration_ms": 3308,
+          "python_duration_ms": 3411,
+          "go_signals": [],
+          "python_signals": []
+        },
+        {
+          "target": "google-cloud",
+          "kind": "cloud-platform",
+          "tags": [
+            "auth-entry",
+            "cloud-platform",
+            "docs",
+            "spa"
+          ],
+          "go_outcome": "passed",
+          "python_outcome": "passed",
+          "go_duration_ms": 3612,
+          "python_duration_ms": 3613,
+          "go_signals": [
+            "captcha",
+            "robot_detection"
+          ],
+          "python_signals": [
+            "captcha",
+            "robot_detection"
+          ]
+        },
+        {
+          "target": "grafana",
+          "kind": "platform-docs",
+          "tags": [
+            "auth-entry",
+            "docs",
+            "spa"
+          ],
+          "go_outcome": "passed",
+          "python_outcome": "passed",
+          "go_duration_ms": 3319,
+          "python_duration_ms": 3347,
+          "go_signals": [
+            "robot_detection"
+          ],
+          "python_signals": [
+            "robot_detection"
+          ]
+        },
+        {
+          "target": "guardian",
+          "kind": "news-site",
+          "tags": [
+            "media-heavy"
+          ],
+          "go_outcome": "passed",
+          "python_outcome": "passed",
+          "go_duration_ms": 3761,
+          "python_duration_ms": 4340,
+          "go_signals": [
+            "captcha",
+            "robot_detection"
+          ],
+          "python_signals": [
+            "captcha",
+            "robot_detection"
+          ]
+        },
+        {
+          "target": "hacker-news",
+          "kind": "community-site",
+          "tags": [
+            "auth-entry",
+            "static"
+          ],
+          "go_outcome": "passed",
+          "python_outcome": "passed",
+          "go_duration_ms": 3253,
+          "python_duration_ms": 3241,
+          "go_signals": [],
+          "python_signals": []
+        },
+        {
+          "target": "huggingface",
+          "kind": "ai-platform",
+          "tags": [
+            "auth-entry",
+            "media-heavy",
+            "spa"
+          ],
+          "go_outcome": "blocked",
+          "python_outcome": "blocked",
+          "go_duration_ms": 3319,
+          "python_duration_ms": 3224,
+          "go_signals": [
+            "human_verification",
+            "captcha",
+            "robot_detection"
+          ],
+          "python_signals": [
+            "human_verification",
+            "captcha",
+            "robot_detection"
+          ]
+        },
+        {
+          "target": "ikea",
+          "kind": "marketplace",
+          "tags": [
+            "ecommerce",
+            "auth-entry",
+            "media-heavy"
+          ],
+          "go_outcome": "passed",
+          "python_outcome": "passed",
+          "go_duration_ms": 3381,
+          "python_duration_ms": 3641,
+          "go_signals": [
+            "robot_detection"
+          ],
+          "python_signals": [
+            "robot_detection"
+          ]
+        },
+        {
+          "target": "imperva",
+          "kind": "bot-defense-vendor",
+          "tags": [
+            "bot-detection",
+            "cdn-security"
+          ],
+          "go_outcome": "passed",
+          "python_outcome": "passed",
+          "go_duration_ms": 3341,
+          "python_duration_ms": 3305,
+          "go_signals": [
+            "robot_detection",
+            "bot_detection"
+          ],
+          "python_signals": [
+            "robot_detection",
+            "bot_detection"
+          ]
+        },
+        {
+          "target": "incolumitas",
+          "kind": "bot-fingerprint-test",
+          "tags": [
+            "bot-detection"
+          ],
+          "go_outcome": "passed",
+          "python_outcome": "passed",
+          "go_duration_ms": 3953,
+          "python_duration_ms": 11112,
+          "go_signals": [
+            "captcha",
+            "robot_detection",
+            "bot_detection",
+            "datadome",
+            "akamai",
+            "perimeterx",
+            "imperva_incapsula",
+            "distil"
+          ],
+          "python_signals": [
+            "captcha",
+            "robot_detection",
+            "bot_detection",
+            "datadome",
+            "akamai",
+            "perimeterx",
+            "imperva_incapsula",
+            "distil"
+          ]
+        },
+        {
+          "target": "kubernetes",
+          "kind": "platform-docs",
+          "tags": [
+            "docs",
+            "spa"
+          ],
+          "go_outcome": "passed",
+          "python_outcome": "passed",
+          "go_duration_ms": 3249,
+          "python_duration_ms": 3364,
+          "go_signals": [
+            "robot_detection"
+          ],
+          "python_signals": [
+            "robot_detection"
+          ]
+        },
+        {
+          "target": "linode",
+          "kind": "cloud-platform",
+          "tags": [
+            "auth-entry",
+            "cloud-platform",
+            "docs"
+          ],
+          "go_outcome": "passed",
+          "python_outcome": "passed",
+          "go_duration_ms": 3513,
+          "python_duration_ms": 3381,
+          "go_signals": [
+            "akamai"
+          ],
+          "python_signals": [
+            "akamai"
+          ]
+        },
+        {
+          "target": "mdn",
+          "kind": "browser-docs",
+          "tags": [
+            "docs",
+            "media-heavy"
+          ],
+          "go_outcome": "passed",
+          "python_outcome": "passed",
+          "go_duration_ms": 3353,
+          "python_duration_ms": 3409,
+          "go_signals": [],
+          "python_signals": []
+        },
+        {
+          "target": "microsoft",
+          "kind": "tech-platform",
+          "tags": [
+            "auth-entry",
+            "media-heavy"
+          ],
+          "go_outcome": "passed",
+          "python_outcome": "passed",
+          "go_duration_ms": 3384,
+          "python_duration_ms": 4504,
+          "go_signals": [
+            "robot_detection",
+            "akamai"
+          ],
+          "python_signals": [
+            "robot_detection",
+            "akamai"
+          ]
+        },
+        {
+          "target": "mistral-ai",
+          "kind": "ai-platform",
+          "tags": [
+            "auth-entry",
+            "media-heavy",
+            "spa"
+          ],
+          "go_outcome": "passed",
+          "python_outcome": "passed",
+          "go_duration_ms": 3436,
+          "python_duration_ms": 3423,
+          "go_signals": [
+            "robot_detection"
+          ],
+          "python_signals": [
+            "robot_detection"
+          ]
+        },
+        {
+          "target": "mozilla",
+          "kind": "browser-platform",
+          "tags": [
+            "docs",
+            "media-heavy"
+          ],
+          "go_outcome": "passed",
+          "python_outcome": "passed",
+          "go_duration_ms": 3525,
+          "python_duration_ms": 3584,
+          "go_signals": [],
+          "python_signals": []
+        },
+        {
+          "target": "mysql",
+          "kind": "database-docs",
+          "tags": [
+            "docs",
+            "media-heavy"
+          ],
+          "go_outcome": "passed",
+          "python_outcome": "passed",
+          "go_duration_ms": 3677,
+          "python_duration_ms": 3552,
+          "go_signals": [
+            "akamai"
+          ],
+          "python_signals": [
+            "akamai"
+          ]
+        },
+        {
+          "target": "netlify",
+          "kind": "cloud-platform",
+          "tags": [
+            "auth-entry",
+            "cloud-platform",
+            "docs",
+            "spa"
+          ],
+          "go_outcome": "passed",
+          "python_outcome": "passed",
+          "go_duration_ms": 3602,
+          "python_duration_ms": 3407,
+          "go_signals": [
+            "captcha",
+            "robot_detection"
+          ],
+          "python_signals": [
+            "captcha",
+            "robot_detection"
+          ]
+        },
+        {
+          "target": "nextjs",
+          "kind": "framework-docs",
+          "tags": [
+            "docs",
+            "spa"
+          ],
+          "go_outcome": "passed",
+          "python_outcome": "passed",
+          "go_duration_ms": 3339,
+          "python_duration_ms": 3466,
+          "go_signals": [
+            "robot_detection"
+          ],
+          "python_signals": [
+            "robot_detection"
+          ]
+        },
+        {
+          "target": "nginx",
+          "kind": "platform-docs",
+          "tags": [
+            "docs",
+            "static"
+          ],
+          "go_outcome": "passed",
+          "python_outcome": "passed",
+          "go_duration_ms": 3871,
+          "python_duration_ms": 3875,
+          "go_signals": [],
+          "python_signals": []
+        },
+        {
+          "target": "nike",
+          "kind": "marketplace",
+          "tags": [
+            "ecommerce",
+            "auth-entry",
+            "media-heavy",
+            "spa"
+          ],
+          "go_outcome": "passed",
+          "python_outcome": "passed",
+          "go_duration_ms": 3875,
+          "python_duration_ms": 3604,
+          "go_signals": [
+            "robot_detection",
+            "akamai"
+          ],
+          "python_signals": [
+            "robot_detection",
+            "akamai"
+          ]
+        },
+        {
+          "target": "nodejs",
+          "kind": "language-docs",
+          "tags": [
+            "docs"
+          ],
+          "go_outcome": "passed",
+          "python_outcome": "passed",
+          "go_duration_ms": 3840,
+          "python_duration_ms": 3674,
+          "go_signals": [
+            "robot_detection"
+          ],
+          "python_signals": [
+            "robot_detection"
+          ]
+        },
+        {
+          "target": "nowsecure-cloudflare",
+          "kind": "cloudflare-challenge-test",
+          "tags": [
+            "cloudflare",
+            "bot-detection"
+          ],
+          "go_outcome": "blocked",
+          "python_outcome": "blocked",
+          "go_duration_ms": 5116,
+          "python_duration_ms": 28251,
+          "go_signals": [
+            "cloudflare_challenge",
+            "cloudflare_turnstile"
+          ],
+          "python_signals": [
+            "cloudflare_challenge",
+            "cloudflare_turnstile"
+          ]
+        },
+        {
+          "target": "npmjs",
+          "kind": "package-registry",
+          "tags": [
+            "auth-entry",
+            "spa"
+          ],
+          "go_outcome": "passed",
+          "python_outcome": "passed",
+          "go_duration_ms": 3314,
+          "python_duration_ms": 3598,
+          "go_signals": [],
+          "python_signals": []
+        },
+        {
+          "target": "npr",
+          "kind": "news-site",
+          "tags": [
+            "media-heavy"
+          ],
+          "go_outcome": "passed",
+          "python_outcome": "passed",
+          "go_duration_ms": 3382,
+          "python_duration_ms": 3366,
+          "go_signals": [
+            "captcha",
+            "robot_detection",
+            "akamai"
+          ],
+          "python_signals": [
+            "captcha",
+            "robot_detection",
+            "akamai"
+          ]
+        },
+        {
+          "target": "openai",
+          "kind": "ai-platform",
+          "tags": [
+            "auth-entry",
+            "media-heavy",
+            "spa"
+          ],
+          "go_outcome": "passed",
+          "python_outcome": "passed",
+          "go_duration_ms": 3657,
+          "python_duration_ms": 3724,
+          "go_signals": [
+            "robot_detection"
+          ],
+          "python_signals": [
+            "robot_detection"
+          ]
+        },
+        {
+          "target": "oracle-cloud",
+          "kind": "cloud-platform",
+          "tags": [
+            "auth-entry",
+            "cloud-platform",
+            "media-heavy"
+          ],
+          "go_outcome": "blocked",
+          "python_outcome": "blocked",
+          "go_duration_ms": 3481,
+          "python_duration_ms": 3391,
+          "go_signals": [
+            "http_403"
+          ],
+          "python_signals": [
+            "http_403"
+          ]
+        },
+        {
+          "target": "paypal",
+          "kind": "payments-platform",
+          "tags": [
+            "ecommerce",
+            "auth-entry"
+          ],
+          "go_outcome": "passed",
+          "python_outcome": "passed",
+          "go_duration_ms": 3363,
+          "python_duration_ms": 3350,
+          "go_signals": [
+            "captcha",
+            "robot_detection"
+          ],
+          "python_signals": [
+            "captcha",
+            "robot_detection"
+          ]
+        },
+        {
+          "target": "perplexity",
+          "kind": "ai-platform",
+          "tags": [
+            "auth-entry",
+            "media-heavy",
+            "spa"
+          ],
+          "go_outcome": "blocked",
+          "python_outcome": "blocked",
+          "go_duration_ms": 3301,
+          "python_duration_ms": 3306,
+          "go_signals": [
+            "http_403",
+            "cloudflare_challenge",
+            "cloudflare_turnstile",
+            "robot_detection"
+          ],
+          "python_signals": [
+            "http_403",
+            "cloudflare_challenge",
+            "cloudflare_turnstile",
+            "robot_detection"
+          ]
+        },
+        {
+          "target": "pixelscan",
+          "kind": "bot-fingerprint-test",
+          "tags": [
+            "bot-detection"
+          ],
+          "go_outcome": "passed",
+          "python_outcome": "passed",
+          "go_duration_ms": 4128,
+          "python_duration_ms": 12700,
+          "go_signals": [
+            "captcha",
+            "robot_detection",
+            "bot_detection"
+          ],
+          "python_signals": [
+            "robot_detection",
+            "bot_detection"
+          ]
+        },
+        {
+          "target": "pkg-go-dev",
+          "kind": "language-docs",
+          "tags": [
+            "docs",
+            "static"
+          ],
+          "go_outcome": "passed",
+          "python_outcome": "passed",
+          "go_duration_ms": 3412,
+          "python_duration_ms": 4027,
+          "go_signals": [],
+          "python_signals": []
+        },
+        {
+          "target": "playwright",
+          "kind": "browser-automation-docs",
+          "tags": [
+            "docs",
+            "static"
+          ],
+          "go_outcome": "passed",
+          "python_outcome": "passed",
+          "go_duration_ms": 3618,
+          "python_duration_ms": 3867,
+          "go_signals": [],
+          "python_signals": []
+        },
+        {
+          "target": "postgres",
+          "kind": "database-docs",
+          "tags": [
+            "docs",
+            "static"
+          ],
+          "go_outcome": "passed",
+          "python_outcome": "passed",
+          "go_duration_ms": 3458,
+          "python_duration_ms": 3485,
+          "go_signals": [],
+          "python_signals": []
+        },
+        {
+          "target": "prometheus",
+          "kind": "platform-docs",
+          "tags": [
+            "docs",
+            "static"
+          ],
+          "go_outcome": "passed",
+          "python_outcome": "passed",
+          "go_duration_ms": 3489,
+          "python_duration_ms": 3301,
+          "go_signals": [
+            "captcha",
+            "robot_detection"
+          ],
+          "python_signals": [
+            "captcha",
+            "robot_detection"
+          ]
+        },
+        {
+          "target": "pypi",
+          "kind": "package-registry",
+          "tags": [
+            "docs",
+            "static"
+          ],
+          "go_outcome": "passed",
+          "python_outcome": "passed",
+          "go_duration_ms": 3245,
+          "python_duration_ms": 3235,
+          "go_signals": [
+            "robot_detection"
+          ],
+          "python_signals": [
+            "robot_detection"
+          ]
+        },
+        {
+          "target": "python-org",
+          "kind": "language-docs",
+          "tags": [
+            "docs"
+          ],
+          "go_outcome": "passed",
+          "python_outcome": "passed",
+          "go_duration_ms": 3406,
+          "python_duration_ms": 3556,
+          "go_signals": [
+            "robot_detection"
+          ],
+          "python_signals": [
+            "robot_detection"
+          ]
+        },
+        {
+          "target": "rails",
+          "kind": "framework-docs",
+          "tags": [
+            "docs",
+            "static"
+          ],
+          "go_outcome": "passed",
+          "python_outcome": "passed",
+          "go_duration_ms": 3356,
+          "python_duration_ms": 3236,
+          "go_signals": [],
+          "python_signals": []
+        },
+        {
+          "target": "react",
+          "kind": "framework-docs",
+          "tags": [
+            "docs",
+            "spa"
+          ],
+          "go_outcome": "passed",
+          "python_outcome": "passed",
+          "go_duration_ms": 3289,
+          "python_duration_ms": 3356,
+          "go_signals": [],
+          "python_signals": []
+        },
+        {
+          "target": "redis",
+          "kind": "database-docs",
+          "tags": [
+            "docs",
+            "spa"
+          ],
+          "go_outcome": "passed",
+          "python_outcome": "passed",
+          "go_duration_ms": 3459,
+          "python_duration_ms": 3423,
+          "go_signals": [
+            "robot_detection"
+          ],
+          "python_signals": [
+            "robot_detection"
+          ]
+        },
+        {
+          "target": "reuters",
+          "kind": "news-site",
+          "tags": [
+            "media-heavy"
+          ],
+          "go_outcome": "passed",
+          "python_outcome": "passed",
+          "go_duration_ms": 4165,
+          "python_duration_ms": 3742,
+          "go_signals": [
+            "robot_detection"
+          ],
+          "python_signals": [
+            "robot_detection"
+          ]
+        },
+        {
+          "target": "rubygems",
+          "kind": "package-registry",
+          "tags": [
+            "docs"
+          ],
+          "go_outcome": "passed",
+          "python_outcome": "passed",
+          "go_duration_ms": 3269,
+          "python_duration_ms": 3395,
+          "go_signals": [],
+          "python_signals": []
+        },
+        {
+          "target": "rust-lang",
+          "kind": "language-docs",
+          "tags": [
+            "docs",
+            "static"
+          ],
+          "go_outcome": "passed",
+          "python_outcome": "passed",
+          "go_duration_ms": 3502,
+          "python_duration_ms": 3381,
+          "go_signals": [],
+          "python_signals": []
+        },
+        {
+          "target": "sannysoft",
+          "kind": "bot-fingerprint-test",
+          "tags": [
+            "bot-detection"
+          ],
+          "go_outcome": "passed",
+          "python_outcome": "passed",
+          "go_duration_ms": 3362,
+          "python_duration_ms": 4456,
+          "go_signals": [],
+          "python_signals": []
+        },
+        {
+          "target": "selenium",
+          "kind": "browser-automation-docs",
+          "tags": [
+            "docs"
+          ],
+          "go_outcome": "passed",
+          "python_outcome": "passed",
+          "go_duration_ms": 3502,
+          "python_duration_ms": 3601,
+          "go_signals": [
+            "robot_detection"
+          ],
+          "python_signals": [
+            "robot_detection"
+          ]
+        },
+        {
+          "target": "shopify",
+          "kind": "commerce-platform",
+          "tags": [
+            "ecommerce",
+            "auth-entry",
+            "spa"
+          ],
+          "go_outcome": "passed",
+          "python_outcome": "passed",
+          "go_duration_ms": 3363,
+          "python_duration_ms": 3289,
+          "go_signals": [],
+          "python_signals": []
+        },
+        {
+          "target": "spring",
+          "kind": "framework-docs",
+          "tags": [
+            "docs",
+            "spa"
+          ],
+          "go_outcome": "passed",
+          "python_outcome": "passed",
+          "go_duration_ms": 3375,
+          "python_duration_ms": 3326,
+          "go_signals": [
+            "robot_detection"
+          ],
+          "python_signals": [
+            "robot_detection"
+          ]
+        },
+        {
+          "target": "sqlite",
+          "kind": "database-docs",
+          "tags": [
+            "docs",
+            "static"
+          ],
+          "go_outcome": "passed",
+          "python_outcome": "passed",
+          "go_duration_ms": 3578,
+          "python_duration_ms": 3518,
+          "go_signals": [
+            "robot_detection"
+          ],
+          "python_signals": [
+            "robot_detection"
+          ]
+        },
+        {
+          "target": "stackoverflow",
+          "kind": "developer-platform",
+          "tags": [
+            "auth-entry",
+            "developer-platform"
+          ],
+          "go_outcome": "blocked",
+          "python_outcome": "blocked",
+          "go_duration_ms": 3392,
+          "python_duration_ms": 4291,
+          "go_signals": [
+            "http_403",
+            "cloudflare_challenge",
+            "robot_detection"
+          ],
+          "python_signals": [
+            "http_403",
+            "cloudflare_challenge",
+            "robot_detection"
+          ]
+        },
+        {
+          "target": "stripe",
+          "kind": "payments-platform",
+          "tags": [
+            "ecommerce",
+            "auth-entry",
+            "media-heavy"
+          ],
+          "go_outcome": "passed",
+          "python_outcome": "passed",
+          "go_duration_ms": 3423,
+          "python_duration_ms": 3390,
+          "go_signals": [],
+          "python_signals": []
+        },
+        {
+          "target": "supabase",
+          "kind": "developer-platform",
+          "tags": [
+            "auth-entry",
+            "developer-platform",
+            "docs",
+            "spa"
+          ],
+          "go_outcome": "passed",
+          "python_outcome": "passed",
+          "go_duration_ms": 3521,
+          "python_duration_ms": 3430,
+          "go_signals": [
+            "robot_detection"
+          ],
+          "python_signals": [
+            "robot_detection"
+          ]
+        },
+        {
+          "target": "svelte",
+          "kind": "framework-docs",
+          "tags": [
+            "docs",
+            "spa"
+          ],
+          "go_outcome": "passed",
+          "python_outcome": "passed",
+          "go_duration_ms": 3299,
+          "python_duration_ms": 3373,
+          "go_signals": [],
+          "python_signals": []
+        },
+        {
+          "target": "tailwind",
+          "kind": "framework-docs",
+          "tags": [
+            "docs",
+            "spa"
+          ],
+          "go_outcome": "passed",
+          "python_outcome": "passed",
+          "go_duration_ms": 3346,
+          "python_duration_ms": 3321,
+          "go_signals": [],
+          "python_signals": []
+        },
+        {
+          "target": "target",
+          "kind": "marketplace",
+          "tags": [
+            "ecommerce",
+            "auth-entry",
+            "media-heavy"
+          ],
+          "go_outcome": "passed",
+          "python_outcome": "passed",
+          "go_duration_ms": 3890,
+          "python_duration_ms": 3871,
+          "go_signals": [
+            "captcha",
+            "robot_detection",
+            "perimeterx"
+          ],
+          "python_signals": [
+            "captcha",
+            "robot_detection",
+            "perimeterx"
+          ]
+        },
+        {
+          "target": "terraform",
+          "kind": "platform-docs",
+          "tags": [
+            "docs"
+          ],
+          "go_outcome": "passed",
+          "python_outcome": "passed",
+          "go_duration_ms": 3482,
+          "python_duration_ms": 3577,
+          "go_signals": [],
+          "python_signals": []
+        },
+        {
+          "target": "uniqlo",
+          "kind": "marketplace",
+          "tags": [
+            "ecommerce",
+            "auth-entry",
+            "media-heavy",
+            "spa"
+          ],
+          "go_outcome": "passed",
+          "python_outcome": "passed",
+          "go_duration_ms": 3593,
+          "python_duration_ms": 5140,
+          "go_signals": [
+            "akamai"
+          ],
+          "python_signals": [
+            "akamai"
+          ]
+        },
+        {
+          "target": "vercel",
+          "kind": "cloud-platform",
+          "tags": [
+            "auth-entry",
+            "cloud-platform",
+            "docs",
+            "spa"
+          ],
+          "go_outcome": "passed",
+          "python_outcome": "passed",
+          "go_duration_ms": 3462,
+          "python_duration_ms": 3725,
+          "go_signals": [
+            "robot_detection"
+          ],
+          "python_signals": [
+            "robot_detection"
+          ]
+        },
+        {
+          "target": "vite",
+          "kind": "framework-docs",
+          "tags": [
+            "docs",
+            "spa"
+          ],
+          "go_outcome": "passed",
+          "python_outcome": "passed",
+          "go_duration_ms": 3273,
+          "python_duration_ms": 3257,
+          "go_signals": [],
+          "python_signals": []
+        },
+        {
+          "target": "vue",
+          "kind": "framework-docs",
+          "tags": [
+            "docs",
+            "spa"
+          ],
+          "go_outcome": "passed",
+          "python_outcome": "passed",
+          "go_duration_ms": 3304,
+          "python_duration_ms": 3292,
+          "go_signals": [],
+          "python_signals": []
+        },
+        {
+          "target": "walmart",
+          "kind": "marketplace",
+          "tags": [
+            "ecommerce",
+            "auth-entry",
+            "media-heavy"
+          ],
+          "go_outcome": "passed",
+          "python_outcome": "passed",
+          "go_duration_ms": 3395,
+          "python_duration_ms": 3367,
+          "go_signals": [
+            "captcha",
+            "robot_detection",
+            "akamai",
+            "perimeterx"
+          ],
+          "python_signals": [
+            "captcha",
+            "robot_detection",
+            "akamai",
+            "perimeterx"
+          ]
+        },
+        {
+          "target": "web-dev",
+          "kind": "browser-docs",
+          "tags": [
+            "docs",
+            "static"
+          ],
+          "go_outcome": "passed",
+          "python_outcome": "passed",
+          "go_duration_ms": 3963,
+          "python_duration_ms": 4121,
+          "go_signals": [
+            "captcha",
+            "robot_detection"
+          ],
+          "python_signals": [
+            "captcha",
+            "robot_detection"
+          ]
+        },
+        {
+          "target": "wikipedia",
+          "kind": "reference-site",
+          "tags": [
+            "static",
+            "media-heavy"
+          ],
+          "go_outcome": "passed",
+          "python_outcome": "passed",
+          "go_duration_ms": 3281,
+          "python_duration_ms": 9459,
+          "go_signals": [
+            "robot_detection"
+          ],
+          "python_signals": [
+            "robot_detection"
+          ]
+        },
+        {
+          "target": "yahoo-news",
+          "kind": "news-site",
+          "tags": [
+            "media-heavy",
+            "spa"
+          ],
+          "go_outcome": "passed",
+          "python_outcome": "passed",
+          "go_duration_ms": 4108,
+          "python_duration_ms": 3647,
+          "go_signals": [
+            "robot_detection"
+          ],
+          "python_signals": [
+            "robot_detection"
+          ]
+        },
+        {
+          "target": "ycombinator",
+          "kind": "startup-platform",
+          "tags": [
+            "auth-entry",
+            "static"
+          ],
+          "go_outcome": "passed",
+          "python_outcome": "passed",
+          "go_duration_ms": 3411,
+          "python_duration_ms": 3375,
+          "go_signals": [
+            "robot_detection"
+          ],
+          "python_signals": [
+            "robot_detection"
+          ]
+        }
+      ],
+      "outcome_groups": {
+        "shared_blocked_targets": [
+          "adidas",
+          "ap-news",
+          "ebay",
+          "g2",
+          "huggingface",
+          "nowsecure-cloudflare",
+          "oracle-cloud",
+          "perplexity",
+          "stackoverflow"
+        ],
+        "shared_failed_targets": [],
+        "go_only_regressions": [],
+        "python_only_differences": []
+      },
+      "outcome_mismatches": []
+    }
+  ],
+  "summary": {
+    "go": {
+      "total": 100,
+      "passed": 91,
+      "blocked": 9,
+      "failed": 0,
+      "wall_ms": 361018,
+      "target_duration_ms": 357829,
+      "avg_target_ms": 3577,
+      "peak_rss_mib": 2591.890625,
+      "peak_cpu_percent": 544.2,
+      "report_json_bytes": 43178,
+      "report_markdown_bytes": 9076,
+      "report_json_estimated_tokens": 10794,
+      "report_markdown_estimated_tokens": 2269,
+      "report_total_estimated_tokens": 13064
+    },
+    "python": {
+      "total": 100,
+      "passed": 91,
+      "blocked": 9,
+      "failed": 0,
+      "wall_ms": 925972,
+      "target_duration_ms": 888313,
+      "avg_target_ms": 8882,
+      "peak_rss_mib": 2383.3125,
+      "peak_cpu_percent": 401.4,
+      "report_json_bytes": 319873,
+      "report_markdown_bytes": 9011,
+      "report_json_estimated_tokens": 79968,
+      "report_markdown_estimated_tokens": 2253,
+      "report_total_estimated_tokens": 82221
+    },
+    "ratios": {
+      "wall_time": 0.38988003956923106,
+      "target_duration": 0.40281860110118844,
+      "peak_rss": 1.0875160622033408,
+      "peak_cpu": 1.3557548579970107,
+      "report_tokens": 0.15888884834774572
+    },
+    "outcome_mismatch_count": 3,
+    "go_only_regression_count": 0
+  },
+  "persona_bundle": {
+    "artifact": "dist/benchmarks/v0.1.22-lock-final-2/persona.json",
+    "sha256": "239a4cd650fa9a992289e3b06775d73ae02e4382684d57a04d2b40313bd3b02f",
+    "persona_os": "linux",
+    "camoufox_version": "v135.0.1-beta.24",
+    "hardware_concurrency": 12,
+    "screen_width": 1600,
+    "screen_height": 900
+  },
+  "go_python_benchmark_readiness": {
+    "status": "blocked",
+    "candidate": false,
+    "criteria": [
+      {
+        "name": "go_sidecar_runtime_is_node_direct",
+        "passed": true,
+        "detail": "go_sidecar_runtime=node-direct"
+      },
+      {
+        "name": "shared_linux_persona_bundle",
+        "passed": true,
+        "detail": "persona_os=linux persona_bundle_sha256=239a4cd650fa9a992289e3b06775d73ae02e4382684d57a04d2b40313bd3b02f"
+      },
+      {
+        "name": "extended_target_matrix",
+        "passed": true,
+        "detail": "mode=extended targets=100"
+      },
+      {
+        "name": "no_go_only_outcome_regressions",
+        "passed": true,
+        "detail": "go_only_regression_count=0 outcome_mismatch_count=3"
+      },
+      {
+        "name": "no_runtime_failures",
+        "passed": true,
+        "detail": "go_failed=0 python_failed=0"
+      },
+      {
+        "name": "wall_time_not_slower_than_python",
+        "passed": true,
+        "detail": "wall_time=0.38988003956923106 max=1.05"
+      },
+      {
+        "name": "target_duration_not_slower_than_python",
+        "passed": true,
+        "detail": "target_duration=0.40281860110118844 max=1.05"
+      },
+      {
+        "name": "peak_rss_beats_python",
+        "passed": false,
+        "detail": "peak_rss=1.0875160622033408 max=0.95"
+      },
+      {
+        "name": "peak_cpu_beats_python",
+        "passed": false,
+        "detail": "peak_cpu=1.3557548579970107 max=0.95"
+      },
+      {
+        "name": "report_tokens_beats_python",
+        "passed": true,
+        "detail": "report_tokens=0.15888884834774572 max=0.5"
+      }
+    ],
+    "note": "Go/Python benchmark candidate means node-direct passed the extended comparison gate. Consumer no-Python readiness is recorded separately by scripts/no-python-consumer-canary.sh."
+  },
+  "python_removal_readiness": {
+    "status": "blocked",
+    "candidate": false,
+    "criteria": [
+      {
+        "name": "go_sidecar_runtime_is_node_direct",
+        "passed": true,
+        "detail": "go_sidecar_runtime=node-direct"
+      },
+      {
+        "name": "shared_linux_persona_bundle",
+        "passed": true,
+        "detail": "persona_os=linux persona_bundle_sha256=239a4cd650fa9a992289e3b06775d73ae02e4382684d57a04d2b40313bd3b02f"
+      },
+      {
+        "name": "extended_target_matrix",
+        "passed": true,
+        "detail": "mode=extended targets=100"
+      },
+      {
+        "name": "no_go_only_outcome_regressions",
+        "passed": true,
+        "detail": "go_only_regression_count=0 outcome_mismatch_count=3"
+      },
+      {
+        "name": "no_runtime_failures",
+        "passed": true,
+        "detail": "go_failed=0 python_failed=0"
+      },
+      {
+        "name": "wall_time_not_slower_than_python",
+        "passed": true,
+        "detail": "wall_time=0.38988003956923106 max=1.05"
+      },
+      {
+        "name": "target_duration_not_slower_than_python",
+        "passed": true,
+        "detail": "target_duration=0.40281860110118844 max=1.05"
+      },
+      {
+        "name": "peak_rss_beats_python",
+        "passed": false,
+        "detail": "peak_rss=1.0875160622033408 max=0.95"
+      },
+      {
+        "name": "peak_cpu_beats_python",
+        "passed": false,
+        "detail": "peak_cpu=1.3557548579970107 max=0.95"
+      },
+      {
+        "name": "report_tokens_beats_python",
+        "passed": true,
+        "detail": "report_tokens=0.15888884834774572 max=0.5"
+      }
+    ],
+    "note": "Go/Python benchmark candidate means node-direct passed the extended comparison gate. Consumer no-Python readiness is recorded separately by scripts/no-python-consumer-canary.sh."
+  }
+}

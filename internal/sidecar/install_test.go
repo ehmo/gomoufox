@@ -847,6 +847,31 @@ func TestBrowserExecutableDiscoveryHelpers(t *testing.T) {
 	}
 }
 
+func TestLinuxCamoufoxBinDiscovery(t *testing.T) {
+	restore := setSidecarRuntime(t, "linux", "amd64")
+	defer restore()
+
+	root := t.TempDir()
+	executable := filepath.Join(root, "camoufox-bin")
+	if err := os.WriteFile(executable, []byte("fake executable"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := findBrowserExecutable(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != executable {
+		t.Fatalf("executable = %q want %q", got, executable)
+	}
+	if !isBrowserExecutableName("camoufox-bin") {
+		t.Fatal("camoufox-bin was not classified as a Linux browser executable")
+	}
+	if got := browserExecutableCandidates(); len(got) != 3 || got[0] != "camoufox-bin" || got[1] != "camoufox" || got[2] != "firefox" {
+		t.Fatalf("Linux candidates = %#v", got)
+	}
+}
+
 func TestCamoufoxCacheRootsAndUnsupportedManifestPlatform(t *testing.T) {
 	restoreCache := replaceUserCacheDir(t, "", errors.New("cache unavailable"))
 	if roots := camoufoxBrowserCacheRoots(); roots != nil {

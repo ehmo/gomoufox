@@ -215,7 +215,7 @@
       ],
       "name": "serve",
       "summary": "run the local daemon HTTP API for CLI forwarding",
-      "usage": "gomoufox serve --auth-token <token> [--bind 127.0.0.1] [--port 3741] [--session-dir <dir>]"
+      "usage": "gomoufox serve [--auth-token <token>] [--bind 127.0.0.1] [--port 3741] [--session-dir <dir>]"
     },
     {
       "examples": [

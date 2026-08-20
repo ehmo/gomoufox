@@ -684,17 +684,22 @@ def display_path(path_value):
 def aggregate(runs):
     go = aggregate_runtime(run["go"] for run in runs)
     python = aggregate_runtime(run["python"] for run in runs)
-    go_only_regression_count = sum(
-        len((run.get("outcome_groups") or {}).get("go_only_regressions") or [])
-        for run in runs
-    )
     return {
         "go": go,
         "python": python,
         "ratios": ratios(go, python),
         "outcome_mismatch_count": sum(len(run["outcome_mismatches"]) for run in runs),
-        "go_only_regression_count": go_only_regression_count,
+        "go_only_regression_count": persistent_go_only_regression_count(runs),
     }
+
+
+def persistent_go_only_regression_count(runs):
+    persistent = None
+    for run in runs:
+        groups = run.get("outcome_groups") or outcome_groups(run.get("target_outcomes") or [])
+        current = set(groups.get("go_only_regressions") or [])
+        persistent = current if persistent is None else persistent & current
+    return len(persistent or set())
 
 
 def python_removal_readiness(benchmark):
@@ -879,6 +884,7 @@ def markdown_report(benchmark):
         "## Pass/Fail Rules",
         "",
         "- Go-only blocked, failed, or missing targets block release.",
+        "- Across alternating loops, a target counts as Go-only only when its Go-only outcome persists in every paired observation. Paired mismatches remain recorded.",
         "- Go-only JS-visible fingerprint drift between gomoufox Python sidecar and gomoufox node-direct blocks release unless the changed field is explicitly allowlisted with evidence.",
         "- Go/Python outcome mismatches that persist through the paired confirmation block release.",
         "- Shared Go+Python blocked or failed targets are reported as site or upstream Camoufox behavior, not a gomoufox-only failure.",

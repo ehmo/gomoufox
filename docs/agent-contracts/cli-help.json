@@ -54,7 +54,7 @@
     },
     {
       "name": "serve",
-      "usage": "gomoufox serve --auth-token <token> [--bind 127.0.0.1] [--port 3741] [--session-dir <dir>]"
+      "usage": "gomoufox serve [--auth-token <token>] [--bind 127.0.0.1] [--port 3741] [--session-dir <dir>]"
     },
     {
       "name": "mcp",

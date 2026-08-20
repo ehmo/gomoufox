@@ -54,6 +54,8 @@ jobs:
         run: git checkout --detach "refs/tags/${{ steps.tag.outputs.tag }}"
       - name: Public contract
         run: python3 scripts/check-public-release-contract.py .
+      - name: Workflow syntax
+        run: go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12 -config-file .github/actionlint.yaml .github/workflows/*.yml
       - name: Docs number format
         run: python3 scripts/format-doc-numbers.py
       - name: Unit tests
@@ -87,6 +89,46 @@ jobs:
         run: |
           awk -v tag="${{ steps.tag.outputs.tag }}" '$0 == "## " tag {flag=1; next} /^## /{if(flag) exit} flag {print}' CHANGELOG.md > release-notes.md
           test -s release-notes.md
+      - name: Build container candidate
+        run: |
+          tag="${{ steps.tag.outputs.tag }}"
+          docker build \
+            --build-arg "VERSION=$tag" \
+            --tag "gomoufox:$tag" \
+            .
+      - name: Container daemon smoke
+        env:
+          GOMOUFOX_CONTAINER_TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          image="gomoufox:$GOMOUFOX_CONTAINER_TAG"
+          client="dist/release/$GOMOUFOX_CONTAINER_TAG/gomoufox"
+          test "$(docker run --rm "$image" --version)" = "gomoufox $GOMOUFOX_CONTAINER_TAG"
+          docker run --rm "$image" doctor
+          container_id="$(docker run --detach --rm --init \
+            --publish 127.0.0.1::3741 \
+            --env GOMOUFOX_DAEMON_TOKEN=container-smoke-token \
+            "$image")"
+          cleanup() {
+            docker logs "$container_id" 2>&1 || true
+            docker stop "$container_id" >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+          address="$(docker port "$container_id" 3741/tcp)"
+          ready=false
+          for _ in {1..30}; do
+            if curl --fail --silent --show-error \
+              --header "Authorization: Bearer container-smoke-token" \
+              "http://$address/v1/health" >/dev/null; then
+              ready=true
+              break
+            fi
+            sleep 1
+          done
+          test "$ready" = true
+          GOMOUFOX_DAEMON_TOKEN=container-smoke-token \
+            "$client" --server "http://$address" \
+            get https://example.com --text > /tmp/gomoufox-container-page.txt
+          grep -q "Example Domain" /tmp/gomoufox-container-page.txt
       - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
           name: gomoufox-${{ steps.tag.outputs.tag }}-candidate
@@ -171,3 +213,93 @@ jobs:
           name: gomoufox-${{ needs.gate-public-release.outputs.tag }}-public-audit
           path: dist/release/${{ needs.gate-public-release.outputs.tag }}/public-audit.json
           if-no-files-found: error
+
+  publish-container:
+    if: github.repository == 'ehmo/gomoufox'
+    needs:
+      - gate-public-release
+      - publish-public-release
+    runs-on: ubicloud-standard-2
+    timeout-minutes: 120
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          fetch-depth: 0
+      - name: Checkout tag
+        run: git checkout --detach "refs/tags/${{ needs.gate-public-release.outputs.tag }}"
+      - name: Resolve container tags
+        id: container
+        run: |
+          tag="${{ needs.gate-public-release.outputs.tag }}"
+          version="${tag#v}"
+          latest="$(git tag --sort=-version:refname | awk '/^v[0-9]+\.[0-9]+\.[0-9]+$/ {print; exit}')"
+          test -n "$latest"
+          {
+            echo 'tags<<EOF'
+            echo "ghcr.io/${{ github.repository }}:$tag"
+            echo "ghcr.io/${{ github.repository }}:$version"
+            if [ "$tag" = "$latest" ]; then
+              echo "ghcr.io/${{ github.repository }}:latest"
+            fi
+            echo EOF
+          } >> "$GITHUB_OUTPUT"
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4
+      - name: Build and publish container
+        id: image
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7
+        with:
+          context: .
+          platforms: linux/amd64
+          push: true
+          tags: ${{ steps.container.outputs.tags }}
+          build-args: VERSION=${{ needs.gate-public-release.outputs.tag }}
+          provenance: mode=max
+          sbom: true
+      - name: Verify public container digest
+        env:
+          GOMOUFOX_CONTAINER_TAG: ${{ needs.gate-public-release.outputs.tag }}
+        run: |
+          image="ghcr.io/${{ github.repository }}@${{ steps.image.outputs.digest }}"
+          echo "Container digest: ${{ steps.image.outputs.digest }}" >> "$GITHUB_STEP_SUMMARY"
+          docker logout ghcr.io
+          docker pull "$image"
+          test "$(docker run --rm "$image" --version)" = "gomoufox $GOMOUFOX_CONTAINER_TAG"
+          docker run --rm "$image" doctor
+          daemon_id="$(docker run --detach --rm --init \
+            --env GOMOUFOX_DAEMON_TOKEN=container-smoke-token \
+            "$image")"
+          cleanup() {
+            docker logs "$daemon_id" 2>&1 || true
+            docker stop "$daemon_id" >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+          ready=false
+          for _ in {1..30}; do
+            if docker run --rm \
+              --network "container:$daemon_id" \
+              --entrypoint /bin/bash \
+              "$image" \
+              -c 'curl --fail --silent --show-error \
+                --header "Authorization: Bearer container-smoke-token" \
+                http://127.0.0.1:3741/v1/health >/dev/null'; then
+              ready=true
+              break
+            fi
+            sleep 1
+          done
+          test "$ready" = true
+          docker run --rm \
+            --network "container:$daemon_id" \
+            --env GOMOUFOX_DAEMON_TOKEN=container-smoke-token \
+            "$image" \
+            --server http://127.0.0.1:3741 \
+            get https://example.com --text > /tmp/gomoufox-published-container-page.txt
+          grep -q "Example Domain" /tmp/gomoufox-published-container-page.txt

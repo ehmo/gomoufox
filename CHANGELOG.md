@@ -1,5 +1,18 @@
 # Changelog
 
+## v0.1.22
+
+- Recognize the upstream `camoufox-bin` executable in Linux managed browser
+  archives, with regression coverage for executable discovery.
+- Publish a Linux amd64 container image at `ghcr.io/ehmo/gomoufox` with the
+  pinned node-direct runtime preinstalled.
+- Let `gomoufox serve` read its bearer token from
+  `GOMOUFOX_DAEMON_TOKEN`, while keeping `--auth-token` as the explicit
+  override.
+- Build and exercise the container daemon before release publication, then
+  publish versioned and latest image tags with registry provenance and SBOM
+  attestations.
+
 ## v0.1.21
 
 - Fix clean node-direct installs so `launchServer.js` resolves the pinned

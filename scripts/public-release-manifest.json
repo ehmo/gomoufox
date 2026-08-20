@@ -1,7 +1,9 @@
 {
   "root_files": [
+    ".dockerignore",
     "CHANGELOG.md",
     "CONTRIBUTING.md",
+    "Dockerfile",
     "LICENSE",
     "README.md",
     "SECURITY.md",
@@ -28,7 +30,9 @@
     "docs/benchmarks/2026-06-24-node-direct-readiness.json",
     "docs/benchmarks/2026-07-20-node-direct-readiness.json",
     "docs/benchmarks/2026-07-29-node-direct-readiness.json",
-    "docs/personas/2026-07-29-node-direct-readiness.json"
+    "docs/benchmarks/2026-08-20-node-direct-readiness.json",
+    "docs/personas/2026-07-29-node-direct-readiness.json",
+    "docs/personas/2026-08-20-node-direct-readiness.json"
   ],
   "scripts": [
     "audit-public-release.py",

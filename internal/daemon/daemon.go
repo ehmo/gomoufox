@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -98,7 +99,8 @@ func (s *Server) authorized(r *http.Request) bool {
 	if !strings.HasPrefix(auth, "Bearer ") {
 		return false
 	}
-	return strings.TrimPrefix(auth, "Bearer ") == s.cfg.AuthToken
+	provided := strings.TrimPrefix(auth, "Bearer ")
+	return subtle.ConstantTimeCompare([]byte(provided), []byte(s.cfg.AuthToken)) == 1
 }
 
 func (s *Server) health(w http.ResponseWriter) {

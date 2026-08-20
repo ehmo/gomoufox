@@ -13,6 +13,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"strconv"
 	"strings"
@@ -155,12 +156,13 @@ func TestEvalDisabledExactError(t *testing.T) {
 }
 
 func TestServeRequiresAuthToken(t *testing.T) {
+	t.Setenv("GOMOUFOX_DAEMON_TOKEN", "")
 	var stderr bytes.Buffer
 	code := Runner{}.Run(context.Background(), []string{"serve"}, Streams{Stderr: &stderr})
 	if code != ExitSessionAuth {
 		t.Fatalf("code = %d", code)
 	}
-	if got := stderr.String(); got != "gomoufox serve requires --auth-token\n" {
+	if got := stderr.String(); got != "gomoufox serve requires --auth-token or GOMOUFOX_DAEMON_TOKEN\n" {
 		t.Fatalf("stderr = %q", got)
 	}
 }
@@ -283,6 +285,56 @@ func TestServeHookReceivesParsedRequest(t *testing.T) {
 	code := runner.Run(context.Background(), []string{"serve", "--auth-token", "tok", "--bind=127.0.0.2", "--port", "3888", "--enable-eval", "--allow-session-export", "--allowed-origins", "https://example.com", "--allowed-hosts=.example.com"}, Streams{Stdout: &stdout, Stderr: &stderr})
 	if code != ExitOK || !called {
 		t.Fatalf("code=%d called=%v stdout=%q stderr=%q", code, called, stdout.String(), stderr.String())
+	}
+}
+
+func TestServeUsesDaemonTokenEnvironment(t *testing.T) {
+	t.Setenv("GOMOUFOX_DAEMON_TOKEN", "environment-token")
+	var got []string
+	runner := Runner{Hooks: Hooks{Serve: func(_ context.Context, req ServeRequest) error {
+		got = append(got, req.AuthToken)
+		return nil
+	}}}
+
+	if code := runner.Run(context.Background(), []string{"serve"}, Streams{Stderr: io.Discard}); code != ExitOK {
+		t.Fatalf("environment token code = %d", code)
+	}
+	if code := runner.Run(context.Background(), []string{"serve", "--auth-token", "flag-token"}, Streams{Stderr: io.Discard}); code != ExitOK {
+		t.Fatalf("flag token code = %d", code)
+	}
+	if want := []string{"environment-token", "flag-token"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("tokens = %#v want %#v", got, want)
+	}
+}
+
+func TestServeExplicitEmptyTokenDoesNotFallBackToEnvironment(t *testing.T) {
+	t.Setenv("GOMOUFOX_DAEMON_TOKEN", "environment-token")
+	called := false
+	runner := Runner{Hooks: Hooks{Serve: func(context.Context, ServeRequest) error {
+		called = true
+		return nil
+	}}}
+	var stderr bytes.Buffer
+	code := runner.Run(context.Background(), []string{"serve", "--auth-token="}, Streams{Stderr: &stderr})
+	if code != ExitSessionAuth || called {
+		t.Fatalf("code=%d called=%v stderr=%q", code, called, stderr.String())
+	}
+	if got := stderr.String(); got != "gomoufox serve requires --auth-token or GOMOUFOX_DAEMON_TOKEN\n" {
+		t.Fatalf("stderr = %q", got)
+	}
+}
+
+func TestDefaultServeHTTPServerHasDefensiveTimeouts(t *testing.T) {
+	handler := http.NewServeMux()
+	server := newDefaultServeHTTPServer(ServeRequest{Bind: "127.0.0.2", Port: 3888}, handler)
+	if server.Addr != "127.0.0.2:3888" || server.Handler != handler {
+		t.Fatalf("server address/handler = %q %#v", server.Addr, server.Handler)
+	}
+	if server.ReadHeaderTimeout != 10*time.Second || server.ReadTimeout != 15*time.Second || server.IdleTimeout != 60*time.Second {
+		t.Fatalf("server timeouts = header %s read %s idle %s", server.ReadHeaderTimeout, server.ReadTimeout, server.IdleTimeout)
+	}
+	if server.MaxHeaderBytes != 16<<10 || server.WriteTimeout != 0 {
+		t.Fatalf("server bounds = max headers %d write timeout %s", server.MaxHeaderBytes, server.WriteTimeout)
 	}
 }
 

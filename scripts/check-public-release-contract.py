@@ -48,8 +48,8 @@ FORBIDDEN_TEXT = {
 
 TEXT_SUFFIXES = {".go", ".js", ".json", ".md", ".mod", ".sum", ".sh", ".py", ".rb", ".yml", ".yaml", ".txt"}
 BINARY_SUFFIXES = {".png"}
-TEXT_FILE_NAMES = {".gitignore", "LICENSE"}
-ALLOWED_DOT_PARTS = {".github", ".gitignore"}
+TEXT_FILE_NAMES = {".dockerignore", ".gitignore", "Dockerfile", "LICENSE"}
+ALLOWED_DOT_PARTS = {".dockerignore", ".github", ".gitignore"}
 SOURCE_DIRS = {"camoufoxcfg", "cmd", "internal"}
 BENCHMARK_LINK_PATTERN = re.compile(r"\]\((docs/benchmarks/[^)\s]+\.json)\)")
 RELEASE_HEADING_PATTERN = re.compile(r"^## (v[0-9]+\.[0-9]+\.[0-9]+)\b", re.MULTILINE)

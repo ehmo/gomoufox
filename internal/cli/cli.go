@@ -749,7 +749,7 @@ func commandHelps() []commandHelp {
 		},
 		{
 			Name:    "serve",
-			Usage:   "gomoufox serve --auth-token <token> [--bind 127.0.0.1] [--port 3741] [--session-dir <dir>]",
+			Usage:   "gomoufox serve [--auth-token <token>] [--bind 127.0.0.1] [--port 3741] [--session-dir <dir>]",
 			Summary: "run the local daemon HTTP API for CLI forwarding",
 			Flags:   []string{"--auth-token", "--bind", "--port", "--session-dir", "--enable-eval", "--allow-session-export", "--allowed-origins", "--allowed-hosts"},
 		},
@@ -811,10 +811,14 @@ func (r Runner) runServe(ctx context.Context, global globalFlags, args []string,
 		_, _ = fmt.Fprintln(streams.Stderr, "usage: gomoufox serve [flags]")
 		return ExitUsage
 	}
+	authToken := os.Getenv("GOMOUFOX_DAEMON_TOKEN")
+	if parsed.has("auth-token") {
+		authToken = parsed.value("auth-token")
+	}
 	req := ServeRequest{
 		Bind:               parsed.valueDefault("bind", "127.0.0.1"),
 		Port:               3741,
-		AuthToken:          parsed.value("auth-token"),
+		AuthToken:          authToken,
 		EnableEval:         parsed.bool("enable-eval"),
 		AllowSessionExport: parsed.bool("allow-session-export"),
 		SessionDir:         parsed.valueDefault("session-dir", defaultServeSessionDir()),
@@ -830,7 +834,7 @@ func (r Runner) runServe(ctx context.Context, global globalFlags, args []string,
 		req.Port = port
 	}
 	if req.AuthToken == "" {
-		_, _ = fmt.Fprintln(streams.Stderr, "gomoufox serve requires --auth-token")
+		_, _ = fmt.Fprintln(streams.Stderr, "gomoufox serve requires --auth-token or GOMOUFOX_DAEMON_TOKEN")
 		return ExitSessionAuth
 	}
 	if parsed.has("bind") && !isLoopbackBind(req.Bind) {
@@ -1028,7 +1032,7 @@ func defaultServe(ctx context.Context, req ServeRequest) error {
 	if err != nil {
 		return err
 	}
-	httpServer := &http.Server{Addr: fmt.Sprintf("%s:%d", req.Bind, req.Port), Handler: server}
+	httpServer := newDefaultServeHTTPServer(req, server)
 	go func() {
 		<-ctx.Done()
 		_ = httpServer.Shutdown(context.Background())
@@ -1038,6 +1042,17 @@ func defaultServe(ctx context.Context, req ServeRequest) error {
 		return nil
 	}
 	return err
+}
+
+func newDefaultServeHTTPServer(req ServeRequest, handler http.Handler) *http.Server {
+	return &http.Server{
+		Addr:              fmt.Sprintf("%s:%d", req.Bind, req.Port),
+		Handler:           handler,
+		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       15 * time.Second,
+		IdleTimeout:       60 * time.Second,
+		MaxHeaderBytes:    16 << 10,
+	}
 }
 
 func newDefaultServeDaemon(req ServeRequest) (*daemon.Server, error) {
