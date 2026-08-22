@@ -32,7 +32,14 @@ var (
 	fileStat            = os.Stat
 	fileRename          = os.Rename
 	fileRemove          = os.Remove
-	contentExtract      = content.Extract
+	mcpMkdirTemp        = os.MkdirTemp
+	mcpRemoveAll        = os.RemoveAll
+	mcpResolveWrite     = func(j policy.Jail, path string, overwrite bool) (string, error) {
+		return j.ResolveWrite(path, overwrite)
+	}
+	mcpConfinedPath = func(j policy.Jail, resolved string) (string, error) { return j.ConfinedPath(resolved) }
+	mcpTimeUntil    = time.Until
+	contentExtract  = content.Extract
 )
 
 var browserCookieActions = []string{"get", "set", "clear"}
@@ -1532,16 +1539,16 @@ func (s *Server) browserDownload(ctx context.Context, args json.RawMessage) Resp
 	if err != nil {
 		return mcpError("path_rejected")
 	}
-	responsePath, _ := s.jail.ConfinedPath(resolved)
+	responsePath, _ := mcpConfinedPath(s.jail, resolved)
 	timeout, timeoutOK := timeoutFromMS(in.TimeoutMS, 30*time.Second, 0, 120000)
 	if !timeoutOK {
 		return mcpError("invalid_arguments")
 	}
-	tmpDir, err := os.MkdirTemp(s.jail.Root, ".download-*")
+	tmpDir, err := mcpMkdirTemp(s.jail.Root, ".download-*")
 	if err != nil {
 		return mcpError("file_save_failed")
 	}
-	defer func() { _ = os.RemoveAll(tmpDir) }()
+	defer func() { _ = mcpRemoveAll(tmpDir) }()
 	tmpPath := filepath.Join(tmpDir, "download.bin")
 	sessionID := defaultSession(in.SessionID)
 	return s.withBrowserSession(ctx, sessionID, nil, func(_ *sessionState, browser browserSession) Response {
@@ -1559,12 +1566,12 @@ func (s *Server) browserDownload(ctx context.Context, args json.RawMessage) Resp
 			_ = fileRemove(tmpPath)
 			return mcpError("file_too_large")
 		}
-		finalResolved, err := s.jail.ResolveWrite(in.Path, in.Overwrite)
+		finalResolved, err := mcpResolveWrite(s.jail, in.Path, in.Overwrite)
 		if err != nil {
 			_ = fileRemove(tmpPath)
 			return mcpError("path_rejected")
 		}
-		if responsePath, err = s.jail.ConfinedPath(finalResolved); err != nil {
+		if responsePath, err = mcpConfinedPath(s.jail, finalResolved); err != nil {
 			_ = fileRemove(tmpPath)
 			return mcpError("path_rejected")
 		}
@@ -2439,7 +2446,7 @@ func (s *Server) browserHARStart(ctx context.Context, args json.RawMessage) Resp
 			return mcpError("har_path_rejected")
 		}
 	}
-	resolved, err := s.jail.ResolveWrite(in.Path, in.Overwrite)
+	resolved, err := mcpResolveWrite(s.jail, in.Path, in.Overwrite)
 	if err != nil {
 		if !in.Overwrite {
 			if existing, existingErr := s.jail.ResolveWrite(in.Path, true); existingErr == nil && existing != "" {
@@ -2448,7 +2455,7 @@ func (s *Server) browserHARStart(ctx context.Context, args json.RawMessage) Resp
 		}
 		return mcpError("har_path_rejected")
 	}
-	responsePath, err := s.jail.ConfinedPath(resolved)
+	responsePath, err := mcpConfinedPath(s.jail, resolved)
 	if err != nil {
 		return mcpError("har_path_rejected")
 	}
@@ -2474,7 +2481,7 @@ func (s *Server) browserHARStart(ctx context.Context, args json.RawMessage) Resp
 		return sessionError(err)
 	}
 	session.opMu.Lock()
-	remaining := time.Until(harOpts.deadline)
+	remaining := mcpTimeUntil(harOpts.deadline)
 	if remaining <= 0 || sessionLifecycle(session.lifecycle.Load()) != sessionInitializing {
 		err = errSessionClosing
 	} else {

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -18,6 +19,7 @@ import (
 	gomoufox "github.com/ehmo/gomoufox"
 	"github.com/ehmo/gomoufox/camoufoxcfg"
 	"github.com/ehmo/gomoufox/internal/content"
+	"github.com/ehmo/gomoufox/internal/netguard"
 	"github.com/ehmo/gomoufox/internal/policy"
 	"github.com/ehmo/gomoufox/internal/safefile"
 )
@@ -46,10 +48,11 @@ func defaultLocalCommand(ctx context.Context, req LocalCommandRequest) (LocalCom
 }
 
 var (
-	openPageForLocal    = openRealPage
-	openBrowserForLocal = openRealBrowser
-	newGomoufoxForLocal = gomoufox.New
-	newBrowserForLocal  = func(ctx context.Context, opts ...gomoufox.Option) (gomoufoxBrowserForLocal, error) {
+	openPageForLocal           = openRealPage
+	openBrowserForLocal        = openRealBrowser
+	newGomoufoxForLocal        = gomoufox.New
+	withAllowLocalhostForLocal = gomoufox.WithAllowLocalhost
+	newBrowserForLocal         = func(ctx context.Context, opts ...gomoufox.Option) (gomoufoxBrowserForLocal, error) {
 		b, err := newGomoufoxForLocal(ctx, opts...)
 		if err != nil {
 			return nil, err
@@ -59,10 +62,13 @@ var (
 	closeGomoufoxBrowserForLocal = (*gomoufox.Browser).Close
 	extractContentForLocal       = content.Extract
 	unmarshalStorageStateJSON    = json.Unmarshal
+	localProfileAbs              = filepath.Abs
+	localResponseStatus          = (*gomoufox.Response).Status
+	localResponseHeaders         = (*gomoufox.Response).Headers
 )
 
 type localPage interface {
-	Goto(context.Context, string, ...gomoufox.GotoOption) error
+	Goto(context.Context, string, ...gomoufox.GotoOption) (*localNavigationResponse, error)
 	WaitForSelector(context.Context, string) error
 	Content(context.Context) (string, error)
 	BodyText(context.Context) (string, error)
@@ -75,6 +81,73 @@ type localPage interface {
 	WaitClosed(context.Context) error
 	StorageState(context.Context) (*gomoufox.StorageState, error)
 	Close() error
+}
+
+type localNavigationResponse struct {
+	Status  int
+	Headers map[string]string
+}
+
+func blockedNavigationResponse(req LocalCommandRequest, nav *localNavigationResponse) (LocalCommandResponse, bool) {
+	if nav == nil || nav.Status != http.StatusForbidden {
+		return LocalCommandResponse{}, false
+	}
+	reason, ok := netguard.ConsumeBlockedMarker(navigationHeader(nav.Headers, netguard.BlockedHeader))
+	if !ok {
+		return LocalCommandResponse{}, false
+	}
+	return localGuardrailBlockedResponse(req, reason), true
+}
+
+func checkedNavigationResponse(req LocalCommandRequest, nav *localNavigationResponse, err error) (LocalCommandResponse, bool, error) {
+	if err != nil {
+		if errors.Is(err, gomoufox.ErrURLBlocked) {
+			return localGuardrailBlockedResponse(req, err.Error()), true, nil
+		}
+		return LocalCommandResponse{}, false, err
+	}
+	blocked, ok := blockedNavigationResponse(req, nav)
+	return blocked, ok, nil
+}
+
+func localGuardrailBlockedResponse(req LocalCommandRequest, reason string) LocalCommandResponse {
+	detail := strings.TrimSpace(reason)
+	for {
+		trimmed := detail
+		for _, prefix := range []string{gomoufox.ErrURLBlocked.Error() + ":", netguard.ErrBlocked.Error() + ":"} {
+			if strings.HasPrefix(trimmed, prefix) {
+				trimmed = strings.TrimSpace(strings.TrimPrefix(trimmed, prefix))
+				break
+			}
+		}
+		if trimmed == detail {
+			break
+		}
+		detail = trimmed
+	}
+	message := netguard.ErrBlocked.Error()
+	if detail != "" && detail != message && detail != gomoufox.ErrURLBlocked.Error() {
+		message += ": " + detail
+	}
+	resp := LocalCommandResponse{ExitCode: ExitURLBlocked, Stderr: message + "\n"}
+	if req.JSON {
+		var out bytes.Buffer
+		_ = json.NewEncoder(&out).Encode(struct {
+			Error   string `json:"error"`
+			Message string `json:"message"`
+		}{Error: "url_blocked", Message: message})
+		resp.Stdout = out.Bytes()
+	}
+	return resp
+}
+
+func navigationHeader(headers map[string]string, name string) string {
+	for key, value := range headers {
+		if strings.EqualFold(key, name) {
+			return value
+		}
+	}
+	return ""
 }
 
 type localStorageBrowser interface {
@@ -129,8 +202,11 @@ func localGet(ctx context.Context, req LocalCommandRequest) (LocalCommandRespons
 	}
 	defer closeAll()
 	target := req.Args[0]
-	if err := p.Goto(ctx, target, gomoufox.WaitUntil(flagString(req, "wait_load_state", "domcontentloaded")), gomoufox.WithTimeout(flagDuration(req, "timeout", 30*time.Second))); err != nil {
+	nav, err := p.Goto(ctx, target, gomoufox.WaitUntil(flagString(req, "wait_load_state", "domcontentloaded")), gomoufox.WithTimeout(flagDuration(req, "timeout", 30*time.Second)))
+	if blocked, ok, err := checkedNavigationResponse(req, nav, err); err != nil {
 		return LocalCommandResponse{}, err
+	} else if ok {
+		return blocked, nil
 	}
 	if selector := flagString(req, "wait_selector", ""); selector != "" {
 		if err := p.WaitForSelector(ctx, selector); err != nil {
@@ -180,8 +256,11 @@ func localScreenshot(ctx context.Context, req LocalCommandRequest) (LocalCommand
 		return LocalCommandResponse{}, err
 	}
 	defer closeAll()
-	if err := p.Goto(ctx, req.Args[0], gomoufox.WaitUntil(flagString(req, "wait_load_state", "load")), gomoufox.WithTimeout(flagDuration(req, "timeout", 30*time.Second))); err != nil {
+	nav, err := p.Goto(ctx, req.Args[0], gomoufox.WaitUntil(flagString(req, "wait_load_state", "load")), gomoufox.WithTimeout(flagDuration(req, "timeout", 30*time.Second)))
+	if blocked, ok, err := checkedNavigationResponse(req, nav, err); err != nil {
 		return LocalCommandResponse{}, err
+	} else if ok {
+		return blocked, nil
 	}
 	if selector := flagString(req, "wait_selector", ""); selector != "" {
 		if err := p.WaitForSelector(ctx, selector); err != nil {
@@ -227,8 +306,11 @@ func localEval(ctx context.Context, req LocalCommandRequest) (LocalCommandRespon
 		return LocalCommandResponse{}, err
 	}
 	defer closeAll()
-	if err := p.Goto(ctx, req.Args[0], gomoufox.WaitUntil(flagString(req, "wait_load_state", "domcontentloaded")), gomoufox.WithTimeout(flagDuration(req, "timeout", 30*time.Second))); err != nil {
+	nav, err := p.Goto(ctx, req.Args[0], gomoufox.WaitUntil(flagString(req, "wait_load_state", "domcontentloaded")), gomoufox.WithTimeout(flagDuration(req, "timeout", 30*time.Second)))
+	if blocked, ok, err := checkedNavigationResponse(req, nav, err); err != nil {
 		return LocalCommandResponse{}, err
+	} else if ok {
+		return blocked, nil
 	}
 	if selector := flagString(req, "wait_selector", ""); selector != "" {
 		if err := p.WaitForSelector(ctx, selector); err != nil {
@@ -261,8 +343,11 @@ func localFetch(ctx context.Context, req LocalCommandRequest) (LocalCommandRespo
 	}
 	defer closeAll()
 	if nav := flagString(req, "navigate_first", ""); nav != "" {
-		if err := p.Goto(ctx, nav, gomoufox.WithTimeout(flagDuration(req, "timeout", 30*time.Second))); err != nil {
+		navResp, err := p.Goto(ctx, nav, gomoufox.WithTimeout(flagDuration(req, "timeout", 30*time.Second)))
+		if blocked, ok, err := checkedNavigationResponse(req, navResp, err); err != nil {
 			return LocalCommandResponse{}, err
+		} else if ok {
+			return blocked, nil
 		}
 	}
 	body, err := bodyFromFlags(req)
@@ -279,6 +364,9 @@ func localFetch(ctx context.Context, req LocalCommandRequest) (LocalCommandRespo
 	capBytes := flagInt(req, "max_bytes", 512*1024)
 	result, err := p.FetchBytesWithOptions(ctx, req.Args[0], method, headers, body, gomoufox.FetchBytesOptions{MaxBytes: capBytes})
 	if err != nil {
+		if errors.Is(err, gomoufox.ErrURLBlocked) {
+			return localGuardrailBlockedResponse(req, err.Error()), nil
+		}
 		return LocalCommandResponse{}, err
 	}
 	status := result.StatusCode
@@ -303,8 +391,11 @@ func localOpen(ctx context.Context, req LocalCommandRequest) (LocalCommandRespon
 		return LocalCommandResponse{}, err
 	}
 	defer closeAll()
-	if err := p.Goto(ctx, req.Args[0], gomoufox.WithTimeout(flagDuration(req, "timeout", 30*time.Second))); err != nil {
+	nav, err := p.Goto(ctx, req.Args[0], gomoufox.WithTimeout(flagDuration(req, "timeout", 30*time.Second)))
+	if blocked, ok, err := checkedNavigationResponse(req, nav, err); err != nil {
 		return LocalCommandResponse{}, err
+	} else if ok {
+		return blocked, nil
 	}
 	stdout := []byte(p.URL() + "\n")
 	if err := p.WaitClosed(ctx); err != nil {
@@ -340,8 +431,11 @@ func localRecord(ctx context.Context, req LocalCommandRequest) (LocalCommandResp
 		return LocalCommandResponse{}, err
 	}
 	defer closeAll()
-	if err := p.Goto(ctx, req.Args[0], gomoufox.WithTimeout(flagDuration(req, "timeout", 30*time.Second))); err != nil {
+	nav, err := p.Goto(ctx, req.Args[0], gomoufox.WithTimeout(flagDuration(req, "timeout", 30*time.Second)))
+	if blocked, ok, err := checkedNavigationResponse(req, nav, err); err != nil {
 		return LocalCommandResponse{}, err
+	} else if ok {
+		return blocked, nil
 	}
 	if err := p.WaitClosed(ctx); err != nil && !isExpectedPageCloseError(err) {
 		return LocalCommandResponse{}, err
@@ -513,9 +607,12 @@ type realLocalPage struct {
 	p gomoufoxPageForLocal
 }
 
-func (p realLocalPage) Goto(ctx context.Context, url string, opts ...gomoufox.GotoOption) error {
-	_, err := p.p.Goto(ctx, url, opts...)
-	return err
+func (p realLocalPage) Goto(ctx context.Context, url string, opts ...gomoufox.GotoOption) (*localNavigationResponse, error) {
+	resp, err := p.p.Goto(ctx, url, opts...)
+	if err != nil || resp == nil {
+		return nil, err
+	}
+	return &localNavigationResponse{Status: localResponseStatus(resp), Headers: localResponseHeaders(resp)}, nil
 }
 func (p realLocalPage) WaitForSelector(ctx context.Context, selector string) error {
 	_, err := p.p.WaitForSelector(ctx, selector)
@@ -632,6 +729,9 @@ func browserOptions(req LocalCommandRequest) ([]gomoufox.Option, error) {
 	if len(req.AllowedHosts) > 0 {
 		opts = append(opts, gomoufox.WithAllowedHosts(req.AllowedHosts...))
 	}
+	if req.AllowLocalhost {
+		opts = append(opts, withAllowLocalhostForLocal(true))
+	}
 	if locale := flagString(req, "locale", ""); locale != "" {
 		opts = append(opts, gomoufox.WithLocale(locale))
 	}
@@ -659,7 +759,7 @@ func localProfilePath(profile string) (string, error) {
 	if profile == "" {
 		return "", nil
 	}
-	return filepath.Abs(profile)
+	return localProfileAbs(profile)
 }
 
 func humanizeForLocal(req LocalCommandRequest) (bool, time.Duration, error) {

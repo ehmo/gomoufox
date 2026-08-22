@@ -7,7 +7,7 @@
 <p align="center">
   <img alt="Go 1.26.6" src="https://img.shields.io/badge/Go-1.26.6-00ADD8?logo=go&logoColor=white">
   <img alt="MIT license" src="https://img.shields.io/badge/license-MIT-2ea44f">
-  <img alt="coverage 97%+" src="https://img.shields.io/badge/coverage-97%25%2B-2ea44f">
+  <img alt="coverage 100%" src="https://img.shields.io/badge/coverage-100%25-2ea44f">
   <img alt="MCP ready" src="https://img.shields.io/badge/MCP-ready-7c3aed">
   <img alt="agent skills" src="https://img.shields.io/badge/agent%20skills-included-f97316">
 </p>
@@ -293,8 +293,33 @@ Automation tips:
 - Use `open --save-session` for human login, then reuse the state with
   `--cookies-file`.
 - Use `--profile <dir>` when a workflow needs full persistent browser state.
-- Keep the default URL policy for normal work. For CLI browser commands only,
-  use `--allow-private-ips` when you need local or private network targets.
+- Keep the default URL policy for normal work. Use `--allow-localhost` only for
+  explicit localhost or loopback HTTP(S) targets.
+
+### Local development servers
+
+CLI browser commands can reach a local server with the narrow loopback opt-in:
+
+```bash
+gomoufox --allow-localhost get http://127.0.0.1:3000 --text
+gomoufox --allow-localhost screenshot http://localhost:3000 --out page.png
+```
+
+For MCP, set the policy when starting the server. It cannot be enabled by an
+individual tool call:
+
+```bash
+gomoufox mcp --allow-localhost
+```
+
+Go callers set the same browser filtering proxy policy with an option:
+
+```go
+b, err := gomoufox.New(ctx, gomoufox.WithAllowLocalhost(true))
+```
+
+The option permits explicit `localhost`, `127.0.0.0/8`, and `::1` HTTP(S)
+targets. It does not permit broader private networks or metadata endpoints.
 
 ## Skills
 
@@ -447,16 +472,16 @@ Camoufox without producing Go-only failures?
 Latest checked evidence:
 [docs/BENCHMARKS.md](docs/BENCHMARKS.md),
 [Python-sidecar artifact](docs/benchmarks/2026-06-08-release-gate.json), and
-[node-direct artifact](docs/benchmarks/2026-08-20-node-direct-readiness.json).
+[node-direct artifact](docs/benchmarks/2026-08-22-node-direct-readiness.json).
 The node-direct run used this
-[shared Linux persona](docs/personas/2026-08-20-node-direct-readiness.json)
+[shared Linux persona](docs/personas/2026-08-22-node-direct-readiness.json)
 for both runtimes.
 
 | Runtime | Passed | Blocked | Failed | Wall ms | Peak RSS MiB | Peak CPU % | Report tokens |
 |---|---:|---:|---:|---:|---:|---:|---:|
-| Python Camoufox | 91 | 9 | **0** | 925,972 | **2,383.3** | **401.4** | 82,221 |
+| Python Camoufox | 91 | 9 | **0** | **345,684** | 2,691.4 | 471.4 | 81,812 |
 | gomoufox, Python sidecar | **95** | **5** | **0** | 366,338 | 2,765.3 | 569.9 | **13,059** |
-| gomoufox, node-direct Go | 91 | 9 | **0** | **361,018** | 2,591.9 | 544.2 | 13,064 |
+| gomoufox, node-direct Go | 91 | 9 | **0** | 347,514 | **2,548.9** | **446.2** | 13,111 |
 
 Bold means best in that column. The sidecar row comes from the previous extended
 release-gate artifact; node-direct comes from the readiness artifact.
@@ -467,16 +492,16 @@ no screenshots, reused browser, compact Go report, 0s extra load-state wait, and
 250,000-byte classification cap.
 The checked artifact uses two alternating loops.
 gomoufox passed 91, blocked 9, failed 0. Python Camoufox passed 91, blocked 9,
-failed 0. The run had 0 persistent Go-only regressions and 3 paired outcome
+failed 0. The run had 0 persistent Go-only regressions and 0 paired outcome
 mismatches. See
-[docs/benchmarks/2026-08-20-node-direct-readiness.json](docs/benchmarks/2026-08-20-node-direct-readiness.json).
+[docs/benchmarks/2026-08-22-node-direct-readiness.json](docs/benchmarks/2026-08-22-node-direct-readiness.json).
 
 | Ratio | node-direct Go / Python Camoufox |
 |---|---:|
-| Wall time | 0.390 |
-| Peak RSS | 1.088 |
-| Peak CPU | 1.356 |
-| Report tokens | 0.159 |
+| Wall time | 1.005 |
+| Peak RSS | 0.947 |
+| Peak CPU | 0.947 |
+| Report tokens | 0.160 |
 
 Node-direct stayed within the release RSS and CPU caps and produced a much
 smaller agent report. Treat a report-token ratio above 0.50 as a regression.

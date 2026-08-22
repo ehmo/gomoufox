@@ -1,6 +1,11 @@
 package sidecar
 
-import "embed"
+import (
+	"embed"
+	"io/fs"
+)
 
 //go:embed personadata/apify/* personadata/camoufox/* personadata/licenses/*
-var personaDataFS embed.FS
+var embeddedPersonaDataFS embed.FS
+
+var personaDataFS fs.ReadFileFS = embeddedPersonaDataFS

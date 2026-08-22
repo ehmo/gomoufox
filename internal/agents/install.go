@@ -31,6 +31,21 @@ const (
 
 var supportedTargets = []string{TargetCodex, TargetClaude, TargetCursor, TargetGemini}
 
+var (
+	resolveAgentWrite      = resolveSafeWrite
+	agentRegularFileExists = regularFileExists
+	agentReadFile          = os.ReadFile
+	agentWriteFile0600     = safefile.WriteFile0600
+	agentExistsLstat       = os.Lstat
+	agentResolveLstat      = os.Lstat
+	agentParentLstat       = os.Lstat
+	agentAbs               = filepath.Abs
+	agentEvalSymlinks      = filepath.EvalSymlinks
+	agentUserHomeDir       = os.UserHomeDir
+	agentGetwd             = os.Getwd
+	agentInstallableSkills = skillreg.DefaultInstallableSkills
+)
+
 type Options struct {
 	Target   string
 	Scope    string
@@ -94,11 +109,11 @@ func Install(opts Options) (Plan, error) {
 			plan.Actions = append(plan.Actions, Action{Target: write.target, Kind: write.kind, Path: write.path, Status: status})
 			continue
 		}
-		safePath, err := resolveSafeWrite(write.path, true)
+		safePath, err := resolveAgentWrite(write.path, true)
 		if err != nil {
 			return Plan{}, err
 		}
-		exists, err := regularFileExists(safePath)
+		exists, err := agentRegularFileExists(safePath)
 		if err != nil {
 			return Plan{}, err
 		}
@@ -108,7 +123,7 @@ func Install(opts Options) (Plan, error) {
 		}
 		contents := []byte(write.contents)
 		if write.merge != nil {
-			existing, err := os.ReadFile(safePath)
+			existing, err := agentReadFile(safePath)
 			if err != nil && !errors.Is(err, os.ErrNotExist) {
 				return Plan{}, err
 			}
@@ -118,7 +133,7 @@ func Install(opts Options) (Plan, error) {
 			}
 		}
 		allowExisting := opts.Force || write.merge != nil
-		if err := safefile.WriteFile0600(safePath, contents, allowExisting); err != nil {
+		if err := agentWriteFile0600(safePath, contents, allowExisting); err != nil {
 			if errors.Is(err, os.ErrExist) {
 				return Plan{}, fmt.Errorf("%s already exists; pass --force to overwrite", safePath)
 			}
@@ -130,7 +145,7 @@ func Install(opts Options) (Plan, error) {
 }
 
 func regularFileExists(path string) (bool, error) {
-	st, err := os.Lstat(path)
+	st, err := agentExistsLstat(path)
 	if err == nil {
 		if st.Mode()&os.ModeSymlink != 0 {
 			return false, fmt.Errorf("path contains symlink component: %s", path)
@@ -147,14 +162,14 @@ func regularFileExists(path string) (bool, error) {
 }
 
 func resolveSafeWrite(path string, overwrite bool) (string, error) {
-	abs, err := filepath.Abs(path)
+	abs, err := agentAbs(path)
 	if err != nil {
 		return "", err
 	}
 	if err := rejectExistingParentSymlinks(abs); err != nil {
 		return "", err
 	}
-	if st, err := os.Lstat(abs); err == nil {
+	if st, err := agentResolveLstat(abs); err == nil {
 		if st.Mode()&os.ModeSymlink != 0 {
 			return "", fmt.Errorf("path contains symlink component: %s", path)
 		}
@@ -181,7 +196,7 @@ func rejectExistingParentSymlinks(path string) error {
 			continue
 		}
 		cur = filepath.Join(cur, part)
-		st, err := os.Lstat(cur)
+		st, err := agentParentLstat(cur)
 		if err != nil {
 			if os.IsNotExist(err) {
 				return nil
@@ -250,7 +265,7 @@ func planWrites(opts Options) ([]fileWrite, error) {
 	for _, target := range targets {
 		if hasFeature(opts.Features, FeatureSkills) {
 			skillRoot := skillRootFor(target, opts.Scope, home, work)
-			for _, item := range skillreg.DefaultInstallableSkills() {
+			for _, item := range agentInstallableSkills() {
 				for _, file := range item.Files {
 					rel, err := installableRelativePath(item.Directory, file.Path)
 					if err != nil {
@@ -276,7 +291,7 @@ func roots(opts Options) (string, string, error) {
 	home := opts.HomeDir
 	if home == "" {
 		var err error
-		home, err = os.UserHomeDir()
+		home, err = agentUserHomeDir()
 		if err != nil {
 			return "", "", fmt.Errorf("resolve home directory: %w", err)
 		}
@@ -284,7 +299,7 @@ func roots(opts Options) (string, string, error) {
 	work := opts.WorkDir
 	if work == "" {
 		var err error
-		work, err = os.Getwd()
+		work, err = agentGetwd()
 		if err != nil {
 			return "", "", fmt.Errorf("resolve working directory: %w", err)
 		}
@@ -302,11 +317,11 @@ func roots(opts Options) (string, string, error) {
 }
 
 func canonicalRoot(path string) (string, error) {
-	abs, err := filepath.Abs(path)
+	abs, err := agentAbs(path)
 	if err != nil {
 		return "", err
 	}
-	real, err := filepath.EvalSymlinks(abs)
+	real, err := agentEvalSymlinks(abs)
 	if err != nil {
 		return "", err
 	}
@@ -387,10 +402,7 @@ func mergeMCPJSON(existing []byte, toolset string, extraArgs []string) ([]byte, 
 		"command": "gomoufox",
 		"args":    mcpArgs(toolset, extraArgs),
 	}
-	data, err := json.MarshalIndent(root, "", "  ")
-	if err != nil {
-		return nil, err
-	}
+	data, _ := json.MarshalIndent(root, "", "  ")
 	return append(data, '\n'), nil
 }
 

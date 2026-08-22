@@ -397,6 +397,14 @@ type realRequest struct{ raw playwright.Request }
 func (r *realRequest) URL() string                { return r.raw.URL() }
 func (r *realRequest) Method() string             { return r.raw.Method() }
 func (r *realRequest) Headers() map[string]string { return r.raw.Headers() }
+func (r *realRequest) Failure() error             { return r.raw.Failure() }
+func (r *realRequest) RedirectedFrom() Request {
+	previous := r.raw.RedirectedFrom()
+	if previous == nil {
+		return nil
+	}
+	return &realRequest{raw: previous}
+}
 func (r *realRequest) PostData() string {
 	data, _ := r.raw.PostData()
 	return data

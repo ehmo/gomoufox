@@ -11,7 +11,13 @@ import (
 	"time"
 )
 
-var errGoLaunchPlanUnsupported = errors.New("go node-direct launch plan unsupported")
+var (
+	errGoLaunchPlanUnsupported   = errors.New("go node-direct launch plan unsupported")
+	nodeDirectInstalledBrowser   = installedRuntimeBrowserExecutable
+	nodeDirectLoadPersonaDataset = loadPersonaDataset
+	nodeDirectApplyPersonaFonts  = applyPersonaFonts
+	nodeDirectValidateSpec       = validateNodeDirectSpec
+)
 
 var cachePrefs = map[string]any{
 	"browser.cache.disk.enable":                true,
@@ -32,7 +38,7 @@ func buildNodeDirectSpecGo(cfg Config) (nodeDirectSpec, error) {
 	nodejs := root.NodeJS
 	launchScript := root.LaunchServerJS
 	cwd := root.PlaywrightPackageDir
-	executablePath, err := installedRuntimeBrowserExecutable(root)
+	executablePath, err := nodeDirectInstalledBrowser(root)
 	if err != nil {
 		return nodeDirectSpec{}, fmt.Errorf("%w: locate runtime Camoufox browser executable: %v", ErrNotInstalled, err)
 	}
@@ -70,11 +76,11 @@ func buildNodeDirectSpecGo(cfg Config) (nodeDirectSpec, error) {
 		for key, value := range cfg.Fingerprint {
 			config[key] = value
 		}
-		personaData, err := loadPersonaDataset()
+		personaData, err := nodeDirectLoadPersonaDataset()
 		if err != nil {
 			return nodeDirectSpec{}, fmt.Errorf("%w: load persona data: %v", ErrSidecarStart, err)
 		}
-		if err := applyPersonaFonts(config, cfg, personaData.fonts[targetCamoufoxOS(cfg.OS)]); err != nil {
+		if err := nodeDirectApplyPersonaFonts(config, cfg, personaData.fonts[targetCamoufoxOS(cfg.OS)]); err != nil {
 			return nodeDirectSpec{}, err
 		}
 	}
@@ -145,7 +151,7 @@ func buildNodeDirectSpecGo(cfg Config) (nodeDirectSpec, error) {
 		CWD:          cwd,
 		StdinBase64:  base64.StdEncoding.EncodeToString(data),
 	}
-	if err := validateNodeDirectSpec(spec); err != nil {
+	if err := nodeDirectValidateSpec(spec); err != nil {
 		return nodeDirectSpec{}, err
 	}
 	return spec, nil

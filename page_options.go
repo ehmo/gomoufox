@@ -148,6 +148,9 @@ func mapNavigationError(err error) error {
 	if err == nil {
 		return nil
 	}
+	if isFilteringProxyForbidden(err) {
+		return fmt.Errorf("%w: filtering proxy denied request", ErrURLBlocked)
+	}
 	if errors.Is(err, context.DeadlineExceeded) {
 		return fmt.Errorf("%w: %v", ErrNavigationTimeout, err)
 	}
@@ -155,6 +158,10 @@ func mapNavigationError(err error) error {
 		return fmt.Errorf("%w: %v", ErrNavigationTimeout, err)
 	}
 	return err
+}
+
+func isFilteringProxyForbidden(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "NS_ERROR_PROXY_FORBIDDEN")
 }
 
 func mapDownloadError(err error) error {

@@ -4,6 +4,7 @@
       "examples": [
         "gomoufox mcp",
         "gomoufox mcp --toolset core",
+        "gomoufox mcp --allow-localhost",
         "gomoufox mcp --allow-browser-fetch --allowed-hosts api.example.com",
         "gomoufox mcp --transport http --auth-token $TOKEN"
       ],
@@ -36,6 +37,9 @@
         "--allow-file-download"
       ],
       "name": "mcp",
+      "notes": [
+        "--allow-localhost permits explicit localhost and loopback HTTP(S) only; broader private networks and metadata endpoints stay blocked."
+      ],
       "summary": "run the token-capped MCP browser tool server for agents",
       "usage": "gomoufox mcp [--transport stdio|http] [--session-dir <dir>]"
     }

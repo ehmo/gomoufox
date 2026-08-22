@@ -23,9 +23,11 @@ import (
 	"github.com/playwright-community/playwright-go"
 
 	gomoufox "github.com/ehmo/gomoufox"
+	"github.com/ehmo/gomoufox/internal/agents"
 	"github.com/ehmo/gomoufox/internal/content"
 	"github.com/ehmo/gomoufox/internal/daemon"
 	mcpserver "github.com/ehmo/gomoufox/internal/mcp"
+	"github.com/ehmo/gomoufox/internal/netguard"
 	"github.com/ehmo/gomoufox/internal/policy"
 	"github.com/ehmo/gomoufox/internal/sidecar"
 	skillreg "github.com/ehmo/gomoufox/internal/skills"
@@ -43,6 +45,18 @@ func (r cliTestResolver) LookupIPAddr(ctx context.Context, host string) ([]net.I
 		addrs = append(addrs, net.IPAddr{IP: net.ParseIP(item)})
 	}
 	return addrs, nil
+}
+
+func cliTestBlockedMarker(t *testing.T) string {
+	t.Helper()
+	rr := httptest.NewRecorder()
+	proxy := netguard.FilteringProxy{Validator: netguard.NewValidator(policy.DefaultConfig(), nil)}
+	proxy.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "http://127.0.0.1/", nil))
+	marker := rr.Header().Get(netguard.BlockedHeader)
+	if rr.Code != http.StatusForbidden || marker == "" {
+		t.Fatalf("test filtering proxy response code=%d headers=%v", rr.Code, rr.Header())
+	}
+	return marker
 }
 
 type errWriter struct{}
@@ -640,6 +654,115 @@ func TestSetupPromptHelpers(t *testing.T) {
 	}
 }
 
+func TestCLIRemainingCommandAndSetupEdges(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	if code := (Runner{}).Run(context.Background(), []string{"version", "extra"}, Streams{Stdout: &stdout, Stderr: &stderr}); code != ExitUsage {
+		t.Fatalf("version extra argument code = %d", code)
+	}
+	stdoutBeforeUnknown := stdout.String()
+	printCommandGroup(&stdout, []string{"not-a-command"})
+	if stdout.String() != stdoutBeforeUnknown {
+		t.Fatalf("unknown command changed output from %q to %q", stdoutBeforeUnknown, stdout.String())
+	}
+	if !commandAcceptsURLGuardrailOverrides("open") {
+		t.Fatal("open should accept URL guardrail overrides")
+	}
+
+	oldHome, oldGetwd := userHomeDir, cliGetwd
+	oldAgentsInstall := cliAgentsInstall
+	oldInstall, oldDoctor := setupDefaultInstall, setupDefaultDoctor
+	t.Cleanup(func() {
+		userHomeDir, cliGetwd = oldHome, oldGetwd
+		cliAgentsInstall = oldAgentsInstall
+		setupDefaultInstall, setupDefaultDoctor = oldInstall, oldDoctor
+	})
+	home, work := t.TempDir(), t.TempDir()
+	userHomeDir = func() (string, error) { return home, nil }
+	cliGetwd = func() (string, error) { return work, nil }
+	setupDefaultInstall = func(context.Context, InstallRequest) error { return nil }
+	setupDefaultDoctor = func(context.Context, DoctorRequest) (DoctorReport, error) {
+		return DoctorReport{}, nil
+	}
+	cliAgentsInstall = func(agents.Options) (agents.Plan, error) { return agents.Plan{}, nil }
+	stderr.Reset()
+	if code := (Runner{}).Run(context.Background(), []string{"setup", "--yes", "--target", "cursor", "--scope", "project"}, Streams{Stdout: &stdout, Stderr: &stderr}); code != ExitOK {
+		t.Fatalf("default setup hooks code=%d stderr=%q", code, stderr.String())
+	}
+
+	calls := 0
+	cliAgentsInstall = func(agents.Options) (agents.Plan, error) {
+		calls++
+		if calls == 2 {
+			return agents.Plan{}, errors.New("apply failed")
+		}
+		return agents.Plan{}, nil
+	}
+	stderr.Reset()
+	if code := (Runner{}).Run(context.Background(), []string{"setup", "--yes", "--target", "cursor", "--scope", "project", "--skip-install", "--skip-doctor"}, Streams{Stderr: &stderr}); code != ExitRuntime || !strings.Contains(stderr.String(), "apply failed") {
+		t.Fatalf("setup apply failure code=%d stderr=%q", code, stderr.String())
+	}
+
+	cliGetwd = func() (string, error) { return "", errors.New("cwd failed") }
+	stderr.Reset()
+	if code := (Runner{}).Run(context.Background(), []string{"setup", "--dry-run"}, Streams{Stderr: &stderr}); code != ExitRuntime || !strings.Contains(stderr.String(), "cwd failed") {
+		t.Fatalf("setup cwd failure code=%d stderr=%q", code, stderr.String())
+	}
+	stderr.Reset()
+	if code := (Runner{}).Run(context.Background(), []string{"agents", "install", "--dry-run"}, Streams{Stderr: &stderr}); code != ExitRuntime || !strings.Contains(stderr.String(), "cwd failed") {
+		t.Fatalf("agents cwd failure code=%d stderr=%q", code, stderr.String())
+	}
+	userHomeDir = func() (string, error) { return "", errors.New("agents home failed") }
+	stderr.Reset()
+	if code := (Runner{}).Run(context.Background(), []string{"agents", "install", "--dry-run"}, Streams{Stderr: &stderr}); code != ExitRuntime || !strings.Contains(stderr.String(), "agents home failed") {
+		t.Fatalf("agents home failure code=%d stderr=%q", code, stderr.String())
+	}
+	userHomeDir = func() (string, error) { return home, nil }
+	cliGetwd = func() (string, error) { return work, nil }
+	cliAgentsInstall = func(agents.Options) (agents.Plan, error) { return agents.Plan{}, errors.New("agents failed") }
+	stderr.Reset()
+	if code := (Runner{}).Run(context.Background(), []string{"agents", "install", "--dry-run"}, Streams{Stderr: &stderr}); code != ExitRuntime || !strings.Contains(stderr.String(), "agents failed") {
+		t.Fatalf("agents install failure code=%d stderr=%q", code, stderr.String())
+	}
+	for _, args := range [][]string{{"agents", "install", "--bad"}, {"agents", "install", "extra"}} {
+		if code := (Runner{}).Run(context.Background(), args, Streams{Stderr: &stderr}); code != ExitUsage {
+			t.Fatalf("agents args %v code=%d", args, code)
+		}
+	}
+}
+
+func TestRecordWarningAndCanonicalPathFailureEdges(t *testing.T) {
+	var stderr bytes.Buffer
+	runner := Runner{Hooks: Hooks{LocalCommand: func(context.Context, LocalCommandRequest) (LocalCommandResponse, error) {
+		return LocalCommandResponse{ExitCode: ExitOK}, nil
+	}}}
+	if code := runner.Run(context.Background(), []string{"record", "http://93.184.216.34", "--out", "capture.har", "--capture", "full"}, Streams{Stderr: &stderr}); code != ExitOK || !strings.Contains(stderr.String(), "no URL filter") {
+		t.Fatalf("record warning code=%d stderr=%q", code, stderr.String())
+	}
+
+	oldAbs, oldEval := cliAbsPath, cliEvalSymlinks
+	t.Cleanup(func() { cliAbsPath, cliEvalSymlinks = oldAbs, oldEval })
+	cliAbsPath = func(string) (string, error) { return "", errors.New("absolute failed") }
+	if _, err := parseRecord([]string{"http://93.184.216.34", "--out", "out.har", "--save-session", "state.json"}); err == nil || !strings.Contains(err.Error(), "resolve --out") {
+		t.Fatalf("output path error = %v", err)
+	}
+	cliAbsPath = oldAbs
+	evalCalls := 0
+	cliEvalSymlinks = func(string) (string, error) {
+		evalCalls++
+		if evalCalls == 1 {
+			return "/resolved", nil
+		}
+		return "", errors.New("permission denied")
+	}
+	if _, err := parseRecord([]string{"http://93.184.216.34", "--out", "out.har", "--save-session", "state.json"}); err == nil || !strings.Contains(err.Error(), "resolve --save-session") {
+		t.Fatalf("session path error = %v", err)
+	}
+	cliEvalSymlinks = func(string) (string, error) { return "", os.ErrNotExist }
+	if got, err := canonicalProspectivePath("/missing/child/file"); err != nil || got != "/missing/child/file" {
+		t.Fatalf("root fallback path=%q err=%v", got, err)
+	}
+}
+
 func TestDoctorJSONAndFailure(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	runner := Runner{Hooks: Hooks{Doctor: func(context.Context, DoctorRequest) (DoctorReport, error) {
@@ -776,7 +899,7 @@ func TestVersionAndUnknownCommand(t *testing.T) {
 	if !strings.Contains(stdout.String(), "Start here") || !strings.Contains(stdout.String(), "gomoufox setup") || !strings.Contains(stdout.String(), "Discovery") {
 		t.Fatalf("help stdout = %q", stdout.String())
 	}
-	if got := stdout.String(); !strings.Contains(got, "CLI URL guardrail overrides") || !strings.Contains(got, "rejected by mcp and serve") {
+	if got := stdout.String(); !strings.Contains(got, "CLI URL guardrail overrides") || !strings.Contains(got, "browser CLI commands and MCP startup") || !strings.Contains(got, "rejected by serve and daemon forwarding") || !strings.Contains(got, "--allow-localhost") || strings.Contains(got, "--allow-private-ips") {
 		t.Fatalf("help stdout missing scoped guardrail overrides = %q", got)
 	}
 	stdout.Reset()
@@ -793,7 +916,7 @@ func TestAgentOptimizedHelpDiscovery(t *testing.T) {
 	if code := (Runner{}).Run(context.Background(), []string{"mcp", "--help"}, Streams{Stdout: &stdout, Stderr: &stderr}); code != ExitOK {
 		t.Fatalf("mcp help code=%d stderr=%q", code, stderr.String())
 	}
-	if got := stdout.String(); !strings.Contains(got, "Usage\n  gomoufox mcp") || !strings.Contains(got, "Tools\n  browser_navigate") || !strings.Contains(got, "--toolset") || !strings.Contains(got, "--max-response-bytes") || !strings.Contains(got, "--allowed-origins") || !strings.Contains(got, "--allow-localhost") {
+	if got := stdout.String(); !strings.Contains(got, "Usage\n  gomoufox mcp") || !strings.Contains(got, "Tools\n  browser_navigate") || !strings.Contains(got, "--toolset") || !strings.Contains(got, "--max-response-bytes") || !strings.Contains(got, "--allowed-origins") || !strings.Contains(got, "--allow-localhost") || !strings.Contains(got, "broader private networks and metadata endpoints stay blocked") {
 		t.Fatalf("mcp help = %q", got)
 	}
 
@@ -1527,7 +1650,7 @@ func TestCommandFlagValidationWithoutBrowser(t *testing.T) {
 
 func TestServeGuardrailOverrideAndBindWarning(t *testing.T) {
 	var stderr bytes.Buffer
-	code := Runner{}.Run(context.Background(), []string{"serve", "--auth-token", "tok", "--allow-private-ips"}, Streams{Stderr: &stderr})
+	code := Runner{}.Run(context.Background(), []string{"serve", "--auth-token", "tok", "--allow-localhost"}, Streams{Stderr: &stderr})
 	if code != ExitUsage || !strings.Contains(stderr.String(), "does not allow URL guardrail overrides") {
 		t.Fatalf("code=%d stderr=%q", code, stderr.String())
 	}
@@ -1673,7 +1796,8 @@ func TestLocalURLGuardrailsAndProxyValidation(t *testing.T) {
 	}{
 		{"scheme blocked", []string{"get", "file:///tmp/x"}, ExitURLBlocked, "url blocked"},
 		{"private blocked", []string{"get", "http://127.0.0.1"}, ExitURLBlocked, "resolved address"},
-		{"private override", []string{"get", "http://127.0.0.1", "--allow-private-ips"}, ExitRuntime, "WARNING:"},
+		{"private override rejected", []string{"get", "http://127.0.0.1", "--allow-private-ips"}, ExitUsage, "unknown flag"},
+		{"localhost override", []string{"get", "http://127.0.0.1", "--allow-localhost"}, ExitRuntime, ""},
 		{"navigate first blocked", []string{"fetch", "http://93.184.216.34", "--navigate-first", "http://127.0.0.1"}, ExitURLBlocked, "resolved address"},
 		{"bad proxy", []string{"get", "http://93.184.216.34", "--proxy", "ftp://proxy.example"}, ExitSessionAuth, "invalid --proxy"},
 	}
@@ -1686,6 +1810,72 @@ func TestLocalURLGuardrailsAndProxyValidation(t *testing.T) {
 			code := runner.Run(context.Background(), tc.args, Streams{Stderr: &stderr})
 			if code != tc.code || !strings.Contains(stderr.String(), tc.want) {
 				t.Fatalf("code=%d stderr=%q", code, stderr.String())
+			}
+		})
+	}
+}
+
+func TestLocalAllowLocalhostReachesBrowserRequest(t *testing.T) {
+	tests := [][]string{
+		{"get", "http://127.0.0.1", "--allow-localhost"},
+		{"screenshot", "http://127.0.0.1", "--allow-localhost"},
+		{"fetch", "http://127.0.0.1", "--allow-localhost"},
+		{"eval", "http://127.0.0.1", "--enable-eval", "--script", "1", "--allow-localhost"},
+		{"open", "http://127.0.0.1", "--allow-localhost"},
+		{"record", "http://127.0.0.1", "--out", "capture.har", "--allow-localhost"},
+	}
+	for _, args := range tests {
+		t.Run(args[0], func(t *testing.T) {
+			called := false
+			runner := Runner{Hooks: Hooks{LocalCommand: func(_ context.Context, req LocalCommandRequest) (LocalCommandResponse, error) {
+				called = true
+				if !req.AllowLocalhost {
+					t.Fatalf("request policy = %#v", req)
+				}
+				return LocalCommandResponse{ExitCode: ExitOK}, nil
+			}}}
+			if code := runner.Run(context.Background(), args, Streams{}); code != ExitOK || !called {
+				t.Fatalf("code=%d called=%t", code, called)
+			}
+		})
+	}
+}
+
+func TestBrowserOptionsApplyLocalhostPolicyOption(t *testing.T) {
+	original := withAllowLocalhostForLocal
+	t.Cleanup(func() { withAllowLocalhostForLocal = original })
+	called := false
+	withAllowLocalhostForLocal = func(enabled bool) gomoufox.Option {
+		called = enabled
+		return original(enabled)
+	}
+	if _, err := browserOptions(LocalCommandRequest{Command: "get", Flags: map[string]any{}, AllowLocalhost: true}); err != nil {
+		t.Fatal(err)
+	}
+	if !called {
+		t.Fatal("browser options did not apply the localhost policy option")
+	}
+}
+
+func TestBrowserCommandsRejectRemovedPrivateIPFlag(t *testing.T) {
+	tests := [][]string{
+		{"get", "http://127.0.0.1", "--allow-private-ips"},
+		{"screenshot", "http://127.0.0.1", "--allow-private-ips"},
+		{"fetch", "http://127.0.0.1", "--allow-private-ips"},
+		{"eval", "http://127.0.0.1", "--enable-eval", "--script", "1", "--allow-private-ips"},
+		{"open", "http://127.0.0.1", "--allow-private-ips"},
+		{"record", "http://127.0.0.1", "--out", "capture.har", "--allow-private-ips"},
+	}
+	for _, args := range tests {
+		t.Run(args[0], func(t *testing.T) {
+			called := false
+			var stderr bytes.Buffer
+			runner := Runner{Hooks: Hooks{LocalCommand: func(context.Context, LocalCommandRequest) (LocalCommandResponse, error) {
+				called = true
+				return LocalCommandResponse{}, nil
+			}}}
+			if code := runner.Run(context.Background(), args, Streams{Stderr: &stderr}); code != ExitUsage || called || !strings.Contains(stderr.String(), "unknown flag") {
+				t.Fatalf("code=%d called=%t stderr=%q", code, called, stderr.String())
 			}
 		})
 	}
@@ -2011,6 +2201,111 @@ func TestDefaultLocalGetScreenshotEvalAndFetchWithFakes(t *testing.T) {
 	}
 	if !bytes.Contains(fetchResp.Stdout, []byte(`"status":201`)) || page.fetchURL != "https://api.example.com/me" || page.fetchHeaders["X-Test"] != "yes" {
 		t.Fatalf("fetch resp=%s page=%#v", fetchResp.Stdout, page)
+	}
+}
+
+func TestLocalCommandsReturnMarkedGuardrailNavigationAsError(t *testing.T) {
+	tests := []LocalCommandRequest{
+		{Command: "get", Args: []string{"https://private.example"}, Flags: map[string]any{"text": true}, JSON: true},
+		{Command: "screenshot", Args: []string{"https://private.example"}, Flags: map[string]any{}, JSON: true},
+		{Command: "eval", Args: []string{"https://private.example"}, Flags: map[string]any{"script": "1"}, JSON: true},
+		{Command: "fetch", Args: []string{"https://api.example"}, Flags: map[string]any{"navigate_first": "https://private.example"}, JSON: true},
+		{Command: "open", Args: []string{"https://private.example"}, Flags: map[string]any{}, JSON: true},
+		{Command: "record", Args: []string{"https://private.example"}, Flags: map[string]any{"out": "capture.har"}, JSON: true},
+	}
+	for _, req := range tests {
+		t.Run(req.Command, func(t *testing.T) {
+			marker := cliTestBlockedMarker(t)
+			page := &fakeLocalPage{
+				gotoStatus: http.StatusForbidden,
+				gotoHeaders: map[string]string{
+					netguard.BlockedHeader: marker,
+				},
+			}
+			restore := fakeOpenPage(t, page)
+			defer restore()
+			resp, err := defaultLocalCommand(context.Background(), req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if resp.ExitCode != ExitURLBlocked || !strings.Contains(resp.Stderr, "url blocked by guardrail") {
+				t.Fatalf("response = %#v", resp)
+			}
+			var payload map[string]any
+			if err := json.Unmarshal(resp.Stdout, &payload); err != nil {
+				t.Fatalf("stdout is not JSON: %v: %q", err, resp.Stdout)
+			}
+			if payload["error"] != "url_blocked" || payload["url"] != nil || payload["content"] != nil {
+				t.Fatalf("payload = %#v", payload)
+			}
+		})
+	}
+}
+
+func TestLocalNavigationProxyForbiddenErrorBecomesGuardrailError(t *testing.T) {
+	page := &fakeLocalPage{gotoErr: fmt.Errorf("%w: filtering proxy denied request", gomoufox.ErrURLBlocked)}
+	restore := fakeOpenPage(t, page)
+	defer restore()
+	resp, err := defaultLocalCommand(context.Background(), LocalCommandRequest{
+		Command: "get",
+		Args:    []string{"https://public.example"},
+		Flags:   map[string]any{"text": true},
+		JSON:    true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.ExitCode != ExitURLBlocked || !strings.Contains(resp.Stderr, "url blocked by guardrail") {
+		t.Fatalf("response = %#v", resp)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(resp.Stdout, &payload); err != nil || payload["error"] != "url_blocked" || payload["url"] != nil {
+		t.Fatalf("payload=%#v err=%v", payload, err)
+	}
+}
+
+func TestLocalFetchReturnsMarkedGuardrailResponseAsError(t *testing.T) {
+	page := &fakeLocalPage{
+		fetchErr: fmt.Errorf("%w: resolved address is blocked", gomoufox.ErrURLBlocked),
+	}
+	restore := fakeOpenPage(t, page)
+	defer restore()
+	resp, err := defaultLocalCommand(context.Background(), LocalCommandRequest{
+		Command: "fetch",
+		Args:    []string{"https://public.example/api"},
+		Flags:   map[string]any{},
+		JSON:    true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.ExitCode != ExitURLBlocked || !strings.Contains(resp.Stderr, "url blocked by guardrail") {
+		t.Fatalf("response = %#v", resp)
+	}
+}
+
+func TestLocalGetPreservesOriginForbiddenPage(t *testing.T) {
+	page := &fakeLocalPage{
+		html:       "<html><body>origin denied</body></html>",
+		bodyText:   "origin denied",
+		url:        "https://origin.example",
+		gotoStatus: http.StatusForbidden,
+		gotoHeaders: map[string]string{
+			netguard.BlockedHeader: "1",
+		},
+	}
+	restore := fakeOpenPage(t, page)
+	defer restore()
+	resp, err := defaultLocalCommand(context.Background(), LocalCommandRequest{
+		Command: "get",
+		Args:    []string{"https://origin.example"},
+		Flags:   map[string]any{"text": true},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.ExitCode != ExitOK || string(resp.Stdout) != "origin denied" {
+		t.Fatalf("response = %#v", resp)
 	}
 }
 
@@ -2572,7 +2867,7 @@ func TestRealLocalPageDelegatesToGomoufoxPage(t *testing.T) {
 	}
 	local := realLocalPage{p: page}
 
-	if err := local.Goto(context.Background(), "https://example.com"); err != nil {
+	if _, err := local.Goto(context.Background(), "https://example.com"); err != nil {
 		t.Fatal(err)
 	}
 	if err := local.WaitForSelector(context.Background(), "#ready"); err != nil {
@@ -2664,6 +2959,14 @@ func TestRealLocalPageAndBrowserErrorEdges(t *testing.T) {
 	if _, err := (realLocalPage{p: &fakeGomoufoxPage{raw: raw}}).StorageState(context.Background()); !errors.Is(err, rawErr) {
 		t.Fatalf("storage error = %v", err)
 	}
+	raw.eventErr = errors.New("wait failed")
+	if err := (realLocalPage{p: &fakeGomoufoxPage{raw: raw}}).WaitClosed(context.Background()); !errors.Is(err, raw.eventErr) {
+		t.Fatalf("wait close error = %v", err)
+	}
+	raw.eventErr = errors.New("Target closed")
+	if err := (realLocalPage{p: &fakeGomoufoxPage{raw: raw}}).WaitClosed(context.Background()); err != nil {
+		t.Fatalf("expected page close error = %v", err)
+	}
 
 	waitEntered := make(chan struct{})
 	waitRelease := make(chan struct{})
@@ -2690,6 +2993,32 @@ func TestRealLocalPageAndBrowserErrorEdges(t *testing.T) {
 	browser = realLocalBrowser{b: &fakeGomoufoxBrowser{context: storageCtx}}
 	if _, err := browser.StorageState(context.Background(), "state.json"); !errors.Is(err, storageErr) || storageCtx.closeCalls != 1 {
 		t.Fatalf("browser storage error=%v closeCalls=%d", err, storageCtx.closeCalls)
+	}
+}
+
+func TestLocalNavigationHeaderResponseAndProfileEdges(t *testing.T) {
+	if got := navigationHeader(map[string]string{"X-Test": "value"}, "missing"); got != "" {
+		t.Fatalf("missing navigation header = %q", got)
+	}
+	oldStatus, oldHeaders := localResponseStatus, localResponseHeaders
+	oldAbs := localProfileAbs
+	t.Cleanup(func() {
+		localResponseStatus, localResponseHeaders = oldStatus, oldHeaders
+		localProfileAbs = oldAbs
+	})
+	localResponseStatus = func(*gomoufox.Response) int { return 204 }
+	localResponseHeaders = func(*gomoufox.Response) map[string]string { return map[string]string{"x": "y"} }
+	page := realLocalPage{p: &fakeGomoufoxPage{gotoResponse: new(gomoufox.Response)}}
+	response, err := page.Goto(context.Background(), "https://example.com")
+	if err != nil || response.Status != 204 || response.Headers["x"] != "y" {
+		t.Fatalf("navigation response=%#v err=%v", response, err)
+	}
+	if path, err := localProfilePath(""); err != nil || path != "" {
+		t.Fatalf("empty profile path=%q err=%v", path, err)
+	}
+	localProfileAbs = func(string) (string, error) { return "", errors.New("absolute failed") }
+	if _, err := browserOptions(LocalCommandRequest{Profile: "profile"}); err == nil || !strings.Contains(err.Error(), "absolute failed") {
+		t.Fatalf("profile resolution error = %v", err)
 	}
 }
 
@@ -3991,7 +4320,7 @@ func TestRunnerRuntimeParserAdditionalEdges(t *testing.T) {
 	if code := runner.executeLocalCommand(context.Background(), globalFlags{}, "get", parsedGet, Streams{Stderr: &stderr}); code != ExitRuntime {
 		t.Fatalf("local command error code=%d stderr=%q", code, stderr.String())
 	}
-	if code := (Runner{}).forward(context.Background(), globalFlags{AllowPrivateIPs: true}, "get", []string{"http://93.184.216.34"}, Streams{Stderr: &stderr}); code != ExitUsage {
+	if code := (Runner{}).forward(context.Background(), globalFlags{AllowLocalhost: true}, "get", []string{"http://93.184.216.34"}, Streams{Stderr: &stderr}); code != ExitUsage {
 		t.Fatalf("forward guardrail override code=%d", code)
 	}
 	stderr.Reset()
@@ -4541,6 +4870,8 @@ type fakeLocalPage struct {
 	fetchStatus     int
 	fetchBody       []byte
 	gotoURLs        []string
+	gotoStatus      int
+	gotoHeaders     map[string]string
 	waitSelector    string
 	screenshotCalls int
 	script          string
@@ -4627,6 +4958,7 @@ type fakeGomoufoxPage struct {
 	fetchMaxBytes   int
 	closeCalls      int
 	gotoErr         error
+	gotoResponse    *gomoufox.Response
 	waitErr         error
 	contentErr      error
 	locatorErr      error
@@ -4639,7 +4971,7 @@ type fakeGomoufoxPage struct {
 
 func (p *fakeGomoufoxPage) Goto(ctx context.Context, url string, opts ...gomoufox.GotoOption) (*gomoufox.Response, error) {
 	p.gotoURL = url
-	return nil, p.gotoErr
+	return p.gotoResponse, p.gotoErr
 }
 
 func (p *fakeGomoufoxPage) WaitForSelector(ctx context.Context, selector string, opts ...gomoufox.WaitForSelectorOption) (*gomoufox.ElementHandle, error) {
@@ -4823,12 +5155,12 @@ func (c *fakePlaywrightStorageContext) StorageState(path ...string) (*playwright
 	return c.state, c.err
 }
 
-func (p *fakeLocalPage) Goto(ctx context.Context, url string, opts ...gomoufox.GotoOption) error {
+func (p *fakeLocalPage) Goto(ctx context.Context, url string, opts ...gomoufox.GotoOption) (*localNavigationResponse, error) {
 	p.gotoURLs = append(p.gotoURLs, url)
 	if p.gotoErr != nil {
-		return p.gotoErr
+		return nil, p.gotoErr
 	}
-	return nil
+	return &localNavigationResponse{Status: p.gotoStatus, Headers: p.gotoHeaders}, nil
 }
 func (p *fakeLocalPage) WaitForSelector(ctx context.Context, selector string) error {
 	p.waitSelector = selector

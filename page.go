@@ -4,11 +4,21 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
+	"fmt"
+	"net"
+	"net/http"
+	"net/netip"
+	"net/url"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
+	"github.com/ehmo/gomoufox/internal/netguard"
 	"github.com/ehmo/gomoufox/internal/policy"
 	"github.com/ehmo/gomoufox/internal/pwbridge"
+	"golang.org/x/net/idna"
 )
 
 type Page struct {
@@ -18,6 +28,17 @@ type Page struct {
 	ownsContext bool
 	mu          sync.Mutex
 	routes      map[routeKey]pwbridge.RouteHandler
+
+	fetchGateOnce         sync.Once
+	fetchGate             chan struct{}
+	guardrailObserverOnce sync.Once
+	guardrailMu           sync.Mutex
+	guardrailFetchActive  bool
+	guardrailFetchBlocked bool
+	guardrailFetchURL     string
+	guardrailFetchMethod  string
+	guardrailFetchReason  string
+	guardrailFetchContext context.Context
 }
 
 type Dialog struct{ raw pwbridge.Dialog }
@@ -441,6 +462,12 @@ func (p *Page) FetchBytesWithOptions(ctx context.Context, url, method string, he
 	if err != nil {
 		return FetchBytesResult{}, err
 	}
+	if err := p.acquireFetch(ctx); err != nil {
+		return FetchBytesResult{}, err
+	}
+	defer p.releaseFetch()
+	p.beginGuardrailFetchObservation(ctx, url, method)
+	defer p.endGuardrailFetchObservation()
 	result, err := p.raw.EvaluateInternal(browserFetchExpression, map[string]any{
 		"url":        url,
 		"method":     method,
@@ -450,6 +477,9 @@ func (p *Page) FetchBytesWithOptions(ctx context.Context, url, method string, he
 		"maxBytes":   maxBytes,
 	})
 	if err != nil {
+		if reason, ok := p.guardrailBlockedActiveFetch(); ok {
+			return FetchBytesResult{}, fmt.Errorf("%w: %s", ErrURLBlocked, reason)
+		}
 		return FetchBytesResult{}, &BrowserFetchError{Code: "network_error", URL: url, Method: method, Status: 0, Message: err.Error()}
 	}
 	data, err := json.Marshal(result)
@@ -470,6 +500,13 @@ func (p *Page) FetchBytesWithOptions(ctx context.Context, url, method string, he
 	}
 	if err := json.Unmarshal(data, &payload); err != nil {
 		return FetchBytesResult{}, err
+	}
+	if !payload.OK {
+		if reason, ok := p.guardrailBlockedActiveFetch(); ok {
+			return FetchBytesResult{}, fmt.Errorf("%w: %s", ErrURLBlocked, reason)
+		}
+	} else if reason, ok := p.guardrailBlockedActiveFetch(); ok {
+		return FetchBytesResult{}, fmt.Errorf("%w: %s", ErrURLBlocked, reason)
 	}
 	responseBody := []byte(payload.Body)
 	if payload.BodyEncoding == "base64" || payload.BodyBase64 != "" {
@@ -492,6 +529,271 @@ func (p *Page) FetchBytesWithOptions(ctx context.Context, url, method string, he
 		}
 	}
 	return FetchBytesResult{StatusCode: payload.Status, Body: responseBody, Truncated: payload.Truncated}, nil
+}
+
+func (p *Page) beginGuardrailFetchObservation(ctx context.Context, targetURL, method string) {
+	p.guardrailObserverOnce.Do(func() {
+		p.raw.OnResponse(func(resp pwbridge.Response) {
+			if resp == nil || !p.activeFetchOwns(resp.Request()) {
+				return
+			}
+			if resp.Status() == http.StatusForbidden {
+				if reason, ok := netguard.ConsumeBlockedMarker(headerValue(resp.Headers(), netguard.BlockedHeader)); ok {
+					p.markGuardrailFetchBlocked(reason)
+				}
+			}
+			if reason, ok := p.blockedFetchRedirectReason(resp); ok {
+				p.markGuardrailFetchBlocked(reason)
+			}
+		})
+		p.raw.OnRequestFailed(func(req pwbridge.Request) {
+			if req != nil && p.activeFetchOwns(req) && isFilteringProxyForbidden(req.Failure()) {
+				p.markGuardrailFetchBlocked("filtering proxy denied request")
+			}
+		})
+	})
+	p.guardrailMu.Lock()
+	p.guardrailFetchActive = true
+	p.guardrailFetchBlocked = false
+	p.guardrailFetchURL = targetURL
+	p.guardrailFetchMethod = method
+	p.guardrailFetchReason = ""
+	p.guardrailFetchContext = ctx
+	p.guardrailMu.Unlock()
+}
+
+func (p *Page) endGuardrailFetchObservation() {
+	p.guardrailMu.Lock()
+	p.guardrailFetchActive = false
+	p.guardrailFetchURL = ""
+	p.guardrailFetchMethod = ""
+	p.guardrailFetchReason = ""
+	p.guardrailFetchContext = nil
+	p.guardrailMu.Unlock()
+}
+
+func (p *Page) markGuardrailFetchBlocked(reason string) {
+	p.guardrailMu.Lock()
+	if p.guardrailFetchActive && !p.guardrailFetchBlocked {
+		p.guardrailFetchBlocked = true
+		p.guardrailFetchReason = reason
+	}
+	p.guardrailMu.Unlock()
+}
+
+func (p *Page) guardrailBlockedActiveFetch() (string, bool) {
+	p.guardrailMu.Lock()
+	defer p.guardrailMu.Unlock()
+	return p.guardrailFetchReason, p.guardrailFetchActive && p.guardrailFetchBlocked
+}
+
+func (p *Page) activeFetchOwns(req pwbridge.Request) bool {
+	if req == nil {
+		return false
+	}
+	p.guardrailMu.Lock()
+	if !p.guardrailFetchActive {
+		p.guardrailMu.Unlock()
+		return false
+	}
+	targetURL := p.guardrailFetchURL
+	method := p.guardrailFetchMethod
+	p.guardrailMu.Unlock()
+	root := req
+	for redirects := 0; redirects < 32; redirects++ {
+		previous := root.RedirectedFrom()
+		if previous == nil {
+			break
+		}
+		root = previous
+	}
+	return strings.EqualFold(root.Method(), method) && sameFetchURL(root.URL(), targetURL)
+}
+
+func (p *Page) blockedFetchRedirectReason(resp pwbridge.Response) (string, bool) {
+	if !isFetchRedirectStatus(resp.Status()) || p.browser == nil || p.browser.cfg.directNetwork {
+		return "", false
+	}
+	location := headerValue(resp.Headers(), "Location")
+	if location == "" {
+		return "", false
+	}
+	base, err := url.Parse(resp.URL())
+	if err != nil {
+		return "", false
+	}
+	target, err := url.Parse(location)
+	if err != nil {
+		return "", false
+	}
+	p.guardrailMu.Lock()
+	ctx := p.guardrailFetchContext
+	p.guardrailMu.Unlock()
+	if ctx == nil {
+		return "", false
+	}
+	_, err = netguard.NewValidator(p.browser.cfg.policy, nil).Validate(ctx, base.ResolveReference(target).String())
+	if err == nil || !errors.Is(err, netguard.ErrBlocked) {
+		return "", false
+	}
+	return err.Error(), true
+}
+
+func isFetchRedirectStatus(status int) bool {
+	switch status {
+	case http.StatusMovedPermanently, http.StatusFound, http.StatusSeeOther, http.StatusTemporaryRedirect, http.StatusPermanentRedirect:
+		return true
+	default:
+		return false
+	}
+}
+
+func sameFetchURL(left, right string) bool {
+	normalize := func(raw string) string {
+		if boundary := strings.IndexAny(raw, "?#"); boundary >= 0 {
+			raw = strings.ReplaceAll(raw[:boundary], `\`, "/") + raw[boundary:]
+		} else {
+			raw = strings.ReplaceAll(raw, `\`, "/")
+		}
+		parsed, err := url.Parse(raw)
+		if err != nil {
+			return raw
+		}
+		parsed.Scheme = strings.ToLower(parsed.Scheme)
+		host := strings.ToLower(parsed.Hostname())
+		if asciiHost, err := idna.Lookup.ToASCII(host); err == nil {
+			host = strings.ToLower(asciiHost)
+		}
+		if address, err := netip.ParseAddr(host); err == nil {
+			host = address.String()
+		} else if ipv4, ok := canonicalURLIPv4(host); ok {
+			host = ipv4
+		}
+		port := parsed.Port()
+		if numericPort, err := strconv.ParseUint(port, 10, 16); err == nil {
+			port = strconv.FormatUint(numericPort, 10)
+		}
+		if (parsed.Scheme == "http" && port == "80") || (parsed.Scheme == "https" && port == "443") {
+			port = ""
+		}
+		if port != "" {
+			parsed.Host = net.JoinHostPort(host, port)
+		} else if strings.Contains(host, ":") {
+			parsed.Host = "[" + host + "]"
+		} else {
+			parsed.Host = host
+		}
+		parsed.Fragment = ""
+		cleanedPath := cleanURLPath(parsed.EscapedPath())
+		decodedPath, err := url.PathUnescape(cleanedPath)
+		if err == nil {
+			parsed.Path = decodedPath
+			parsed.RawPath = cleanedPath
+		}
+		return parsed.String()
+	}
+	return normalize(left) == normalize(right)
+}
+
+func canonicalURLIPv4(host string) (string, bool) {
+	parts := strings.Split(host, ".")
+	if len(parts) > 1 && parts[len(parts)-1] == "" {
+		parts = parts[:len(parts)-1]
+	}
+	if len(parts) == 0 || len(parts) > 4 {
+		return "", false
+	}
+	numbers := make([]uint64, len(parts))
+	for index, part := range parts {
+		base := 10
+		digits := part
+		if len(digits) >= 2 && (strings.HasPrefix(digits, "0x") || strings.HasPrefix(digits, "0X")) {
+			base = 16
+			digits = digits[2:]
+		} else if len(digits) >= 2 && digits[0] == '0' {
+			base = 8
+			digits = digits[1:]
+		}
+		if digits == "" {
+			digits = "0"
+		}
+		number, err := strconv.ParseUint(digits, base, 32)
+		if err != nil {
+			return "", false
+		}
+		numbers[index] = number
+	}
+	for _, number := range numbers[:len(numbers)-1] {
+		if number > 255 {
+			return "", false
+		}
+	}
+	lastLimit := uint64(1) << (8 * (5 - len(numbers)))
+	if numbers[len(numbers)-1] >= lastLimit {
+		return "", false
+	}
+	value := numbers[len(numbers)-1]
+	for index, number := range numbers[:len(numbers)-1] {
+		value += number << (8 * (3 - index))
+	}
+	address := netip.AddrFrom4([4]byte{byte(value >> 24), byte(value >> 16), byte(value >> 8), byte(value)})
+	return address.String(), true
+}
+
+func cleanURLPath(escapedPath string) string {
+	if escapedPath == "" {
+		return "/"
+	}
+	segments := strings.Split(escapedPath, "/")
+	cleaned := make([]string, 0, len(segments))
+	start := 0
+	if segments[0] == "" {
+		start = 1
+	}
+	for index := start; index < len(segments); index++ {
+		segment := segments[index]
+		last := index == len(segments)-1
+		switch strings.ToLower(segment) {
+		case ".", "%2e":
+			if last {
+				cleaned = append(cleaned, "")
+			}
+		case "..", ".%2e", "%2e.", "%2e%2e":
+			if len(cleaned) > 0 {
+				cleaned = cleaned[:len(cleaned)-1]
+			}
+			if last {
+				cleaned = append(cleaned, "")
+			}
+		default:
+			cleaned = append(cleaned, segment)
+		}
+	}
+	result := "/" + strings.Join(cleaned, "/")
+	return result
+}
+
+func (p *Page) acquireFetch(ctx context.Context) error {
+	p.fetchGateOnce.Do(func() { p.fetchGate = make(chan struct{}, 1) })
+	select {
+	case p.fetchGate <- struct{}{}:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func (p *Page) releaseFetch() {
+	<-p.fetchGate
+}
+
+func headerValue(headers map[string]string, name string) string {
+	for key, value := range headers {
+		if strings.EqualFold(key, name) {
+			return value
+		}
+	}
+	return ""
 }
 
 func fetchHeadersForEvaluation(headers map[string]string) map[string]any {

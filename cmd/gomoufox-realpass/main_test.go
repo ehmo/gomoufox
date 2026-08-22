@@ -364,6 +364,32 @@ func TestLaunchBrowserOptionsAndFailure(t *testing.T) {
 	}
 }
 
+func TestRunReusableBrowserCloseFailureSetsExitCode(t *testing.T) {
+	old := newRealpassBrowser
+	t.Cleanup(func() { newRealpassBrowser = old })
+	newRealpassBrowser = func(context.Context, ...gomoufox.Option) (realpassBrowser, error) {
+		return &fakeRealpassBrowser{
+			pid:      os.Getpid(),
+			closeErr: errors.New("token=secret"),
+			page: &fakeRealpassPage{
+				url:      "https://example.com",
+				content:  "<main>ok</main>",
+				evaluate: map[string]any{},
+				response: fakeRealpassResponse{status: 200},
+			},
+		}, nil
+	}
+	code, _, stderr := runRealpassForTest(t,
+		"--reuse-browser",
+		"--target", "close=https://example.com",
+		"--out", t.TempDir(),
+		"--screenshots=false",
+	)
+	if code != 1 || !strings.Contains(stderr, "close reusable browser") || strings.Contains(stderr, "secret") {
+		t.Fatalf("code=%d stderr=%q", code, stderr)
+	}
+}
+
 func TestLoadPersonaBundleAndRecordDigest(t *testing.T) {
 	path := writePersonaBundleForTest(t)
 	bundle, digest, err := loadPersonaBundle(path)
@@ -1915,6 +1941,7 @@ type fakeRealpassBrowser struct {
 	page       realpassPage
 	newPageErr error
 	closeFunc  func()
+	closeErr   error
 	closed     bool
 }
 
@@ -1934,7 +1961,7 @@ func (b *fakeRealpassBrowser) Close() error {
 	if b.closeFunc != nil {
 		b.closeFunc()
 	}
-	return nil
+	return b.closeErr
 }
 
 type fakeRealpassPage struct {

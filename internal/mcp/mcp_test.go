@@ -553,6 +553,20 @@ func TestNewDefaultBrowserFactoryCarriesNetworkPolicy(t *testing.T) {
 	}
 }
 
+func TestServerNilAndClosableFactoryClose(t *testing.T) {
+	if err := (*Server)(nil).Close(); err != nil {
+		t.Fatalf("nil server close = %v", err)
+	}
+	boom := errors.New("factory close failed")
+	factory := &closableBrowserFactory{closeErr: boom}
+	cfg := defaultTestConfig(t)
+	cfg.BrowserFactory = factory
+	server := newTestServer(t, cfg)
+	if err := server.Close(); !errors.Is(err, boom) || factory.closeCalls != 1 {
+		t.Fatalf("server close err=%v calls=%d", err, factory.closeCalls)
+	}
+}
+
 func TestURLValidationBeforeNavigateAndFetch(t *testing.T) {
 	cfg := defaultTestConfig(t)
 	server := newTestServer(t, cfg)
@@ -1028,6 +1042,28 @@ func TestBrowserFetchFormGuards(t *testing.T) {
 	cfg.BrowserFactory = &fakeBrowserFactory{session: &fakeBrowserSession{fetchFormErr: errors.New("fetch form failed")}}
 	server = newTestServer(t, cfg)
 	assertError(t, server.Handle(context.Background(), "browser_fetch_form", raw(`{"url":"https://api.example.com/upload","files":[{"name":"image","path":"ok.bin"}]}`)), "browser_fetch_failed")
+}
+
+func TestBrowserFetchFormNavigateValidationAndDefaultResultURL(t *testing.T) {
+	cfg := defaultTestConfig(t)
+	cfg.Policy.AllowBrowserFetch = true
+	cfg.Policy.AllowBrowserFileFetch = true
+	cfg.Policy.AllowedHosts = []string{"api.example.com", "app.example.com"}
+	validator := &fakeValidator{failAt: 2, err: errors.New("blocked")}
+	cfg.Validator = validator
+	cfg.BrowserFactory = &fakeBrowserFactory{session: &fakeBrowserSession{}}
+	server := newTestServer(t, cfg)
+	uploadPath := filepath.Join(cfg.SessionDir, "upload.bin")
+	if err := os.WriteFile(uploadPath, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	assertError(t, server.Handle(context.Background(), "browser_fetch_form", raw(`{"url":"https://api.example.com/upload","navigate_first":"https://app.example.com/form","files":[{"name":"upload","path":"upload.bin"}]}`)), "url_blocked")
+
+	validator.failAt = 0
+	resp := server.Handle(context.Background(), "browser_fetch_form", raw(`{"url":"https://api.example.com/upload","files":[{"name":"upload","path":"upload.bin"}]}`))
+	if resp.IsError || resp.Payload["url"] != "https://api.example.com/upload" {
+		t.Fatalf("default result URL response = %#v", resp)
+	}
 }
 
 func TestBrowserFetchCapsReturnedHeaders(t *testing.T) {
@@ -2075,6 +2111,24 @@ func TestBrowserHARGatesValidationAndEagerRollback(t *testing.T) {
 	}
 }
 
+func TestBrowserHARReadConfinedAndExpiredStartFailures(t *testing.T) {
+	boom := errors.New("injected")
+	cfg := defaultTestConfig(t)
+	cfg.Policy.AllowHARRecording = true
+	cfg.Policy.AllowSessionImport = true
+	cfg.BrowserFactory = &fakeBrowserFactory{session: &fakeBrowserSession{}}
+	server := newTestServer(t, cfg)
+	assertError(t, server.Handle(context.Background(), "browser_har_start", raw(`{"session_id":"missing-state","path":"missing-state.har","storage_state_path":"missing.json"}`)), "path_rejected")
+
+	oldConfined, oldUntil := mcpConfinedPath, mcpTimeUntil
+	t.Cleanup(func() { mcpConfinedPath, mcpTimeUntil = oldConfined, oldUntil })
+	mcpConfinedPath = func(policy.Jail, string) (string, error) { return "", boom }
+	assertError(t, server.Handle(context.Background(), "browser_har_start", raw(`{"session_id":"confined","path":"confined.har"}`)), "har_path_rejected")
+	mcpConfinedPath = oldConfined
+	mcpTimeUntil = func(time.Time) time.Duration { return 0 }
+	assertError(t, server.Handle(context.Background(), "browser_har_start", raw(`{"session_id":"expired","path":"expired.har"}`)), "har_start_failed")
+}
+
 func TestBrowserHARFinalizeErrorsShutdownAndTTL(t *testing.T) {
 	newServer := func(t *testing.T, session *fakeBrowserSession) (*Server, *fakeBrowserFactory) {
 		t.Helper()
@@ -2263,6 +2317,19 @@ func TestSessionManagerStateCapsDestroyAndTTL(t *testing.T) {
 	if len(sessions) != 1 || sessions[0]["session_id"] != "work" || sessions[0]["idle_ms"].(int64) != 2000 {
 		t.Fatalf("sessions after ttl = %#v", sessions)
 	}
+}
+
+func TestSessionDestroyReportsMissingSession(t *testing.T) {
+	cfg := defaultTestConfig(t)
+	session := &fakeBrowserSession{closeErr: errors.New("close failed")}
+	cfg.BrowserFactory = &fakeBrowserFactory{session: session}
+	cfg.Validator = &fakeValidator{}
+	server := newTestServer(t, cfg)
+	resp := server.Handle(context.Background(), "browser_navigate", raw(`{"session_id":"work","url":"https://example.com"}`))
+	if resp.IsError {
+		t.Fatalf("navigate response = %#v", resp)
+	}
+	assertError(t, server.Handle(context.Background(), "session_destroy", raw(`{"session_id":"work"}`)), "session_error")
 }
 
 func TestSessionManagerRejectsTerminalLifecycleOperations(t *testing.T) {
@@ -2695,6 +2762,33 @@ func TestBrowserDownloadJailSizeAndSaveGuards(t *testing.T) {
 	fileRename = func(string, string) error { return errors.New("rename failed") }
 	assertError(t, server.Handle(context.Background(), "browser_download", raw(`{"selector":"a","path":"rename-failed.bin"}`)), "file_save_failed")
 	fileRename = oldRename
+}
+
+func TestBrowserDownloadAcquisitionAndFinalPathFailures(t *testing.T) {
+	boom := errors.New("injected")
+	cfg := defaultTestConfig(t)
+	cfg.Policy.AllowFileDownload = true
+	cfg.BrowserFactory = &fakeBrowserFactory{session: &fakeBrowserSession{}}
+	server := newTestServer(t, cfg)
+	oldMkdir, oldResolve, oldConfined := mcpMkdirTemp, mcpResolveWrite, mcpConfinedPath
+	t.Cleanup(func() {
+		mcpMkdirTemp, mcpResolveWrite, mcpConfinedPath = oldMkdir, oldResolve, oldConfined
+	})
+	mcpMkdirTemp = func(string, string) (string, error) { return "", boom }
+	assertError(t, server.Handle(context.Background(), "browser_download", raw(`{"selector":"a","path":"mkdir.bin"}`)), "file_save_failed")
+	mcpMkdirTemp = oldMkdir
+	mcpResolveWrite = func(policy.Jail, string, bool) (string, error) { return "", boom }
+	assertError(t, server.Handle(context.Background(), "browser_download", raw(`{"selector":"a","path":"resolve.bin"}`)), "path_rejected")
+	mcpResolveWrite = oldResolve
+	confinedCalls := 0
+	mcpConfinedPath = func(j policy.Jail, resolved string) (string, error) {
+		confinedCalls++
+		if confinedCalls == 2 {
+			return "", boom
+		}
+		return oldConfined(j, resolved)
+	}
+	assertError(t, server.Handle(context.Background(), "browser_download", raw(`{"selector":"a","path":"confined.bin"}`)), "path_rejected")
 }
 
 func TestClickTypeAndWaitUseBrowserSession(t *testing.T) {
@@ -3403,12 +3497,31 @@ func sessionList(t *testing.T, resp Response) []map[string]any {
 }
 
 type fakeValidator struct {
-	calls int
+	calls  int
+	failAt int
+	err    error
 }
 
 func (f *fakeValidator) Validate(context.Context, string) (netguard.Decision, error) {
 	f.calls++
+	if f.failAt > 0 && f.calls == f.failAt {
+		return netguard.Decision{}, f.err
+	}
 	return netguard.Decision{}, nil
+}
+
+type closableBrowserFactory struct {
+	closeErr   error
+	closeCalls int
+}
+
+func (*closableBrowserFactory) NewBrowserSession(context.Context, sessionOptions) (browserSession, error) {
+	return &fakeBrowserSession{}, nil
+}
+
+func (f *closableBrowserFactory) Close() error {
+	f.closeCalls++
+	return f.closeErr
 }
 
 type mcpFakeResolver map[string][]string

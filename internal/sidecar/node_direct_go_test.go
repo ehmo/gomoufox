@@ -475,6 +475,121 @@ func TestBuildNodeDirectSpecGoUsesRuntimeManifestWithoutPythonLayout(t *testing.
 	}
 }
 
+func TestBuildNodeDirectSpecGoErrorAndOptionEdges(t *testing.T) {
+	wantErr := errors.New("injected")
+	if _, err := buildNodeDirectSpecGo(Config{VenvDir: t.TempDir()}); err == nil {
+		t.Fatal("missing runtime resolved")
+	}
+
+	venv := fakeNodeDirectRuntime(t)
+	oldInstalled := nodeDirectInstalledBrowser
+	oldLoad := nodeDirectLoadPersonaDataset
+	oldApply := nodeDirectApplyPersonaFonts
+	oldValidate := nodeDirectValidateSpec
+	t.Cleanup(func() {
+		nodeDirectInstalledBrowser = oldInstalled
+		nodeDirectLoadPersonaDataset = oldLoad
+		nodeDirectApplyPersonaFonts = oldApply
+		nodeDirectValidateSpec = oldValidate
+	})
+	nodeDirectInstalledBrowser = func(RuntimeRoot) (string, error) { return "", wantErr }
+	if _, err := buildNodeDirectSpecGo(Config{VenvDir: venv}); !errors.Is(err, ErrNotInstalled) {
+		t.Fatalf("browser lookup error = %v", err)
+	}
+	nodeDirectInstalledBrowser = oldInstalled
+
+	if _, err := buildNodeDirectSpecGo(Config{
+		VenvDir: venv,
+		WebGL:   &WebGLConfig{Vendor: "missing", Renderer: "missing"},
+	}); err == nil || !strings.Contains(err.Error(), "no Camoufox WebGL sample") {
+		t.Fatalf("WebGL sample error = %v", err)
+	}
+	nodeDirectLoadPersonaDataset = func() (personaDataset, error) { return personaDataset{}, wantErr }
+	if _, err := buildNodeDirectSpecGo(Config{VenvDir: venv, BlockWebGL: true}); err == nil || !strings.Contains(err.Error(), wantErr.Error()) {
+		t.Fatalf("persona reload error = %v", err)
+	}
+	nodeDirectLoadPersonaDataset = oldLoad
+	nodeDirectApplyPersonaFonts = func(map[string]any, Config, []string) error { return wantErr }
+	if _, err := buildNodeDirectSpecGo(Config{VenvDir: venv, BlockWebGL: true}); !errors.Is(err, wantErr) {
+		t.Fatalf("font application error = %v", err)
+	}
+	nodeDirectApplyPersonaFonts = oldApply
+
+	if _, err := buildNodeDirectSpecGo(Config{
+		VenvDir:          venv,
+		FingerprintExact: true,
+		Fingerprint:      map[string]any{"bad": make(chan struct{})},
+	}); err == nil || !strings.Contains(err.Error(), "encode Camoufox config") {
+		t.Fatalf("config encoding error = %v", err)
+	}
+	if _, err := buildNodeDirectSpecGo(Config{
+		VenvDir:          venv,
+		FingerprintExact: true,
+		Fingerprint:      map[string]any{"navigator.userAgent": "exact"},
+		FirefoxPrefs:     map[string]any{"bad": make(chan struct{})},
+	}); err == nil || !strings.Contains(err.Error(), "encode Go node-direct payload") {
+		t.Fatalf("payload encoding error = %v", err)
+	}
+	if _, err := buildNodeDirectSpecGo(Config{
+		VenvDir:          venv,
+		FingerprintExact: true,
+		Fingerprint:      map[string]any{"navigator.userAgent": "exact"},
+		Persistent:       true,
+	}); err == nil || !strings.Contains(err.Error(), "requires user data dir") {
+		t.Fatalf("persistent profile error = %v", err)
+	}
+
+	nodeDirectValidateSpec = func(nodeDirectSpec) error { return wantErr }
+	if _, err := buildNodeDirectSpecGo(Config{
+		VenvDir:          venv,
+		FingerprintExact: true,
+		Fingerprint:      map[string]any{"navigator.userAgent": "exact"},
+	}); !errors.Is(err, wantErr) {
+		t.Fatalf("spec validation error = %v", err)
+	}
+}
+
+func TestBuildNodeDirectSpecGoPreferenceAndPlatformEdges(t *testing.T) {
+	venv := fakeNodeDirectRuntime(t)
+	spec, err := buildNodeDirectSpecGo(Config{
+		VenvDir:          venv,
+		FingerprintExact: true,
+		Fingerprint:      map[string]any{"navigator.userAgent": "exact"},
+		BlockImages:      true,
+		DisableCOOP:      true,
+		EnableCache:      true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	prefs := decodeNodeDirectPayloadForTest(t, spec.StdinBase64)["firefoxUserPrefs"].(map[string]any)
+	if prefs["permissions.default.image"] != float64(2) || prefs["browser.tabs.remote.useCrossOriginOpenerPolicy"] != false {
+		t.Fatalf("preferences = %#v", prefs)
+	}
+	for key := range cachePrefs {
+		if _, ok := prefs[key]; !ok {
+			t.Fatalf("cache preference %q missing: %#v", key, prefs)
+		}
+	}
+
+	restore := overrideSidecarPlatform(t, "windows", "amd64")
+	defer restore()
+	large := strings.Repeat("x", 3000)
+	env, err := nodeDirectGoEnv(map[string]any{"value": large}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := env["CAMOU_CONFIG_2"]; !ok {
+		t.Fatalf("Windows config was not chunked: %#v", env)
+	}
+	if nodeExecutableName() != "node.exe" {
+		t.Fatalf("Windows node executable = %q", nodeExecutableName())
+	}
+	if _, err := installedRuntimeBrowserExecutable(RuntimeRoot{BrowserResourcesDir: t.TempDir()}); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("missing installed browser = %v", err)
+	}
+}
+
 func fakeNodeDirectRuntime(t *testing.T) string {
 	t.Helper()
 	rootDir := t.TempDir()

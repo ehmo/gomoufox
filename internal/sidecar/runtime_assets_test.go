@@ -9,9 +9,12 @@ import (
 	"crypto/sha256"
 	"crypto/sha512"
 	"encoding/base64"
+	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"io/fs"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -1415,6 +1418,1030 @@ func TestEnsureInstalledNodeDirectAvoidsPythonBootstrap(t *testing.T) {
 	}
 	if _, err := os.Stat(layout.ReadyMarkerPath); err != nil {
 		t.Fatalf("node-direct install stamp missing: %v", err)
+	}
+}
+
+func TestRuntimeAssetRootsAndManifestValidationBranches(t *testing.T) {
+	defaultRoot := RuntimeAssetCacheRoot("", "", "")
+	if defaultRoot.Root == "" || defaultRoot.NodeJS == "" || defaultRoot.BrowserExecutable == "" {
+		t.Fatalf("default runtime root = %#v", defaultRoot)
+	}
+	windows := RuntimeAssetCacheRoot(t.TempDir(), "windows", "amd64")
+	if filepath.Base(windows.NodeJS) != "node.exe" || filepath.Base(windows.BrowserExecutable) != "camoufox.exe" {
+		t.Fatalf("Windows runtime root = %#v", windows)
+	}
+	manifest := NewRuntimeAssetManifest(defaultRoot, "", "")
+	if len(manifest.Assets) != 4 || manifest.Assets[0].GOOS == "" || manifest.Assets[0].GOARCH == "" {
+		t.Fatalf("default manifest = %#v", manifest)
+	}
+
+	valid := NewRuntimeAssetManifest(RuntimeAssetCacheRoot(t.TempDir(), "linux", "amd64"), "linux", "amd64")
+	for _, tc := range []struct {
+		name   string
+		mutate func(*RuntimeAssetManifest)
+	}{
+		{name: "schema", mutate: func(m *RuntimeAssetManifest) { m.SchemaVersion++ }},
+		{name: "runtime", mutate: func(m *RuntimeAssetManifest) { m.Runtime = "python" }},
+		{name: "Camoufox", mutate: func(m *RuntimeAssetManifest) { m.CamoufoxVersion = "bad" }},
+		{name: "Playwright", mutate: func(m *RuntimeAssetManifest) { m.PlaywrightVersion = "bad" }},
+		{name: "missing platform assets", mutate: func(m *RuntimeAssetManifest) {
+			for i := range m.Assets {
+				m.Assets[i].GOOS = "darwin"
+			}
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m := valid
+			m.Assets = append([]RuntimeAssetRecord(nil), valid.Assets...)
+			tc.mutate(&m)
+			if err := ValidateRuntimeAssetManifest(m, "linux", "amd64"); err == nil {
+				t.Fatalf("ValidateRuntimeAssetManifest accepted %s mismatch", tc.name)
+			}
+		})
+	}
+}
+
+func TestPopulateRuntimeAssetManifestRejectsUnsafeMissingAndWrongKinds(t *testing.T) {
+	root := RuntimeAssetCacheRoot(t.TempDir(), "linux", "amd64")
+	if err := os.MkdirAll(root.Root, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	regular := filepath.Join(root.Root, "regular")
+	if err := os.WriteFile(regular, []byte("data"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Join(root.Root, "dir")
+	if err := os.Mkdir(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	symlinkDir := filepath.Join(root.Root, "linked-dir")
+	if err := os.Symlink(dir, symlinkDir); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name  string
+		asset RuntimeAssetRecord
+	}{
+		{name: "blank path", asset: RuntimeAssetRecord{Kind: RuntimeAssetNodeJS}},
+		{name: "absolute path", asset: RuntimeAssetRecord{Kind: RuntimeAssetNodeJS, Path: regular}},
+		{name: "parent traversal", asset: RuntimeAssetRecord{Kind: RuntimeAssetNodeJS, Path: "../escape"}},
+		{name: "missing", asset: RuntimeAssetRecord{Kind: RuntimeAssetNodeJS, Path: "missing"}},
+		{name: "directory kind is file", asset: RuntimeAssetRecord{Kind: RuntimeAssetCamoufoxBrowser, Path: "regular"}},
+		{name: "tree hash rejects symlink", asset: RuntimeAssetRecord{Kind: RuntimeAssetCamoufoxBrowser, Path: "linked-dir"}},
+		{name: "file kind is directory", asset: RuntimeAssetRecord{Kind: RuntimeAssetNodeJS, Path: "dir"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m := RuntimeAssetManifest{Assets: []RuntimeAssetRecord{tc.asset}}
+			if err := PopulateRuntimeAssetManifest(root, &m); err == nil {
+				t.Fatalf("PopulateRuntimeAssetManifest accepted %#v", tc.asset)
+			}
+		})
+	}
+	m := RuntimeAssetManifest{Assets: []RuntimeAssetRecord{{Kind: RuntimeAssetNodeJS, Path: "regular"}}}
+	if err := PopulateRuntimeAssetManifest(root, &m); err != nil {
+		t.Fatal(err)
+	}
+	if m.Assets[0].GOOS == "" || m.Assets[0].GOARCH == "" || m.Assets[0].Size != 4 || m.Assets[0].SHA256 == "" {
+		t.Fatalf("populated file record = %#v", m.Assets[0])
+	}
+}
+
+func TestRuntimeManifestIOAndVerificationFailures(t *testing.T) {
+	root := RuntimeAssetCacheRoot(t.TempDir(), "linux", "amd64")
+	if _, err := LoadRuntimeAssetManifest(filepath.Join(root.Root, "missing")); err == nil {
+		t.Fatal("missing manifest loaded")
+	}
+	badJSON := filepath.Join(t.TempDir(), "manifest.json")
+	if err := os.WriteFile(badJSON, []byte("{"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadRuntimeAssetManifest(badJSON); err == nil || !strings.Contains(err.Error(), "decode runtime asset manifest") {
+		t.Fatalf("malformed manifest error = %v", err)
+	}
+	parentFile := filepath.Join(t.TempDir(), "parent")
+	if err := os.WriteFile(parentFile, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := WriteRuntimeAssetManifest(filepath.Join(parentFile, "manifest.json"), RuntimeAssetManifest{}); err == nil {
+		t.Fatal("manifest written below file parent")
+	}
+
+	if err := VerifyRuntimeLaunchServerFresh(root); err == nil || !errors.Is(err, ErrNotInstalled) {
+		t.Fatalf("missing launch server error = %v", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(root.LaunchServerJS), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(root.LaunchServerJS, []byte("stale"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := VerifyRuntimeLaunchServerFresh(root); err == nil || !errors.Is(err, ErrVersionMismatch) {
+		t.Fatalf("stale launch server error = %v", err)
+	}
+
+	if _, _, err := ResolveRuntimeAssets(root.Root); err == nil || !errors.Is(err, ErrNotInstalled) {
+		t.Fatalf("missing resolved assets error = %v", err)
+	}
+}
+
+func TestVerifyRuntimeAssetsRejectsPathTypeSizeChecksumAndModeCorruption(t *testing.T) {
+	root := RuntimeAssetCacheRoot(t.TempDir(), "linux", "amd64")
+	if err := os.MkdirAll(root.Root, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	file := filepath.Join(root.Root, "file")
+	if err := os.WriteFile(file, []byte("data"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Join(root.Root, "dir")
+	if err := os.Mkdir(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	linkedDir := filepath.Join(root.Root, "linked-dir")
+	if err := os.Symlink(dir, linkedDir); err != nil {
+		t.Fatal(err)
+	}
+	base := NewRuntimeAssetManifest(root, "linux", "amd64")
+	for i := range base.Assets {
+		base.Assets[i].Path = "file"
+	}
+	for _, tc := range []struct {
+		name   string
+		mutate func(*RuntimeAssetManifest)
+	}{
+		{name: "unsafe path", mutate: func(m *RuntimeAssetManifest) { m.Assets[0].Path = "../escape" }},
+		{name: "missing", mutate: func(m *RuntimeAssetManifest) { m.Assets[0].Path = "missing" }},
+		{name: "directory asset is file", mutate: func(m *RuntimeAssetManifest) { m.Assets[2].Path = "file" }},
+		{name: "directory tree is symlink", mutate: func(m *RuntimeAssetManifest) { m.Assets[2].Path = "linked-dir"; m.Assets[2].SHA256 = "x" }},
+		{name: "directory checksum", mutate: func(m *RuntimeAssetManifest) { m.Assets[2].Path = "dir"; m.Assets[2].SHA256 = "bad" }},
+		{name: "file asset is directory", mutate: func(m *RuntimeAssetManifest) { m.Assets[0].Path = "dir" }},
+		{name: "file size", mutate: func(m *RuntimeAssetManifest) { m.Assets[0].Size = 9 }},
+		{name: "file checksum", mutate: func(m *RuntimeAssetManifest) { m.Assets[0].SHA256 = "bad" }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m := base
+			m.Assets = append([]RuntimeAssetRecord(nil), base.Assets...)
+			tc.mutate(&m)
+			if err := VerifyRuntimeAssets(root, m, "linux", "amd64"); err == nil {
+				t.Fatalf("VerifyRuntimeAssets accepted %s corruption", tc.name)
+			}
+		})
+	}
+	if err := os.Chmod(file, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	m := base
+	m.Assets = append([]RuntimeAssetRecord(nil), base.Assets...)
+	if err := VerifyRuntimeAssets(root, m, "linux", "amd64"); err == nil || !strings.Contains(err.Error(), "not executable") {
+		t.Fatalf("node mode error = %v", err)
+	}
+}
+
+func TestEnsureRuntimeAssetsPropagatesInstallAndFilesystemFailures(t *testing.T) {
+	restorePlatform := overrideSidecarPlatform(t, "linux", "amd64")
+	defer restorePlatform()
+	oldDriver, oldBrowser := installPlaywrightDriverForRuntime, installCamoufoxBrowserForRuntime
+	t.Cleanup(func() { installPlaywrightDriverForRuntime, installCamoufoxBrowserForRuntime = oldDriver, oldBrowser })
+	wantErr := errors.New("injected")
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := EnsureRuntimeAssets(ctx, InstallOptions{VenvDir: t.TempDir()}); !errors.Is(err, context.Canceled) {
+		t.Fatalf("canceled install error = %v", err)
+	}
+	cacheFile := filepath.Join(t.TempDir(), "cache-file")
+	if err := os.WriteFile(cacheFile, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := EnsureRuntimeAssets(context.Background(), InstallOptions{VenvDir: cacheFile}); err == nil {
+		t.Fatal("runtime installed below file cache root")
+	}
+
+	installPlaywrightDriverForRuntime = func(context.Context, RuntimeRoot, InstallOptions) error { return wantErr }
+	if _, err := EnsureRuntimeAssets(context.Background(), InstallOptions{VenvDir: t.TempDir(), ForceReinstall: true}); !errors.Is(err, wantErr) {
+		t.Fatalf("driver error = %v", err)
+	}
+	installPlaywrightDriverForRuntime = func(_ context.Context, root RuntimeRoot, _ InstallOptions) error {
+		if err := os.RemoveAll(filepath.Dir(root.LaunchServerJS)); err != nil {
+			return err
+		}
+		return os.WriteFile(filepath.Dir(root.LaunchServerJS), []byte("block"), 0o600)
+	}
+	if _, err := EnsureRuntimeAssets(context.Background(), InstallOptions{VenvDir: t.TempDir(), ForceReinstall: true}); err == nil {
+		t.Fatal("launch server write failure ignored")
+	}
+	installPlaywrightDriverForRuntime = func(_ context.Context, root RuntimeRoot, _ InstallOptions) error {
+		if err := os.WriteFile(root.NodeJS, []byte("node"), 0o700); err != nil {
+			return err
+		}
+		return os.RemoveAll(root.PlaywrightPackageDir)
+	}
+	installCamoufoxBrowserForRuntime = func(context.Context, RuntimeRoot, InstallOptions) error { return nil }
+	if _, err := EnsureRuntimeAssets(context.Background(), InstallOptions{VenvDir: t.TempDir(), ForceReinstall: true}); err == nil {
+		t.Fatal("missing playwright package accepted")
+	}
+
+	installPlaywrightDriverForRuntime = func(_ context.Context, root RuntimeRoot, _ InstallOptions) error {
+		if err := os.MkdirAll(root.PlaywrightPackageDir, 0o700); err != nil {
+			return err
+		}
+		if err := os.WriteFile(root.NodeJS, []byte("node"), 0o700); err != nil {
+			return err
+		}
+		if err := os.WriteFile(filepath.Join(root.PlaywrightPackageDir, "package.json"), []byte(`{"version":"`+RequiredPlaywright+`"}`), 0o600); err != nil {
+			return err
+		}
+		return os.WriteFile(filepath.Join(root.PlaywrightPackageDir, "cli.js"), []byte("cli"), 0o600)
+	}
+	installCamoufoxBrowserForRuntime = func(context.Context, RuntimeRoot, InstallOptions) error { return wantErr }
+	if _, err := EnsureRuntimeAssets(context.Background(), InstallOptions{VenvDir: t.TempDir(), ForceReinstall: true}); !errors.Is(err, wantErr) {
+		t.Fatalf("browser error = %v", err)
+	}
+}
+
+type runtimeAssetFailingDirEntry struct {
+	os.DirEntry
+	err error
+}
+
+func (entry runtimeAssetFailingDirEntry) Info() (os.FileInfo, error) {
+	return nil, entry.err
+}
+
+func TestRuntimeAssetFilesystemAdapterPropagatesManifestAndHashFailures(t *testing.T) {
+	oldFiles := runtimeAssetFiles
+	t.Cleanup(func() { runtimeAssetFiles = oldFiles })
+	wantErr := errors.New("injected")
+	root := RuntimeAssetCacheRoot(t.TempDir(), "linux", "amd64")
+	if err := os.MkdirAll(root.Root, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	file := filepath.Join(root.Root, "file")
+	if err := os.WriteFile(file, []byte("data"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Join(root.Root, "dir")
+	if err := os.Mkdir(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	runtimeAssetFiles.open = func(string) (*os.File, error) { return nil, wantErr }
+	m := RuntimeAssetManifest{Assets: []RuntimeAssetRecord{{Kind: RuntimeAssetNodeJS, Path: "file"}}}
+	if err := PopulateRuntimeAssetManifest(root, &m); !errors.Is(err, wantErr) {
+		t.Fatalf("populate hash error = %v", err)
+	}
+	runtimeAssetFiles = oldFiles
+	runtimeAssetFiles.writeFile = func(string, []byte, os.FileMode) error { return wantErr }
+	if err := WriteRuntimeAssetManifest(filepath.Join(root.Root, "manifest.json"), RuntimeAssetManifest{}); !errors.Is(err, wantErr) {
+		t.Fatalf("manifest write error = %v", err)
+	}
+	runtimeAssetFiles = oldFiles
+	runtimeAssetFiles.open = func(path string) (*os.File, error) {
+		if path == file {
+			return nil, wantErr
+		}
+		return os.Open(path)
+	}
+	manifest := NewRuntimeAssetManifest(root, "linux", "amd64")
+	for i := range manifest.Assets {
+		if manifest.Assets[i].Kind == RuntimeAssetPlaywrightPackage || manifest.Assets[i].Kind == RuntimeAssetCamoufoxBrowser {
+			manifest.Assets[i].Path = "dir"
+		} else {
+			manifest.Assets[i].Path = "file"
+		}
+	}
+	manifest.Assets[0].SHA256 = "check"
+	if err := VerifyRuntimeAssets(root, manifest, "linux", "amd64"); !errors.Is(err, wantErr) {
+		t.Fatalf("verify file hash error = %v", err)
+	}
+	runtimeAssetFiles = oldFiles
+	manifest.Assets = append(manifest.Assets, RuntimeAssetRecord{Kind: "ignored", GOOS: "darwin", GOARCH: "arm64", Path: "missing"})
+	manifest.Assets[0].SHA256 = ""
+	if err := VerifyRuntimeAssets(root, manifest, "linux", "amd64"); err != nil {
+		t.Fatalf("other-platform asset was not ignored: %v", err)
+	}
+	manifest.SchemaVersion++
+	if err := VerifyRuntimeAssets(root, manifest, "linux", "amd64"); err == nil {
+		t.Fatal("invalid manifest verified")
+	}
+}
+
+func TestRuntimePlaywrightCoreModulePropagatesFilesystemFailures(t *testing.T) {
+	oldFiles := runtimeAssetFiles
+	t.Cleanup(func() { runtimeAssetFiles = oldFiles })
+	wantErr := errors.New("injected")
+	newRoot := func(t *testing.T) RuntimeRoot {
+		t.Helper()
+		root := RuntimeAssetCacheRoot(t.TempDir(), "linux", "amd64")
+		if err := os.MkdirAll(root.PlaywrightPackageDir, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(root.PlaywrightPackageDir, "package.json"), []byte("{}"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return root
+	}
+	for _, tc := range []struct {
+		name   string
+		goos   string
+		mutate func(*runtimeAssetFileOperations)
+	}{
+		{name: "mkdir parent", goos: "linux", mutate: func(ops *runtimeAssetFileOperations) {
+			ops.mkdirAll = func(string, os.FileMode) error { return wantErr }
+		}},
+		{name: "mkdir staging", goos: "linux", mutate: func(ops *runtimeAssetFileOperations) {
+			ops.mkdirTemp = func(string, string) (string, error) { return "", wantErr }
+		}},
+		{name: "remove staging directory", goos: "linux", mutate: func(ops *runtimeAssetFileOperations) { ops.remove = func(string) error { return wantErr } }},
+		{name: "relative target", goos: "linux", mutate: func(ops *runtimeAssetFileOperations) {
+			ops.rel = func(string, string) (string, error) { return "", wantErr }
+		}},
+		{name: "create symlink", goos: "linux", mutate: func(ops *runtimeAssetFileOperations) { ops.symlink = func(string, string) error { return wantErr } }},
+		{name: "copy Windows package", goos: "windows", mutate: func(ops *runtimeAssetFileOperations) {
+			ops.walkDir = func(string, fs.WalkDirFunc) error { return wantErr }
+		}},
+		{name: "replace target", goos: "linux", mutate: func(ops *runtimeAssetFileOperations) {
+			ops.lstat = func(string) (os.FileInfo, error) { return nil, wantErr }
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			runtimeAssetFiles = oldFiles
+			root := newRoot(t)
+			tc.mutate(&runtimeAssetFiles)
+			if err := ensureRuntimePlaywrightCoreModule(root, tc.goos); err == nil {
+				t.Fatal("injected filesystem failure was ignored")
+			}
+		})
+	}
+
+	runtimeAssetFiles = oldFiles
+	root := newRoot(t)
+	if err := os.MkdirAll(root.PlaywrightCoreModule, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root.PlaywrightCoreModule, "module.js"), []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	runtimeAssetFiles.open = func(path string) (*os.File, error) {
+		if strings.Contains(path, "module.js") {
+			return nil, wantErr
+		}
+		return os.Open(path)
+	}
+	if err := verifyRuntimePlaywrightCoreModule(root, "windows"); err == nil || !strings.Contains(err.Error(), "hash playwright-core module") {
+		t.Fatalf("Windows module hash error = %v", err)
+	}
+}
+
+func TestReplaceRuntimeAssetPropagatesEveryAtomicReplacementFailure(t *testing.T) {
+	oldFiles := runtimeAssetFiles
+	t.Cleanup(func() { runtimeAssetFiles = oldFiles })
+	wantErr := errors.New("injected")
+	newPaths := func(t *testing.T) (string, string) {
+		t.Helper()
+		root := t.TempDir()
+		source, target := filepath.Join(root, "source"), filepath.Join(root, "target")
+		if err := os.WriteFile(source, []byte("new"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(target, []byte("old"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return source, target
+	}
+	for _, tc := range []struct {
+		name   string
+		mutate func(*runtimeAssetFileOperations)
+	}{
+		{name: "backup temp", mutate: func(ops *runtimeAssetFileOperations) {
+			ops.mkdirTemp = func(string, string) (string, error) { return "", wantErr }
+		}},
+		{name: "backup placeholder removal", mutate: func(ops *runtimeAssetFileOperations) { ops.remove = func(string) error { return wantErr } }},
+		{name: "backup rename", mutate: func(ops *runtimeAssetFileOperations) { ops.rename = func(string, string) error { return wantErr } }},
+		{name: "target lstat", mutate: func(ops *runtimeAssetFileOperations) {
+			ops.lstat = func(string) (os.FileInfo, error) { return nil, wantErr }
+		}},
+		{name: "backup cleanup", mutate: func(ops *runtimeAssetFileOperations) {
+			ops.removeAll = func(string) error { return wantErr }
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			runtimeAssetFiles = oldFiles
+			source, target := newPaths(t)
+			tc.mutate(&runtimeAssetFiles)
+			if err := replaceRuntimeAsset(source, target); err == nil {
+				t.Fatal("injected replacement failure was ignored")
+			}
+		})
+	}
+
+	for _, restoreFails := range []bool{false, true} {
+		t.Run(fmt.Sprintf("install rename restore=%v", restoreFails), func(t *testing.T) {
+			runtimeAssetFiles = oldFiles
+			source, target := newPaths(t)
+			renames := 0
+			runtimeAssetFiles.rename = func(from, to string) error {
+				renames++
+				if renames == 1 {
+					return os.Rename(from, to)
+				}
+				if renames == 2 || restoreFails {
+					return wantErr
+				}
+				return os.Rename(from, to)
+			}
+			err := replaceRuntimeAsset(source, target)
+			if err == nil || !strings.Contains(err.Error(), "replace runtime asset") {
+				t.Fatalf("replacement error = %v", err)
+			}
+			if restoreFails && !strings.Contains(err.Error(), "restore previous asset") {
+				t.Fatalf("restore error = %v", err)
+			}
+		})
+	}
+}
+
+func TestRuntimeAssetArchiveWritersPropagateCreateCopyAndCloseFailures(t *testing.T) {
+	oldFiles, oldCopy, oldCopyN, oldClose := runtimeAssetFiles, runtimeAssetCopy, runtimeAssetCopyN, runtimeAssetCloseFile
+	t.Cleanup(func() {
+		runtimeAssetFiles, runtimeAssetCopy, runtimeAssetCopyN, runtimeAssetCloseFile = oldFiles, oldCopy, oldCopyN, oldClose
+	})
+	wantErr := errors.New("injected")
+	core := playwrightCoreArchiveFixture(t, map[string]string{
+		"package/cli.js":       "cli",
+		"package/package.json": "{}",
+	})
+	nodeName := "node-v1-linux-x64.tar.gz"
+	node := playwrightNodeArchiveFixture(t, nodeName, "node")
+	for _, tc := range []struct {
+		name   string
+		call   func(string) error
+		mutate func()
+	}{
+		{name: "core create", call: func(dst string) error { return extractPlaywrightCoreArchive(core, dst) }, mutate: func() {
+			runtimeAssetFiles.openFile = func(string, int, os.FileMode) (*os.File, error) { return nil, wantErr }
+		}},
+		{name: "core copy", call: func(dst string) error { return extractPlaywrightCoreArchive(core, dst) }, mutate: func() { runtimeAssetCopyN = func(io.Writer, io.Reader, int64) (int64, error) { return 0, wantErr } }},
+		{name: "core close", call: func(dst string) error { return extractPlaywrightCoreArchive(core, dst) }, mutate: func() { runtimeAssetCloseFile = func(*os.File) error { return wantErr } }},
+		{name: "node create", call: func(dst string) error { return extractPlaywrightNodeArchive(node, nodeName, dst) }, mutate: func() {
+			runtimeAssetFiles.openFile = func(string, int, os.FileMode) (*os.File, error) { return nil, wantErr }
+		}},
+		{name: "node copy", call: func(dst string) error { return extractPlaywrightNodeArchive(node, nodeName, dst) }, mutate: func() { runtimeAssetCopyN = func(io.Writer, io.Reader, int64) (int64, error) { return 0, wantErr } }},
+		{name: "node close", call: func(dst string) error { return extractPlaywrightNodeArchive(node, nodeName, dst) }, mutate: func() { runtimeAssetCloseFile = func(*os.File) error { return wantErr } }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			runtimeAssetFiles, runtimeAssetCopyN, runtimeAssetCloseFile = oldFiles, oldCopyN, oldClose
+			tc.mutate()
+			if err := tc.call(t.TempDir()); !errors.Is(err, wantErr) {
+				t.Fatalf("archive failure = %v", err)
+			}
+		})
+	}
+}
+
+func TestCopyAndHashTreesPropagateFilesystemFailures(t *testing.T) {
+	oldFiles, oldCopy, oldClose := runtimeAssetFiles, runtimeAssetCopy, runtimeAssetCloseFile
+	t.Cleanup(func() { runtimeAssetFiles, runtimeAssetCopy, runtimeAssetCloseFile = oldFiles, oldCopy, oldClose })
+	wantErr := errors.New("injected")
+	src := t.TempDir()
+	file := filepath.Join(src, "file")
+	if err := os.WriteFile(file, []byte("data"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	entries, err := os.ReadDir(src)
+	if err != nil || len(entries) != 1 {
+		t.Fatalf("read fixture directory: %v, %#v", err, entries)
+	}
+	fileEntry := entries[0]
+
+	for _, tc := range []struct {
+		name   string
+		call   func() error
+		mutate func()
+	}{
+		{name: "copy walk callback", call: func() error { return copyTree(src, t.TempDir()) }, mutate: func() {
+			runtimeAssetFiles.walkDir = func(root string, fn fs.WalkDirFunc) error { return fn(root, nil, wantErr) }
+		}},
+		{name: "copy relative path", call: func() error { return copyTree(src, t.TempDir()) }, mutate: func() { runtimeAssetFiles.rel = func(string, string) (string, error) { return "", wantErr } }},
+		{name: "copy entry info", call: func() error { return copyTree(src, t.TempDir()) }, mutate: func() {
+			runtimeAssetFiles.walkDir = func(root string, fn fs.WalkDirFunc) error {
+				return fn(file, runtimeAssetFailingDirEntry{DirEntry: fileEntry, err: wantErr}, nil)
+			}
+		}},
+		{name: "copy source open", call: func() error { return copyTree(src, t.TempDir()) }, mutate: func() { runtimeAssetFiles.open = func(string) (*os.File, error) { return nil, wantErr } }},
+		{name: "copy target open", call: func() error { return copyTree(src, t.TempDir()) }, mutate: func() {
+			runtimeAssetFiles.openFile = func(string, int, os.FileMode) (*os.File, error) { return nil, wantErr }
+		}},
+		{name: "copy bytes", call: func() error { return copyTree(src, t.TempDir()) }, mutate: func() { runtimeAssetCopy = func(io.Writer, io.Reader) (int64, error) { return 0, wantErr } }},
+		{name: "copy close", call: func() error { return copyTree(src, t.TempDir()) }, mutate: func() { runtimeAssetCloseFile = func(*os.File) error { return wantErr } }},
+		{name: "hash root lstat", call: func() error { _, err := treeSHA256(src); return err }, mutate: func() { runtimeAssetFiles.lstat = func(string) (os.FileInfo, error) { return nil, wantErr } }},
+		{name: "hash walk callback", call: func() error { _, err := treeSHA256(src); return err }, mutate: func() {
+			runtimeAssetFiles.walkDir = func(root string, fn fs.WalkDirFunc) error { return fn(root, nil, wantErr) }
+		}},
+		{name: "hash relative path", call: func() error { _, err := treeSHA256(src); return err }, mutate: func() { runtimeAssetFiles.rel = func(string, string) (string, error) { return "", wantErr } }},
+		{name: "hash entry info", call: func() error { _, err := treeSHA256(src); return err }, mutate: func() {
+			runtimeAssetFiles.walkDir = func(root string, fn fs.WalkDirFunc) error {
+				return fn(file, runtimeAssetFailingDirEntry{DirEntry: fileEntry, err: wantErr}, nil)
+			}
+		}},
+		{name: "hash file open", call: func() error { _, err := treeSHA256(src); return err }, mutate: func() { runtimeAssetFiles.open = func(string) (*os.File, error) { return nil, wantErr } }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			runtimeAssetFiles, runtimeAssetCopy, runtimeAssetCloseFile = oldFiles, oldCopy, oldClose
+			tc.mutate()
+			if err := tc.call(); !errors.Is(err, wantErr) {
+				t.Fatalf("filesystem failure = %v", err)
+			}
+		})
+	}
+
+	runtimeAssetFiles = oldFiles
+	link := filepath.Join(src, "link")
+	if err := os.Symlink(file, link); err != nil {
+		t.Fatal(err)
+	}
+	if err := copyTree(src, t.TempDir()); err != nil {
+		t.Fatalf("copyTree ignored non-regular entry incorrectly: %v", err)
+	}
+	runtimeAssetFiles.abs = func(string) (string, error) { return "", wantErr }
+	if sameCanonicalFileTree("a", "b") {
+		t.Fatal("canonical comparison accepted unresolved paths")
+	}
+	runtimeAssetFiles = oldFiles
+	runtimeAssetFiles.rel = func(string, string) (string, error) { return "", wantErr }
+	if got := relPath("root", "target"); got != "target" {
+		t.Fatalf("relPath fallback = %q", got)
+	}
+}
+
+func TestResolveRuntimeAssetsReportsMissingReadyMarkerAndStaleLaunchServer(t *testing.T) {
+	restorePlatform := overrideSidecarPlatform(t, "linux", "amd64")
+	defer restorePlatform()
+	restoreInstallers := replaceRuntimeAssetInstallers(t)
+	defer restoreInstallers()
+	cache := t.TempDir()
+	root, err := EnsureRuntimeAssets(context.Background(), InstallOptions{VenvDir: cache, ForceReinstall: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(root.ReadyMarkerPath); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := ResolveRuntimeAssets(cache); err == nil || !strings.Contains(err.Error(), "not marked ready") {
+		t.Fatalf("missing ready marker error = %v", err)
+	}
+	if err := os.WriteFile(root.ReadyMarkerPath, []byte("ready"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(root.LaunchServerJS, []byte("stale"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	manifest, err := LoadRuntimeAssetManifest(root.ManifestPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := range manifest.Assets {
+		if manifest.Assets[i].Kind == RuntimeAssetLaunchServerJS {
+			manifest.Assets[i].Size = 0
+			manifest.Assets[i].SHA256 = ""
+		}
+	}
+	if err := WriteRuntimeAssetManifest(root.ManifestPath, manifest); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := ResolveRuntimeAssets(cache); err == nil || !errors.Is(err, ErrVersionMismatch) {
+		t.Fatalf("stale launch server error = %v", err)
+	}
+	if err := os.WriteFile(root.LaunchServerJS, []byte(runtimeLaunchServerJS), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(root.PlaywrightCoreModule); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := ResolveRuntimeAssets(cache); err == nil || !errors.Is(err, ErrNotInstalled) {
+		t.Fatalf("missing playwright-core module error = %v", err)
+	}
+}
+
+func TestEnsureRuntimeAssetsPropagatesPostInstallValidationFailures(t *testing.T) {
+	restorePlatform := overrideSidecarPlatform(t, "linux", "amd64")
+	defer restorePlatform()
+	oldFiles := runtimeAssetFiles
+	oldDriver, oldBrowser := installPlaywrightDriverForRuntime, installCamoufoxBrowserForRuntime
+	t.Cleanup(func() {
+		runtimeAssetFiles = oldFiles
+		installPlaywrightDriverForRuntime, installCamoufoxBrowserForRuntime = oldDriver, oldBrowser
+	})
+	wantErr := errors.New("injected")
+
+	for _, tc := range []struct {
+		name   string
+		mutate func(root RuntimeRoot)
+	}{
+		{name: "populate manifest", mutate: func(root RuntimeRoot) {
+			runtimeAssetFiles.open = func(path string) (*os.File, error) {
+				if path == root.NodeJS {
+					return nil, wantErr
+				}
+				return os.Open(path)
+			}
+		}},
+		{name: "write manifest", mutate: func(root RuntimeRoot) {
+			runtimeAssetFiles.writeFile = func(path string, data []byte, mode os.FileMode) error {
+				if path == root.ManifestPath {
+					return wantErr
+				}
+				return os.WriteFile(path, data, mode)
+			}
+		}},
+		{name: "verify assets", mutate: func(root RuntimeRoot) {
+			calls := 0
+			runtimeAssetFiles.stat = func(path string) (os.FileInfo, error) {
+				if path == root.NodeJS {
+					calls++
+					if calls == 2 {
+						return nil, wantErr
+					}
+				}
+				return os.Stat(path)
+			}
+		}},
+		{name: "verify core module", mutate: func(root RuntimeRoot) {
+			calls := 0
+			runtimeAssetFiles.lstat = func(path string) (os.FileInfo, error) {
+				if path == root.PlaywrightCoreModule {
+					calls++
+					if calls == 4 {
+						return nil, wantErr
+					}
+				}
+				return os.Lstat(path)
+			}
+		}},
+		{name: "write ready marker", mutate: func(root RuntimeRoot) {
+			runtimeAssetFiles.writeFile = func(path string, data []byte, mode os.FileMode) error {
+				if path == root.ReadyMarkerPath {
+					return wantErr
+				}
+				return os.WriteFile(path, data, mode)
+			}
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			runtimeAssetFiles = oldFiles
+			restoreInstallers := replaceRuntimeAssetInstallers(t)
+			defer restoreInstallers()
+			cache := t.TempDir()
+			root := RuntimeAssetCacheRoot(cache, "linux", "amd64")
+			tc.mutate(root)
+			if _, err := EnsureRuntimeAssets(context.Background(), InstallOptions{VenvDir: cache, ForceReinstall: true}); err == nil {
+				t.Fatal("post-install failure was ignored")
+			}
+		})
+	}
+}
+
+func TestInstallRuntimePlaywrightDriverPropagatesStagingFailure(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("fixture Node.js executable is a shell script")
+	}
+	restorePlatform := overrideSidecarPlatform(t, "linux", "amd64")
+	defer restorePlatform()
+	core := playwrightCoreArchiveFixture(t, map[string]string{
+		"package/cli.js":       "cli",
+		"package/package.json": `{"version":"` + RequiredPlaywright + `"}`,
+	})
+	nodeName := "node-v" + playwrightDriverNodeVersion + "-linux-x64.tar.gz"
+	node := playwrightNodeArchiveFixture(t, nodeName, "#!/bin/sh\nprintf 'Version "+RequiredPlaywright+"\\n'\n")
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/playwright-core.tgz" {
+			_, _ = w.Write(core)
+			return
+		}
+		_, _ = w.Write(node)
+	}))
+	defer server.Close()
+	restoreSources := replacePinnedPlaywrightSources(t, server, core, nodeName, node)
+	defer restoreSources()
+	oldFiles := runtimeAssetFiles
+	runtimeAssetFiles.mkdirTemp = func(string, string) (string, error) { return "", errors.New("injected") }
+	defer func() { runtimeAssetFiles = oldFiles }()
+	if err := installRuntimePlaywrightDriver(context.Background(), RuntimeAssetCacheRoot(t.TempDir(), "linux", "amd64"), InstallOptions{ForceReinstall: true}); err == nil {
+		t.Fatal("staging failure ignored")
+	}
+}
+
+func TestPlaywrightCoreArchiveRejectsFilesystemAndOversizeFailures(t *testing.T) {
+	oldFiles := runtimeAssetFiles
+	t.Cleanup(func() { runtimeAssetFiles = oldFiles })
+	wantErr := errors.New("injected")
+	dirArchive := tarArchiveFixture(t, []tarFixtureEntry{{Name: "package/lib", Typeflag: tar.TypeDir}})
+	fileArchive := playwrightCoreArchiveFixture(t, map[string]string{"package/cli.js": "cli", "package/package.json": "{}"})
+	for _, tc := range []struct {
+		name string
+		raw  []byte
+	}{
+		{name: "directory mkdir", raw: dirArchive},
+		{name: "file parent mkdir", raw: fileArchive},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			runtimeAssetFiles = oldFiles
+			runtimeAssetFiles.mkdirAll = func(string, os.FileMode) error { return wantErr }
+			if err := extractPlaywrightCoreArchive(tc.raw, t.TempDir()); !errors.Is(err, wantErr) {
+				t.Fatalf("mkdir error = %v", err)
+			}
+		})
+	}
+
+	var raw bytes.Buffer
+	gz := gzip.NewWriter(&raw)
+	tw := tar.NewWriter(gz)
+	if err := tw.WriteHeader(&tar.Header{Name: "package/huge", Mode: 0o600, Size: playwrightCoreExtractedMaxBytes + 1, Typeflag: tar.TypeReg}); err != nil {
+		t.Fatal(err)
+	}
+	_ = tw.Flush()
+	if err := gz.Close(); err != nil {
+		t.Fatal(err)
+	}
+	runtimeAssetFiles = oldFiles
+	if err := extractPlaywrightCoreArchive(raw.Bytes(), t.TempDir()); err == nil || !strings.Contains(err.Error(), "extracted-size limit") {
+		t.Fatalf("oversize archive error = %v", err)
+	}
+}
+
+func TestRuntimeCamoufoxInstallReuseCopyAndCancellationBranches(t *testing.T) {
+	restorePlatform := overrideSidecarPlatform(t, "linux", "amd64")
+	defer restorePlatform()
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := installRuntimeCamoufoxBrowser(ctx, RuntimeAssetCacheRoot(t.TempDir(), "linux", "amd64"), InstallOptions{}); !errors.Is(err, context.Canceled) {
+		t.Fatalf("canceled browser install error = %v", err)
+	}
+
+	t.Setenv(EnvTrustUnverifiedCamoufoxPath, "1")
+	root := RuntimeAssetCacheRoot(t.TempDir(), "linux", "amd64")
+	if err := os.MkdirAll(root.BrowserResourcesDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(root.BrowserExecutable, []byte("browser"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := installRuntimeCamoufoxBrowser(context.Background(), root, InstallOptions{}); err != nil {
+		t.Fatalf("reuse installed browser: %v", err)
+	}
+	if err := copyRuntimeCamoufoxBrowser(root.BrowserResourcesDir, root); err != nil {
+		t.Fatalf("copy browser onto itself: %v", err)
+	}
+	oldFiles := runtimeAssetFiles
+	runtimeAssetFiles.removeAll = func(string) error { return errors.New("injected") }
+	if err := copyRuntimeCamoufoxBrowser(t.TempDir(), root); err == nil {
+		t.Fatal("browser destination removal failure ignored")
+	}
+	runtimeAssetFiles = oldFiles
+	missing := filepath.Join(t.TempDir(), "missing")
+	if err := copyRuntimeCamoufoxBrowser(missing, root); err == nil {
+		t.Fatal("missing browser source copied")
+	}
+
+	oldUserCache := userCacheDir
+	defer func() { userCacheDir = oldUserCache }()
+	cache := t.TempDir()
+	userCacheDir = func() (string, error) { return cache, nil }
+	candidate := filepath.Join(cache, "camoufox")
+	if err := os.MkdirAll(candidate, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(candidate, "camoufox"), []byte("cached browser"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	sum, err := camoufoxBrowserManifestSHA256(candidate)
+	if err != nil {
+		t.Fatal(err)
+	}
+	restoreManifest := replaceManifestChecksum(t, sum)
+	defer restoreManifest()
+	cachedRoot := RuntimeAssetCacheRoot(t.TempDir(), "linux", "amd64")
+	if err := installRuntimeCamoufoxBrowser(context.Background(), cachedRoot, InstallOptions{}); err != nil {
+		t.Fatalf("reuse cached browser: %v", err)
+	}
+	if raw, err := os.ReadFile(cachedRoot.BrowserExecutable); err != nil || string(raw) != "cached browser" {
+		t.Fatalf("cached browser copy = %q, %v", raw, err)
+	}
+}
+
+func TestDownloadRuntimeCamoufoxBrowserPropagatesFilesystemFailures(t *testing.T) {
+	restorePlatform := overrideSidecarPlatform(t, "linux", "amd64")
+	defer restorePlatform()
+	oldFiles, oldCopy, oldClose := runtimeAssetFiles, runtimeAssetCopy, runtimeAssetCloseFile
+	oldClient, oldBase := runtimeAssetHTTPClient, camoufoxReleaseAssetBaseURL
+	t.Cleanup(func() {
+		runtimeAssetFiles, runtimeAssetCopy, runtimeAssetCloseFile = oldFiles, oldCopy, oldClose
+		runtimeAssetHTTPClient, camoufoxReleaseAssetBaseURL = oldClient, oldBase
+	})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte("archive")) }))
+	defer server.Close()
+	runtimeAssetHTTPClient, camoufoxReleaseAssetBaseURL = server.Client(), server.URL
+	wantErr := errors.New("injected")
+	for _, tc := range []struct {
+		name   string
+		mutate func()
+	}{
+		{name: "temporary directory", mutate: func() { runtimeAssetFiles.mkdirTemp = func(string, string) (string, error) { return "", wantErr } }},
+		{name: "archive create", mutate: func() { runtimeAssetFiles.create = func(string) (*os.File, error) { return nil, wantErr } }},
+		{name: "archive copy", mutate: func() { runtimeAssetCopy = func(io.Writer, io.Reader) (int64, error) { return 0, wantErr } }},
+		{name: "archive close", mutate: func() { runtimeAssetCloseFile = func(*os.File) error { return wantErr } }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			runtimeAssetFiles, runtimeAssetCopy, runtimeAssetCloseFile = oldFiles, oldCopy, oldClose
+			tc.mutate()
+			root := RuntimeAssetCacheRoot(t.TempDir(), "linux", "amd64")
+			if err := os.MkdirAll(filepath.Dir(root.Root), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if err := downloadRuntimeCamoufoxBrowser(context.Background(), root, InstallOptions{}); !errors.Is(err, wantErr) {
+				t.Fatalf("download filesystem error = %v", err)
+			}
+		})
+	}
+
+	restorePlatform()
+	restorePlatform = overrideSidecarPlatform(t, "windows", "amd64")
+	if err := downloadRuntimeCamoufoxBrowser(context.Background(), RuntimeAssetCacheRoot(t.TempDir(), "windows", "amd64"), InstallOptions{}); err == nil {
+		t.Fatal("unsupported download platform accepted")
+	}
+}
+
+func TestDownloadRuntimeCamoufoxBrowserRejectsManifestMismatch(t *testing.T) {
+	restorePlatform := overrideSidecarPlatform(t, "linux", "amd64")
+	defer restorePlatform()
+	oldClient, oldBase := runtimeAssetHTTPClient, camoufoxReleaseAssetBaseURL
+	defer func() { runtimeAssetHTTPClient, camoufoxReleaseAssetBaseURL = oldClient, oldBase }()
+	zipData := runtimeBrowserZipFixture(t)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write(zipData) }))
+	defer server.Close()
+	runtimeAssetHTTPClient, camoufoxReleaseAssetBaseURL = server.Client(), server.URL
+	restoreManifest := replaceManifestChecksum(t, strings.Repeat("0", sha256.Size*2))
+	defer restoreManifest()
+	root := RuntimeAssetCacheRoot(t.TempDir(), "linux", "amd64")
+	if err := os.MkdirAll(filepath.Dir(root.Root), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := downloadRuntimeCamoufoxBrowser(context.Background(), root, InstallOptions{}); err == nil || !strings.Contains(err.Error(), "manifest checksum mismatch") {
+		t.Fatalf("manifest mismatch error = %v", err)
+	}
+}
+
+func TestDownloadedBrowserDiscoveryPropagatesWalkErrors(t *testing.T) {
+	oldFiles := runtimeAssetFiles
+	defer func() { runtimeAssetFiles = oldFiles }()
+	wantErr := errors.New("injected")
+	root := t.TempDir()
+	runtimeAssetFiles.walkDir = func(path string, fn fs.WalkDirFunc) error { return fn(path, nil, wantErr) }
+	if _, err := discoverDownloadedBrowserDir(root); !errors.Is(err, wantErr) {
+		t.Fatalf("walk callback error = %v", err)
+	}
+	runtimeAssetFiles.walkDir = func(string, fs.WalkDirFunc) error { return wantErr }
+	if _, err := discoverDownloadedBrowserDir(root); !errors.Is(err, wantErr) {
+		t.Fatalf("walk error = %v", err)
+	}
+}
+
+func TestDownloadedBrowserDiscoveryCoversDirectAndSkippedDirectories(t *testing.T) {
+	direct := t.TempDir()
+	executable := filepath.Join(direct, "camoufox")
+	if err := os.WriteFile(executable, []byte("browser"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := discoverDownloadedBrowserDir(direct); err != nil || got != direct {
+		t.Fatalf("direct downloaded browser = %q, %v", got, err)
+	}
+	empty := t.TempDir()
+	if err := os.Mkdir(filepath.Join(empty, "nested"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := discoverDownloadedBrowserDir(empty); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("nested empty discovery error = %v", err)
+	}
+}
+
+func TestUnzipRuntimeAssetPropagatesFilesystemAndStreamFailures(t *testing.T) {
+	oldFiles, oldCopy, oldClose := runtimeAssetFiles, runtimeAssetCopy, runtimeAssetCloseFile
+	t.Cleanup(func() { runtimeAssetFiles, runtimeAssetCopy, runtimeAssetCloseFile = oldFiles, oldCopy, oldClose })
+	wantErr := errors.New("injected")
+	makeZip := func(t *testing.T, directory bool, method uint16, zeroMode bool) string {
+		t.Helper()
+		path := filepath.Join(t.TempDir(), "fixture.zip")
+		out, err := os.Create(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		zw := zip.NewWriter(out)
+		header := &zip.FileHeader{Name: "nested/file"}
+		if directory {
+			header.Name = "nested/"
+			header.SetMode(os.ModeDir | 0o700)
+		} else {
+			header.Method = zip.Store
+			if zeroMode {
+				header.SetMode(0)
+			}
+		}
+		entry, err := zw.CreateHeader(header)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !directory {
+			_, _ = entry.Write([]byte("data"))
+		}
+		if err := zw.Close(); err != nil {
+			t.Fatal(err)
+		}
+		if err := out.Close(); err != nil {
+			t.Fatal(err)
+		}
+		if method != zip.Store {
+			raw, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for offset := 0; offset+12 <= len(raw); offset++ {
+				switch string(raw[offset : offset+4]) {
+				case "PK\x03\x04":
+					binary.LittleEndian.PutUint16(raw[offset+8:offset+10], method)
+				case "PK\x01\x02":
+					binary.LittleEndian.PutUint16(raw[offset+10:offset+12], method)
+				}
+			}
+			if err := os.WriteFile(path, raw, 0o600); err != nil {
+				t.Fatal(err)
+			}
+		}
+		return path
+	}
+	fileZip := makeZip(t, false, zip.Store, false)
+	dirZip := makeZip(t, true, zip.Store, false)
+	for _, tc := range []struct {
+		name   string
+		path   string
+		mutate func()
+	}{
+		{name: "destination mkdir", path: fileZip, mutate: func() { runtimeAssetFiles.mkdirAll = func(string, os.FileMode) error { return wantErr } }},
+		{name: "directory entry mkdir", path: dirZip, mutate: func() {
+			calls := 0
+			runtimeAssetFiles.mkdirAll = func(path string, mode os.FileMode) error {
+				calls++
+				if calls == 2 {
+					return wantErr
+				}
+				return os.MkdirAll(path, mode)
+			}
+		}},
+		{name: "file parent mkdir", path: fileZip, mutate: func() {
+			calls := 0
+			runtimeAssetFiles.mkdirAll = func(path string, mode os.FileMode) error {
+				calls++
+				if calls == 2 {
+					return wantErr
+				}
+				return os.MkdirAll(path, mode)
+			}
+		}},
+		{name: "destination open", path: fileZip, mutate: func() {
+			runtimeAssetFiles.openFile = func(string, int, os.FileMode) (*os.File, error) { return nil, wantErr }
+		}},
+		{name: "copy", path: fileZip, mutate: func() { runtimeAssetCopy = func(io.Writer, io.Reader) (int64, error) { return 0, wantErr } }},
+		{name: "close", path: fileZip, mutate: func() { runtimeAssetCloseFile = func(*os.File) error { return wantErr } }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			runtimeAssetFiles, runtimeAssetCopy, runtimeAssetCloseFile = oldFiles, oldCopy, oldClose
+			tc.mutate()
+			if err := unzipRuntimeAsset(tc.path, filepath.Join(t.TempDir(), "out")); !errors.Is(err, wantErr) {
+				t.Fatalf("unzip error = %v", err)
+			}
+		})
+	}
+
+	unsupported := makeZip(t, false, 99, false)
+	runtimeAssetFiles, runtimeAssetCopy, runtimeAssetCloseFile = oldFiles, oldCopy, oldClose
+	if err := unzipRuntimeAsset(unsupported, filepath.Join(t.TempDir(), "out")); err == nil {
+		t.Fatal("unsupported ZIP compression method opened")
+	}
+	runtimeAssetFiles, runtimeAssetCopy, runtimeAssetCloseFile = oldFiles, oldCopy, oldClose
+	if err := unzipRuntimeAsset(dirZip, filepath.Join(t.TempDir(), "dir-out")); err != nil {
+		t.Fatalf("extract directory entry: %v", err)
+	}
+	if err := unzipRuntimeAsset(fileZip, filepath.Join(t.TempDir(), "file-out")); err != nil {
+		t.Fatalf("extract default-mode file: %v", err)
+	}
+	zeroMode := makeZip(t, false, zip.Store, true)
+	if err := unzipRuntimeAsset(zeroMode, filepath.Join(t.TempDir(), "zero-mode-out")); err != nil {
+		t.Fatalf("extract zero-mode file: %v", err)
+	}
+}
+
+func TestFileSHA256ReportsReadFailure(t *testing.T) {
+	if _, err := fileSHA256(t.TempDir()); err == nil {
+		t.Fatal("directory hashed as a regular file")
 	}
 }
 

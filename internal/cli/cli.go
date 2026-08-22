@@ -141,6 +141,7 @@ type LocalCommandRequest struct {
 	Flags          map[string]any
 	Profile        string
 	JSON           bool
+	AllowLocalhost bool
 	AllowedOrigins []string
 	AllowedHosts   []string
 	DisplayOut     string
@@ -178,6 +179,12 @@ var (
 	errDaemonUsage           = errors.New("invalid forwarded command")
 	errSessionExportDisabled = errors.New("session_export_disabled")
 	userHomeDir              = os.UserHomeDir
+	cliGetwd                 = os.Getwd
+	cliAgentsInstall         = agents.Install
+	setupDefaultInstall      = defaultInstallEnsureInstalled
+	setupDefaultDoctor       = defaultDoctor
+	cliAbsPath               = filepath.Abs
+	cliEvalSymlinks          = filepath.EvalSymlinks
 )
 
 type daemonUsageError struct {
@@ -316,6 +323,7 @@ type commandHelp struct {
 	Usage    string   `json:"usage"`
 	Summary  string   `json:"summary,omitempty"`
 	Flags    []string `json:"flags,omitempty"`
+	Notes    []string `json:"notes,omitempty"`
 	Examples []string `json:"examples,omitempty"`
 }
 
@@ -494,6 +502,13 @@ func printHelpText(w io.Writer, command string) {
 			}
 			_, _ = fmt.Fprintln(w)
 		}
+		if len(doc.Notes) > 0 {
+			_, _ = fmt.Fprintln(w, "Notes")
+			for _, note := range doc.Notes {
+				_, _ = fmt.Fprintf(w, "  %s\n", note)
+			}
+			_, _ = fmt.Fprintln(w)
+		}
 		if command == "mcp" {
 			tools := make([]string, 0, len(mcpserver.Tools()))
 			for _, tool := range mcpserver.Tools() {
@@ -539,7 +554,11 @@ func printHelpText(w io.Writer, command string) {
 	_, _ = fmt.Fprintln(w)
 	_, _ = fmt.Fprintln(w, "CLI URL guardrail overrides")
 	for _, flag := range cliGuardrailOverrideFlags() {
-		_, _ = fmt.Fprintf(w, "  %s  (browser CLI commands only; rejected by mcp and serve)\n", flag)
+		scope := "browser CLI commands only; rejected by MCP, serve, and daemon forwarding"
+		if flag == "--allow-localhost" {
+			scope = "browser CLI commands and MCP startup; rejected by serve and daemon forwarding"
+		}
+		_, _ = fmt.Fprintf(w, "  %s  (%s)\n", flag, scope)
 	}
 	_, _ = fmt.Fprintln(w)
 	_, _ = fmt.Fprintln(w, "Discovery")
@@ -647,7 +666,7 @@ func globalHelpFlags() []string {
 func cliGuardrailOverrideFlags() []string {
 	return []string{
 		"--allow-schemes <csv>",
-		"--allow-private-ips",
+		"--allow-localhost",
 	}
 }
 
@@ -785,7 +804,8 @@ func commandHelps() []commandHelp {
 				"--allow-file-upload",
 				"--allow-file-download",
 			},
-			Examples: []string{"gomoufox mcp", "gomoufox mcp --toolset core", "gomoufox mcp --allow-browser-fetch --allowed-hosts api.example.com", "gomoufox mcp --transport http --auth-token $TOKEN"},
+			Notes:    []string{"--allow-localhost permits explicit localhost and loopback HTTP(S) only; broader private networks and metadata endpoints stay blocked."},
+			Examples: []string{"gomoufox mcp", "gomoufox mcp --toolset core", "gomoufox mcp --allow-localhost", "gomoufox mcp --allow-browser-fetch --allowed-hosts api.example.com", "gomoufox mcp --transport http --auth-token $TOKEN"},
 		},
 		{
 			Name:     "help",
@@ -798,7 +818,7 @@ func commandHelps() []commandHelp {
 }
 
 func (r Runner) runServe(ctx context.Context, global globalFlags, args []string, streams Streams) int {
-	if global.AllowPrivateIPs || global.AllowSchemes != "" {
+	if global.AllowLocalhost || global.AllowSchemes != "" {
 		_, _ = fmt.Fprintln(streams.Stderr, "gomoufox serve does not allow URL guardrail overrides")
 		return ExitUsage
 	}
@@ -882,12 +902,12 @@ func (r Runner) runSetup(ctx context.Context, global globalFlags, args []string,
 		writeDiagnosticLine(streams.Stderr, fmt.Errorf("resolve home directory: %w", err))
 		return ExitRuntime
 	}
-	work, err := os.Getwd()
+	work, err := cliGetwd()
 	if err != nil {
 		writeDiagnosticLine(streams.Stderr, fmt.Errorf("resolve working directory: %w", err))
 		return ExitRuntime
 	}
-	plan, err := agents.Install(agents.Options{
+	plan, err := cliAgentsInstall(agents.Options{
 		Target:   command.Target,
 		Scope:    command.Scope,
 		Features: command.Features,
@@ -918,7 +938,7 @@ func (r Runner) runSetup(ctx context.Context, global globalFlags, args []string,
 	if !command.SkipInstall {
 		install := r.Hooks.Install
 		if install == nil {
-			install = defaultInstallEnsureInstalled
+			install = setupDefaultInstall
 		}
 		if !global.JSON {
 			_, _ = fmt.Fprintln(streams.Stdout, "Installing runtime assets...")
@@ -932,7 +952,7 @@ func (r Runner) runSetup(ctx context.Context, global globalFlags, args []string,
 	if !command.SkipDoctor {
 		doctor := r.Hooks.Doctor
 		if doctor == nil {
-			doctor = defaultDoctor
+			doctor = setupDefaultDoctor
 		}
 		if !global.JSON {
 			_, _ = fmt.Fprintln(streams.Stdout, "Checking browser stack...")
@@ -948,7 +968,7 @@ func (r Runner) runSetup(ctx context.Context, global globalFlags, args []string,
 			return ExitUnavailable
 		}
 	}
-	plan, err = agents.Install(agents.Options{
+	plan, err = cliAgentsInstall(agents.Options{
 		Target:   command.Target,
 		Scope:    command.Scope,
 		Features: command.Features,
@@ -1445,7 +1465,7 @@ func defaultMCP(ctx context.Context, req MCPRequest) error {
 }
 
 func (r Runner) runMCP(ctx context.Context, global globalFlags, args []string, streams Streams) int {
-	if global.AllowPrivateIPs || global.AllowSchemes != "" {
+	if global.AllowSchemes != "" {
 		_, _ = fmt.Fprintln(streams.Stderr, "MCP does not allow URL guardrail overrides")
 		return ExitUsage
 	}
@@ -1540,7 +1560,7 @@ func (r Runner) runMCP(ctx context.Context, global globalFlags, args []string, s
 	cfg.AllowHARSensitiveValues = parsed.bool("allow-har-sensitive-values")
 	cfg.AllowFileUpload = parsed.bool("allow-file-upload")
 	cfg.AllowFileDownload = parsed.bool("allow-file-download")
-	cfg.AllowLocalhost = parsed.bool("allow-localhost")
+	cfg.AllowLocalhost = global.AllowLocalhost
 	cfg.AllowedOrigins = splitCSV(parsed.value("allowed-origins"))
 	cfg.AllowedHosts = splitCSV(parsed.value("allowed-hosts"))
 	if cfg.AllowHARSensitiveValues && !cfg.AllowHARRecording {
@@ -1867,7 +1887,6 @@ func mcpFlagSpecs() map[string]flagSpec {
 		"auth-token":                 {Kind: flagValue},
 		"allowed-origins":            {Kind: flagValue},
 		"allowed-hosts":              {Kind: flagValue},
-		"allow-localhost":            {Kind: flagBool},
 		"enable-eval":                {Kind: flagBool},
 		"no-content-warning":         {Kind: flagBool},
 		"allow-browser-fetch":        {Kind: flagBool},
@@ -2136,21 +2155,17 @@ func runAgents(global globalFlags, args []string, streams Streams) int {
 		writeDiagnosticLine(streams.Stderr, err)
 		return ExitUsage
 	}
-	if command.Subcommand != "install" {
-		writeDiagnosticLine(streams.Stderr, errors.New("usage: gomoufox agents <install>"))
-		return ExitUsage
-	}
 	home, err := userHomeDir()
 	if err != nil {
 		writeDiagnosticLine(streams.Stderr, fmt.Errorf("resolve home directory: %w", err))
 		return ExitRuntime
 	}
-	work, err := os.Getwd()
+	work, err := cliGetwd()
 	if err != nil {
 		writeDiagnosticLine(streams.Stderr, fmt.Errorf("resolve working directory: %w", err))
 		return ExitRuntime
 	}
-	plan, err := agents.Install(agents.Options{
+	plan, err := cliAgentsInstall(agents.Options{
 		Target:   command.Target,
 		Scope:    command.Scope,
 		Features: command.Features,
@@ -2425,11 +2440,8 @@ func (r Runner) validateBrowserInputs(ctx context.Context, global globalFlags, p
 	if global.AllowSchemes != "" {
 		cfg.AllowedSchemes = append(cfg.AllowedSchemes, splitCSV(global.AllowSchemes)...)
 	}
-	cfg.AllowPrivateIPs = global.AllowPrivateIPs
+	cfg.AllowLocalhost = global.AllowLocalhost
 	validator := netguard.NewValidator(cfg, r.Resolver)
-	if global.AllowPrivateIPs {
-		_, _ = fmt.Fprintln(streams.Stderr, "WARNING: --allow-private-ips disables private IP and metadata destination blocking for this CLI command")
-	}
 	for _, raw := range urls {
 		if raw == "" {
 			continue
@@ -2487,11 +2499,12 @@ func (r Runner) executeLocalCommand(ctx context.Context, global globalFlags, com
 		}
 	}
 	resp, err := local(ctx, LocalCommandRequest{
-		Command: command,
-		Args:    append([]string{}, parsed.Positionals...),
-		Flags:   flags,
-		Profile: global.Profile,
-		JSON:    global.JSON,
+		Command:        command,
+		Args:           append([]string{}, parsed.Positionals...),
+		Flags:          flags,
+		Profile:        global.Profile,
+		JSON:           global.JSON,
+		AllowLocalhost: global.AllowLocalhost,
 	})
 	if err != nil {
 		writeDiagnosticLine(streams.Stderr, err)
@@ -2565,7 +2578,7 @@ func parseRecord(args []string) (parsedFlags, error) {
 }
 
 func canonicalProspectivePath(path string) (string, error) {
-	abs, err := filepath.Abs(path)
+	abs, err := cliAbsPath(path)
 	if err != nil {
 		return "", err
 	}
@@ -2573,7 +2586,7 @@ func canonicalProspectivePath(path string) (string, error) {
 	parent := filepath.Dir(abs)
 	missing := make([]string, 0, 4)
 	for {
-		resolved, err := filepath.EvalSymlinks(parent)
+		resolved, err := cliEvalSymlinks(parent)
 		if err == nil {
 			for i := len(missing) - 1; i >= 0; i-- {
 				resolved = filepath.Join(resolved, missing[i])
@@ -2826,7 +2839,7 @@ func (r Runner) forward(ctx context.Context, global globalFlags, command string,
 }
 
 func buildForwardRequest(global globalFlags, command string, args []string) (ForwardRequest, error) {
-	if global.AllowPrivateIPs || global.AllowSchemes != "" {
+	if global.AllowLocalhost || global.AllowSchemes != "" {
 		return ForwardRequest{}, errors.New("daemon forwarding does not allow URL guardrail overrides")
 	}
 	var parsed parsedFlags
@@ -2966,25 +2979,25 @@ func canForward(command string, args []string) bool {
 }
 
 type globalFlags struct {
-	Profile         string
-	Headless        bool
-	HeadlessSet     bool
-	Headful         bool
-	Proxy           string
-	TimeoutRaw      string
-	Timeout         time.Duration
-	Locale          string
-	OS              string
-	Server          string
-	ServerSet       bool
-	ServerToken     string
-	ServerTokenSet  bool
-	AllowSchemes    string
-	AllowPrivateIPs bool
-	JSON            bool
-	Verbose         bool
-	Version         bool
-	Help            bool
+	Profile        string
+	Headless       bool
+	HeadlessSet    bool
+	Headful        bool
+	Proxy          string
+	TimeoutRaw     string
+	Timeout        time.Duration
+	Locale         string
+	OS             string
+	Server         string
+	ServerSet      bool
+	ServerToken    string
+	ServerTokenSet bool
+	AllowSchemes   string
+	AllowLocalhost bool
+	JSON           bool
+	Verbose        bool
+	Version        bool
+	Help           bool
 }
 
 func parseGlobal(args []string) (globalFlags, string, []string, error) {
@@ -3062,7 +3075,7 @@ func findCommandIndex(args []string) int {
 
 func isGlobalBool(name string) bool {
 	switch name {
-	case "headless", "headful", "allow-private-ips", "json", "verbose", "version", "help":
+	case "headless", "headful", "allow-localhost", "json", "verbose", "version", "help":
 		return true
 	default:
 		return false
@@ -3085,8 +3098,8 @@ func applyGlobalBool(global *globalFlags, name string, value bool) {
 		global.HeadlessSet = true
 	case "headful":
 		global.Headful = value
-	case "allow-private-ips":
-		global.AllowPrivateIPs = value
+	case "allow-localhost":
+		global.AllowLocalhost = value
 	case "json":
 		global.JSON = value
 	case "verbose":

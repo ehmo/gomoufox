@@ -2,6 +2,7 @@ package harcapture
 
 import (
 	"errors"
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -11,6 +12,15 @@ import (
 	"strings"
 	"testing"
 )
+
+type failingCloser struct{ err error }
+
+func (c failingCloser) Close() error { return c.err }
+
+type failingReadCloser struct{ err error }
+
+func (r failingReadCloser) Read([]byte) (int, error) { return 0, r.err }
+func (r failingReadCloser) Close() error             { return nil }
 
 const testHAR = `{
   "log": {
@@ -489,6 +499,9 @@ func TestFilesystemFailuresFailClosed(t *testing.T) {
 	originalMkdirTemp := harMkdirTemp
 	originalChmod := harChmod
 	originalOpenFile := harOpenFile
+	originalOpen := harOpen
+	originalReadAll := harReadAll
+	originalValidateRawContentSize := harValidateRawContentSize
 	originalRemoveAll := harRemoveAll
 	originalWriteFile := harWriteFile
 	reset := func() {
@@ -498,6 +511,9 @@ func TestFilesystemFailuresFailClosed(t *testing.T) {
 		harMkdirTemp = originalMkdirTemp
 		harChmod = originalChmod
 		harOpenFile = originalOpenFile
+		harOpen = originalOpen
+		harReadAll = originalReadAll
+		harValidateRawContentSize = originalValidateRawContentSize
 		harRemoveAll = originalRemoveAll
 		harWriteFile = originalWriteFile
 	}
@@ -513,7 +529,7 @@ func TestFilesystemFailuresFailClosed(t *testing.T) {
 		{name: "private directory", hook: func() { harMkdirTemp = func(string, string) (string, error) { return "", boom } }},
 		{name: "secure private directory", hook: func() { harChmod = func(string, os.FileMode) error { return boom } }},
 		{name: "private file", hook: func() {
-			harOpenFile = func(string, int, os.FileMode) (*os.File, error) { return nil, boom }
+			harOpenFile = func(string, int, os.FileMode) (io.Closer, error) { return nil, boom }
 		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -525,6 +541,57 @@ func TestFilesystemFailuresFailClosed(t *testing.T) {
 			}
 		})
 	}
+
+	t.Run("close private file", func(t *testing.T) {
+		reset()
+		defer reset()
+		harOpenFile = func(string, int, os.FileMode) (io.Closer, error) { return failingCloser{err: boom}, nil }
+		if recorder, err := Prepare(Options{Destination: filepath.Join(t.TempDir(), "capture.har")}); recorder != nil || !errors.Is(err, ErrDestination) {
+			t.Fatalf("Prepare = %#v, %v", recorder, err)
+		}
+	})
+
+	t.Run("open completed file", func(t *testing.T) {
+		reset()
+		defer reset()
+		path := filepath.Join(t.TempDir(), "capture.har")
+		if err := os.WriteFile(path, []byte(testHAR), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		harOpen = func(string) (io.ReadCloser, error) { return nil, boom }
+		if _, err := readRawHAR(path); !errors.Is(err, ErrInvalidHAR) {
+			t.Fatalf("open raw error = %v", err)
+		}
+	})
+
+	t.Run("read completed file", func(t *testing.T) {
+		reset()
+		defer reset()
+		path := filepath.Join(t.TempDir(), "capture.har")
+		if err := os.WriteFile(path, []byte(testHAR), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		harOpen = func(string) (io.ReadCloser, error) { return failingReadCloser{err: boom}, nil }
+		if _, err := readRawHAR(path); !errors.Is(err, ErrInvalidHAR) {
+			t.Fatalf("read raw error = %v", err)
+		}
+	})
+
+	if err := validateRawContentSize(2, 1); !errors.Is(err, ErrTooLarge) {
+		t.Fatalf("raw content size error = %v", err)
+	}
+	t.Run("raw content limit", func(t *testing.T) {
+		reset()
+		defer reset()
+		path := filepath.Join(t.TempDir(), "capture.har")
+		if err := os.WriteFile(path, []byte(testHAR), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		harValidateRawContentSize = func(int64, int64) error { return ErrTooLarge }
+		if _, err := readRawHAR(path); !errors.Is(err, ErrTooLarge) {
+			t.Fatalf("raw content limit error = %v", err)
+		}
+	})
 
 	t.Run("secure completed file", func(t *testing.T) {
 		reset()

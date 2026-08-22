@@ -1077,6 +1077,66 @@ func TestEnsureBinaryAdditionalLocalBranchEdges(t *testing.T) {
 	}
 }
 
+func TestEnsureBinaryAndManagedResolutionPropagateInjectedFailures(t *testing.T) {
+	wantErr := errors.New("injected")
+	oldDefault, oldMkdir := binaryDefaultCacheDir, binaryMkdirAll
+	oldInstall, oldResolve := binaryInstallBrowser, binaryResolveManaged
+	oldValidate, oldVerify := binaryValidateBrowser, binaryVerifyManifest
+	oldInstalled := binaryInstalledBrowser
+	t.Cleanup(func() {
+		binaryDefaultCacheDir, binaryMkdirAll = oldDefault, oldMkdir
+		binaryInstallBrowser, binaryResolveManaged = oldInstall, oldResolve
+		binaryValidateBrowser, binaryVerifyManifest = oldValidate, oldVerify
+		binaryInstalledBrowser = oldInstalled
+	})
+
+	venv := t.TempDir()
+	binaryDefaultCacheDir = func() string { return venv }
+	binaryMkdirAll = func(string, os.FileMode) error { return nil }
+	binaryInstallBrowser = func(context.Context, RuntimeRoot, InstallOptions) error { return nil }
+	binaryResolveManaged = func(string) (string, error) { return "browser", nil }
+	if err := EnsureBinary(context.Background(), "unused", InstallOptions{}); err != nil {
+		t.Fatalf("default cache binary install = %v", err)
+	}
+
+	binaryMkdirAll = func(string, os.FileMode) error { return wantErr }
+	if err := EnsureBinary(context.Background(), "unused", InstallOptions{VenvDir: venv}); !errors.Is(err, wantErr) {
+		t.Fatalf("mkdir error = %v", err)
+	}
+	binaryMkdirAll = func(string, os.FileMode) error { return nil }
+	binaryInstallBrowser = func(context.Context, RuntimeRoot, InstallOptions) error { return wantErr }
+	if err := EnsureBinary(context.Background(), "unused", InstallOptions{VenvDir: venv}); !errors.Is(err, wantErr) {
+		t.Fatalf("install error = %v", err)
+	}
+	binaryInstallBrowser = func(context.Context, RuntimeRoot, InstallOptions) error { return nil }
+	binaryResolveManaged = func(string) (string, error) { return "", wantErr }
+	if err := EnsureBinary(context.Background(), "unused", InstallOptions{VenvDir: venv}); !errors.Is(err, wantErr) {
+		t.Fatalf("resolve error = %v", err)
+	}
+
+	binaryValidateBrowser = func(string) error { return wantErr }
+	if _, err := ResolveManagedCamoufoxExecutable(venv); !errors.Is(err, ErrNotInstalled) {
+		t.Fatalf("validation error = %v", err)
+	}
+	binaryValidateBrowser = func(string) error { return nil }
+	binaryVerifyManifest = func(string) error { return nil }
+	binaryInstalledBrowser = func(RuntimeRoot) (string, error) { return "", wantErr }
+	if _, err := ResolveManagedCamoufoxExecutable(venv); !errors.Is(err, ErrNotInstalled) || !strings.Contains(err.Error(), wantErr.Error()) {
+		t.Fatalf("executable lookup error = %v", err)
+	}
+}
+
+func TestEnsureInstalledDefaultsToNodeDirectRuntime(t *testing.T) {
+	oldEnsure := ensureRuntimeAssetsForInstall
+	ensureRuntimeAssetsForInstall = func(context.Context, InstallOptions) (RuntimeRoot, error) {
+		return RuntimeRoot{}, nil
+	}
+	t.Cleanup(func() { ensureRuntimeAssetsForInstall = oldEnsure })
+	if err := EnsureInstalled(context.Background(), InstallOptions{VenvDir: t.TempDir()}); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestCheckCompatibilityWithFakePythonAndPackageJSON(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("fake shell python is unix-only")

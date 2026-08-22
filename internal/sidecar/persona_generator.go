@@ -6,12 +6,13 @@ import (
 	"math/rand"
 	"regexp"
 	"sort"
-	"strconv"
 	"strings"
 	"sync"
 )
 
 const stringifiedPrefix = "*STRINGIFIED*"
+
+const camoufoxFirefoxMajor = 135
 
 var personaFirefoxVersionPattern = regexp.MustCompile(`1[0-9]{2}\.0`)
 
@@ -103,10 +104,7 @@ func generatePersonaConfig(cfg Config, rng *rand.Rand) (map[string]any, error) {
 	if err != nil {
 		return nil, err
 	}
-	firefoxVersion, err := personaFirefoxVersion(cfg)
-	if err != nil {
-		return nil, err
-	}
+	firefoxVersion := personaFirefoxVersion(cfg)
 	sample = rewritePersonaFirefoxVersion(sample, firefoxVersion).(map[string]any)
 	config := map[string]any{}
 	mergeNavigatorSample(config, sample)
@@ -128,20 +126,11 @@ func generatePersonaConfig(cfg Config, rng *rand.Rand) (map[string]any, error) {
 	return config, nil
 }
 
-func personaFirefoxVersion(cfg Config) (int, error) {
+func personaFirefoxVersion(cfg Config) int {
 	if cfg.FFVersion > 0 {
-		return cfg.FFVersion, nil
+		return cfg.FFVersion
 	}
-	version := strings.TrimPrefix(CamoufoxBinaryVersion, "v")
-	major, _, ok := strings.Cut(version, ".")
-	if !ok {
-		return 0, fmt.Errorf("%w: invalid Camoufox browser version %q", ErrSidecarStart, CamoufoxBinaryVersion)
-	}
-	value, err := strconv.Atoi(major)
-	if err != nil || value <= 0 {
-		return 0, fmt.Errorf("%w: invalid Camoufox browser version %q", ErrSidecarStart, CamoufoxBinaryVersion)
-	}
-	return value, nil
+	return camoufoxFirefoxMajor
 }
 
 func rewritePersonaFirefoxVersion(value any, version int) any {
@@ -170,7 +159,7 @@ func rewritePersonaFirefoxVersionString(value string, version int) string {
 	if len(matches) == 0 {
 		return value
 	}
-	replacement := strconv.Itoa(version) + ".0"
+	replacement := fmt.Sprintf("%d.0", version)
 	var out strings.Builder
 	cursor := 0
 	for _, match := range matches {

@@ -460,6 +460,12 @@ func TestGomoufoxSessionFetchFormFailureModes(t *testing.T) {
 		wantCleanup  bool
 	}{
 		{
+			name:    "fetch evaluate",
+			page:    &fakeMCPPage{internalEvalErrOn: mcpFormFetchExpression, internalEvalErr: boom},
+			opts:    fetchFormOptions{},
+			wantErr: boom,
+		},
+		{
 			name:    "navigate",
 			page:    &fakeMCPPage{gotoErr: boom},
 			opts:    fetchFormOptions{NavigateFirst: "https://example.com/form"},
@@ -554,6 +560,9 @@ func TestGomoufoxSessionAdditionalInteractionErrors(t *testing.T) {
 	if err := session.UploadFile(context.Background(), missingRef, []string{"a.txt"}, uploadOptions{Timeout: time.Second}); err == nil {
 		t.Fatal("missing ref upload succeeded")
 	}
+	if _, err := session.DownloadFile(context.Background(), missingRef, downloadOptions{Path: "a.txt", Timeout: time.Second}); err == nil {
+		t.Fatal("missing ref download succeeded")
+	}
 
 	page.locator.hoverErr = boom
 	if err := session.Hover(context.Background(), elementTarget{Selector: "button"}, hoverOptions{Timeout: time.Second}); !errors.Is(err, boom) {
@@ -572,6 +581,20 @@ func TestGomoufoxSessionAdditionalInteractionErrors(t *testing.T) {
 	page.wheelErr = nil
 	if err := session.Scroll(context.Background(), scrollOptions{Timeout: time.Second}); err != nil {
 		t.Fatalf("zero scroll err = %v", err)
+	}
+	page.locator.clickErr = boom
+	if _, err := session.DownloadFile(context.Background(), elementTarget{Selector: "a"}, downloadOptions{Path: "a.txt", Timeout: time.Second}); !errors.Is(err, boom) {
+		t.Fatalf("download click error = %v", err)
+	}
+	page.locator.clickErr = nil
+	page.waitDownloadErr = boom
+	if _, err := session.DownloadFile(context.Background(), elementTarget{Selector: "a"}, downloadOptions{Path: "a.txt", Timeout: time.Second}); !errors.Is(err, boom) {
+		t.Fatalf("download wait error = %v", err)
+	}
+	page.waitDownloadErr = nil
+	page.download = &fakeGomoufoxDownload{saveErr: boom}
+	if _, err := session.DownloadFile(context.Background(), elementTarget{Selector: "a"}, downloadOptions{Path: "a.txt", Timeout: time.Second}); !errors.Is(err, boom) {
+		t.Fatalf("download save error = %v", err)
 	}
 
 	page.locator.selectResult = []string{"by-label"}
@@ -2052,6 +2075,16 @@ func TestGomoufoxFactoryCloseClosesSharedBrowserOnce(t *testing.T) {
 	}
 }
 
+func TestGomoufoxFactoryClosedDedicatedAndNilClose(t *testing.T) {
+	if err := (*gomoufoxFactory)(nil).Close(); err != nil {
+		t.Fatalf("nil factory close = %v", err)
+	}
+	factory := &gomoufoxFactory{closed: true, launcher: &fakeGomoufoxLauncher{}}
+	if _, _, err := factory.browser(context.Background(), sessionOptions{}, true); !errors.Is(err, errBrowserUnavailable) {
+		t.Fatalf("closed dedicated browser = %v", err)
+	}
+}
+
 type fakeGomoufoxLauncher struct {
 	browsers []mcpBrowser
 	calls    []launcherCall
@@ -2165,6 +2198,7 @@ type fakeMCPPage struct {
 	contentErr             error
 	evalErr                error
 	internalEvalErr        error
+	internalEvalErrOn      string
 	initErr                error
 	restoreErr             error
 	screenshotErr          error
@@ -2287,7 +2321,7 @@ func (p *fakeMCPPage) Evaluate(_ context.Context, expression string, arg ...any)
 }
 
 func (p *fakeMCPPage) EvaluateInternal(_ context.Context, expression string, arg ...any) (any, error) {
-	if p.internalEvalErr != nil {
+	if p.internalEvalErr != nil && (p.internalEvalErrOn == "" || p.internalEvalErrOn == expression) {
 		return nil, p.internalEvalErr
 	}
 	if p.evalErr != nil {
@@ -2776,10 +2810,14 @@ type fakeObservationRequest struct {
 func (r fakeObservationRequest) URL() string                { return r.url }
 func (r fakeObservationRequest) Method() string             { return r.method }
 func (r fakeObservationRequest) Headers() map[string]string { return r.headers }
-func (r fakeObservationRequest) PostData() string           { return "must-not-read" }
-func (r fakeObservationRequest) PostDataBytes() []byte      { return []byte("must-not-read") }
-func (r fakeObservationRequest) ResourceType() string       { return "document" }
-func (r fakeObservationRequest) IsNavigationRequest() bool  { return true }
+func (r fakeObservationRequest) Failure() error             { return nil }
+func (r fakeObservationRequest) RedirectedFrom() pwbridge.Request {
+	return nil
+}
+func (r fakeObservationRequest) PostData() string          { return "must-not-read" }
+func (r fakeObservationRequest) PostDataBytes() []byte     { return []byte("must-not-read") }
+func (r fakeObservationRequest) ResourceType() string      { return "document" }
+func (r fakeObservationRequest) IsNavigationRequest() bool { return true }
 
 type fakeObservationResponse struct {
 	url     string

@@ -752,6 +752,20 @@ func TestRealPageNilNavigationResponsesReturnNilWithoutError(t *testing.T) {
 	}
 }
 
+func TestRealPageDownloadPropagatesErrorAndNil(t *testing.T) {
+	boom := errors.New("boom")
+	raw := &fakePage{expectDownloadErr: boom}
+	page := &realPage{raw: raw}
+	if download, err := page.RunAndWaitForDownload(func() error { return nil }, DownloadOptions{}); download != nil || !errors.Is(err, boom) {
+		t.Fatalf("download error result=%#v err=%v", download, err)
+	}
+	raw.expectDownloadErr = nil
+	raw.expectDownloadNil = true
+	if download, err := page.RunAndWaitForDownload(func() error { return nil }, DownloadOptions{}); download != nil || err != nil {
+		t.Fatalf("nil download result=%#v err=%v", download, err)
+	}
+}
+
 func TestRealPageRunAndWaitForNavigationCommitSkipsLoadState(t *testing.T) {
 	raw := &fakePage{mainFrame: &fakeFrame{}}
 	page := &realPage{raw: raw}
@@ -993,6 +1007,15 @@ func TestRealRequestResponseAndAPIResponseExposeRawValues(t *testing.T) {
 	if string(req.PostDataBytes()) != "bytes" || req.ResourceType() != "document" || !req.IsNavigationRequest() {
 		t.Fatalf("request body/type/navigation mismatch")
 	}
+	if req.Failure() != nil || req.RedirectedFrom() != nil {
+		t.Fatalf("unexpected request failure or redirect")
+	}
+	previous := &fakeRequest{url: "https://previous.example"}
+	rawReq.failure = errors.New("request failed")
+	rawReq.redirectedFrom = previous
+	if !errors.Is(req.Failure(), rawReq.failure) || req.RedirectedFrom().URL() != previous.url {
+		t.Fatalf("request failure=%v redirect=%#v", req.Failure(), req.RedirectedFrom())
+	}
 
 	rawResp := &fakeResponse{
 		url: "https://response.example", status: 201, statusText: "Created",
@@ -1223,6 +1246,8 @@ type fakePage struct {
 	expectEventPredicateMiss bool
 	expectDownloadOptions    playwright.PageExpectDownloadOptions
 	expectDownloadResp       playwright.Download
+	expectDownloadErr        error
+	expectDownloadNil        bool
 	evaluateExpression       string
 	evaluateArgs             []any
 	evaluateResp             any
@@ -1309,6 +1334,12 @@ func (p *fakePage) ExpectDownload(action func() error, options ...playwright.Pag
 	}
 	if err := action(); err != nil {
 		return nil, err
+	}
+	if p.expectDownloadErr != nil {
+		return nil, p.expectDownloadErr
+	}
+	if p.expectDownloadNil {
+		return nil, nil
 	}
 	if p.expectDownloadResp != nil {
 		return p.expectDownloadResp, nil
@@ -1720,19 +1751,23 @@ func (l *fakeLocator) Screenshot(options ...playwright.LocatorScreenshotOptions)
 type fakeRequest struct {
 	playwright.Request
 
-	url           string
-	method        string
-	headers       map[string]string
-	postData      string
-	postDataBytes []byte
-	resourceType  string
-	nav           bool
+	url            string
+	method         string
+	headers        map[string]string
+	postData       string
+	postDataBytes  []byte
+	resourceType   string
+	nav            bool
+	failure        error
+	redirectedFrom playwright.Request
 }
 
-func (r *fakeRequest) URL() string                { return r.url }
-func (r *fakeRequest) Method() string             { return r.method }
-func (r *fakeRequest) Headers() map[string]string { return r.headers }
-func (r *fakeRequest) PostData() (string, error)  { return r.postData, nil }
+func (r *fakeRequest) URL() string                        { return r.url }
+func (r *fakeRequest) Method() string                     { return r.method }
+func (r *fakeRequest) Headers() map[string]string         { return r.headers }
+func (r *fakeRequest) Failure() error                     { return r.failure }
+func (r *fakeRequest) RedirectedFrom() playwright.Request { return r.redirectedFrom }
+func (r *fakeRequest) PostData() (string, error)          { return r.postData, nil }
 func (r *fakeRequest) PostDataBuffer() ([]byte, error) {
 	return r.postDataBytes, nil
 }

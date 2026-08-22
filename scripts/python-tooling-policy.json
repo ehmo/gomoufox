@@ -20,6 +20,12 @@
       "public_exposed": true,
       "justification": "Validates generated CLI/MCP/skills contracts used by public CI and release workflows."
     },
+    "check-go-coverage.py": {
+      "decision": "keep",
+      "scope": "release-coverage-validation",
+      "public_exposed": true,
+      "justification": "Checks exact covered and total statement counts without relying on rounded Go coverage output."
+    },
     "check-public-release-contract.py": {
       "decision": "keep",
       "scope": "public-release-validation",

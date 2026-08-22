@@ -70,12 +70,11 @@ jobs:
         run: go vet ./...
       - name: Coverage
         run: |
-          coverage_min="97.0"
+          coverage_min="100.0"
           profile="$(mktemp "${TMPDIR:-/tmp}/gomoufox-coverage.XXXXXX")"
           go test -count=1 -coverprofile="$profile" ./...
-          total="$(go tool cover -func="$profile" | awk '/^total:/ {print $3}')"
+          python3 scripts/check-go-coverage.py --profile "$profile" --min "$coverage_min"
           rm -f "$profile"
-          awk -v got="${total%\%}" -v min="$coverage_min" 'BEGIN { exit (got + 0 >= min + 0) ? 0 : 1 }'
       - name: Vulnerability check
         run: GOTOOLCHAIN="$(go env GOVERSION)" go run golang.org/x/vuln/cmd/govulncheck@v1.3.0 ./...
       - name: Build artifacts

@@ -2,6 +2,7 @@ package netguard
 
 import (
 	"bufio"
+	"container/list"
 	"context"
 	"errors"
 	"fmt"
@@ -29,8 +30,179 @@ func TestFilteringProxyBlocksBeforeDial(t *testing.T) {
 	if rr.Code != http.StatusForbidden {
 		t.Fatalf("code = %d body=%s", rr.Code, rr.Body.String())
 	}
+	if reason, ok := ConsumeBlockedMarker(rr.Header().Get(BlockedHeader)); !ok || !strings.Contains(reason, "10.0.0.1") {
+		t.Fatalf("blocked response headers = %v", rr.Header())
+	}
 	if len(dialer.addresses) != 0 {
 		t.Fatalf("blocked request dialed: %#v", dialer.addresses)
+	}
+}
+
+func TestFilteringProxyMarksBlockedConnectResponse(t *testing.T) {
+	dialer := &recordingDialer{err: errors.New("should not dial")}
+	proxy := FilteringProxy{
+		Validator: NewValidator(policy.DefaultConfig(), fakeResolver{"private.example": {"10.0.0.1"}}),
+		Dial:      dialer.DialContext,
+	}
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodConnect, "http://private.example:443", nil)
+	req.Host = "private.example:443"
+	proxy.ServeHTTP(rr, req)
+	if rr.Code != http.StatusForbidden {
+		t.Fatalf("code = %d body=%s", rr.Code, rr.Body.String())
+	}
+	if reason, ok := ConsumeBlockedMarker(rr.Header().Get(BlockedHeader)); !ok || !strings.Contains(reason, "10.0.0.1") {
+		t.Fatalf("blocked response headers = %v", rr.Header())
+	}
+	if len(dialer.addresses) != 0 {
+		t.Fatalf("blocked CONNECT dialed: %#v", dialer.addresses)
+	}
+}
+
+func TestFilteringProxyRejectsForgedBlockMarker(t *testing.T) {
+	if _, ok := ConsumeBlockedMarker("1"); ok {
+		t.Fatal("untrusted marker was accepted")
+	}
+	if _, ok := ConsumeBlockedMarker(""); ok {
+		t.Fatal("untrusted marker was accepted")
+	}
+	dst := http.Header{}
+	copyHeader(dst, http.Header{
+		BlockedHeader:  []string{"origin_cookie=preserved; HttpOnly"},
+		"Content-Type": []string{"text/plain"},
+	})
+	if got := dst.Get(BlockedHeader); got != "origin_cookie=preserved; HttpOnly" {
+		t.Fatalf("origin cookie = %q", got)
+	}
+	if got := dst.Get("Content-Type"); got != "text/plain" {
+		t.Fatalf("ordinary header = %q", got)
+	}
+}
+
+func TestFilteringProxyBlockMarkerUsesHTTPOnlyDeletionCookie(t *testing.T) {
+	proxy := FilteringProxy{Validator: NewValidator(policy.DefaultConfig(), nil)}
+	rr := httptest.NewRecorder()
+	proxy.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "http://127.0.0.1/", nil))
+	marker := rr.Header().Get(BlockedHeader)
+	for _, attribute := range []string{"Max-Age=0", "Expires=Thu, 01 Jan 1970 00:00:00 GMT", "Secure", "HttpOnly", "SameSite=Strict"} {
+		if !strings.Contains(marker, attribute) {
+			t.Fatalf("block marker missing %q: %q", attribute, marker)
+		}
+	}
+}
+
+func TestFilteringProxyRejectsReplayedBlockMarker(t *testing.T) {
+	proxy := FilteringProxy{Validator: NewValidator(policy.DefaultConfig(), nil)}
+	rr := httptest.NewRecorder()
+	proxy.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "http://127.0.0.1/", nil))
+	marker := rr.Header().Get(BlockedHeader)
+	if _, ok := ConsumeBlockedMarker(marker); !ok {
+		t.Fatal("fresh marker was rejected")
+	}
+	if _, ok := ConsumeBlockedMarker(marker); ok {
+		t.Fatal("replayed marker was accepted")
+	}
+}
+
+func TestBlockedMarkerRegistryRejectsInvalidLengthAndPrunesExpired(t *testing.T) {
+	if _, ok := ConsumeBlockedMarker(blockedCookieName + "_short=; Path=/"); ok {
+		t.Fatal("short marker was accepted")
+	}
+
+	marker := strings.Repeat("a", blockedMarkerBytes*2)
+	blockedMarkers.Lock()
+	elem := blockedMarkers.order.PushFront(blockedMarkerEntry{
+		value: marker, reason: "expired", created: time.Now().Add(-blockedMarkerTTL - time.Second),
+	})
+	blockedMarkers.entries[marker] = elem
+	blockedMarkers.Unlock()
+	if _, ok := ConsumeBlockedMarker(blockedCookieName + "_" + marker + "=; Path=/"); ok {
+		t.Fatal("expired marker was accepted")
+	}
+
+	blockedMarkers.Lock()
+	_, exists := blockedMarkers.entries[marker]
+	listed := false
+	for elem := blockedMarkers.order.Front(); elem != nil; elem = elem.Next() {
+		if elem.Value.(blockedMarkerEntry).value == marker {
+			listed = true
+		}
+	}
+	blockedMarkers.Unlock()
+	if exists || listed {
+		t.Fatalf("expired marker remains in registry: map=%v list=%v", exists, listed)
+	}
+}
+
+func TestBlockedMarkerGenerationFailureCollisionCapacityAndNilRemoval(t *testing.T) {
+	oldRead := blockedMarkerRandomRead
+	t.Cleanup(func() {
+		blockedMarkerRandomRead = oldRead
+		blockedMarkers.Lock()
+		blockedMarkers.entries = make(map[string]*list.Element)
+		blockedMarkers.order.Init()
+		blockedMarkers.Unlock()
+	})
+	blockedMarkerRandomRead = func([]byte) (int, error) { return 0, errors.New("entropy failed") }
+	func() {
+		defer func() {
+			if recover() == nil {
+				t.Fatal("random read failure did not panic")
+			}
+		}()
+		issueBlockedMarker("blocked")
+	}()
+
+	blockedMarkers.Lock()
+	blockedMarkers.entries = make(map[string]*list.Element)
+	blockedMarkers.order.Init()
+	collision := strings.Repeat("00", blockedMarkerBytes)
+	elem := blockedMarkers.order.PushBack(blockedMarkerEntry{value: collision, reason: "old", created: time.Now()})
+	blockedMarkers.entries[collision] = elem
+	blockedMarkers.Unlock()
+	calls := 0
+	blockedMarkerRandomRead = func(raw []byte) (int, error) {
+		calls++
+		if calls > 1 {
+			for i := range raw {
+				raw[i] = 1
+			}
+		}
+		return len(raw), nil
+	}
+	if marker := issueBlockedMarker("new"); marker == collision || calls != 2 {
+		t.Fatalf("marker=%q calls=%d", marker, calls)
+	}
+
+	blockedMarkers.Lock()
+	blockedMarkers.entries = make(map[string]*list.Element)
+	blockedMarkers.order.Init()
+	for i := 0; i < blockedMarkerLimit; i++ {
+		value := fmt.Sprintf("%032x", i)
+		elem := blockedMarkers.order.PushBack(blockedMarkerEntry{value: value, reason: "full", created: time.Now()})
+		blockedMarkers.entries[value] = elem
+	}
+	blockedMarkers.Unlock()
+	blockedMarkerRandomRead = func(raw []byte) (int, error) {
+		for i := range raw {
+			raw[i] = 0xff
+		}
+		return len(raw), nil
+	}
+	replacement := issueBlockedMarker("replacement")
+	blockedMarkers.Lock()
+	_, inserted := blockedMarkers.entries[replacement]
+	_, oldestRetained := blockedMarkers.entries[fmt.Sprintf("%032x", 0)]
+	if len(blockedMarkers.entries) != blockedMarkerLimit || !inserted || oldestRetained {
+		t.Fatalf("marker registry size=%d inserted=%v oldest_retained=%v", len(blockedMarkers.entries), inserted, oldestRetained)
+	}
+	blockedMarkers.Unlock()
+	removeBlockedMarker(nil)
+	blockedMarkers.Lock()
+	remaining := len(blockedMarkers.entries)
+	blockedMarkers.Unlock()
+	if remaining != blockedMarkerLimit {
+		t.Fatalf("nil removal changed registry size to %d", remaining)
 	}
 }
 

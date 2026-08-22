@@ -2,8 +2,11 @@ package netguard
 
 import (
 	"bufio"
+	"container/list"
 	"context"
+	"crypto/rand"
 	"encoding/base64"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -12,6 +15,8 @@ import (
 	"net/netip"
 	"net/url"
 	"strings"
+	"sync"
+	"time"
 )
 
 type DialFunc func(ctx context.Context, network, address string) (net.Conn, error)
@@ -20,6 +25,103 @@ type FilteringProxy struct {
 	Validator     Validator
 	Dial          DialFunc
 	UpstreamProxy *url.URL
+}
+
+const (
+	// BlockedHeader uses the Fetch-forbidden Set-Cookie response header so page
+	// JavaScript cannot read a guardrail marker, even for a same-origin block.
+	BlockedHeader     = "Set-Cookie"
+	blockedCookieName = "__Host-gomoufox_blocked"
+)
+
+const (
+	blockedMarkerBytes = 32
+	blockedMarkerLimit = 1024
+	blockedMarkerTTL   = 2 * time.Minute
+)
+
+type blockedMarkerEntry struct {
+	value   string
+	reason  string
+	created time.Time
+}
+
+var blockedMarkers = struct {
+	sync.Mutex
+	entries map[string]*list.Element
+	order   list.List
+}{entries: make(map[string]*list.Element)}
+
+var blockedMarkerRandomRead = rand.Read
+
+func issueBlockedMarker(reason string) string {
+	for {
+		raw := make([]byte, blockedMarkerBytes)
+		if _, err := blockedMarkerRandomRead(raw); err != nil {
+			panic(fmt.Sprintf("generate filtering proxy block marker: %v", err))
+		}
+		value := hex.EncodeToString(raw)
+		now := time.Now()
+		blockedMarkers.Lock()
+		if _, exists := blockedMarkers.entries[value]; exists {
+			blockedMarkers.Unlock()
+			continue
+		}
+		pruneBlockedMarkers(now)
+		for len(blockedMarkers.entries) >= blockedMarkerLimit {
+			removeBlockedMarker(blockedMarkers.order.Front())
+		}
+		elem := blockedMarkers.order.PushBack(blockedMarkerEntry{value: value, reason: reason, created: now})
+		blockedMarkers.entries[value] = elem
+		blockedMarkers.Unlock()
+		return value
+	}
+}
+
+// ConsumeBlockedMarker accepts a marker once and returns the proxy's block
+// reason. Single-use markers prevent an origin from replaying a marker learned
+// from an earlier blocked request.
+func ConsumeBlockedMarker(value string) (string, bool) {
+	cookie, _, _ := strings.Cut(value, ";")
+	name, cookieValue, ok := strings.Cut(cookie, "=")
+	prefix := blockedCookieName + "_"
+	if !ok || cookieValue != "" || !strings.HasPrefix(name, prefix) {
+		return "", false
+	}
+	marker := strings.TrimPrefix(name, prefix)
+	if len(marker) != hex.EncodedLen(blockedMarkerBytes) {
+		return "", false
+	}
+	now := time.Now()
+	blockedMarkers.Lock()
+	defer blockedMarkers.Unlock()
+	pruneBlockedMarkers(now)
+	elem, ok := blockedMarkers.entries[marker]
+	if !ok {
+		return "", false
+	}
+	reason := elem.Value.(blockedMarkerEntry).reason
+	removeBlockedMarker(elem)
+	return reason, true
+}
+
+func pruneBlockedMarkers(now time.Time) {
+	for elem := blockedMarkers.order.Front(); elem != nil; elem = blockedMarkers.order.Front() {
+		entry := elem.Value.(blockedMarkerEntry)
+		if now.Sub(entry.created) <= blockedMarkerTTL {
+			return
+		}
+		removeBlockedMarker(elem)
+	}
+}
+
+func removeBlockedMarker(elem *list.Element) {
+	if elem == nil {
+		return
+	}
+	entry := elem.Value.(blockedMarkerEntry)
+	delete(blockedMarkers.entries, entry.value)
+	blockedMarkers.order.Remove(elem)
 }
 
 func (p FilteringProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -38,7 +140,7 @@ func (p FilteringProxy) handleHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	decision, err := p.Validator.Validate(r.Context(), rawURL)
 	if err != nil {
-		http.Error(w, "url blocked by guardrail", http.StatusForbidden)
+		writeBlockedResponse(w, err)
 		return
 	}
 	transport := &http.Transport{}
@@ -67,9 +169,10 @@ func (p FilteringProxy) handleConnect(w http.ResponseWriter, r *http.Request) {
 	if !strings.Contains(host, ":") {
 		host = net.JoinHostPort(host, "443")
 	}
-	decision, err := p.Validator.Validate(r.Context(), "https://"+host)
+	rawURL := "https://" + host
+	decision, err := p.Validator.Validate(r.Context(), rawURL)
 	if err != nil {
-		http.Error(w, "url blocked by guardrail", http.StatusForbidden)
+		writeBlockedResponse(w, err)
 		return
 	}
 	conn, err := p.connect(r.Context(), decision)
@@ -91,6 +194,15 @@ func (p FilteringProxy) handleConnect(w http.ResponseWriter, r *http.Request) {
 	_, _ = client.Write([]byte("HTTP/1.1 200 Connection Established\r\n\r\n"))
 	go tunnel(client, conn)
 	go tunnel(conn, client)
+}
+
+func writeBlockedResponse(w http.ResponseWriter, err error) {
+	marker := issueBlockedMarker(err.Error())
+	w.Header().Set(BlockedHeader, fmt.Sprintf(
+		"%s_%s=; Path=/; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT; Secure; HttpOnly; SameSite=Strict",
+		blockedCookieName, marker,
+	))
+	http.Error(w, "url blocked by guardrail", http.StatusForbidden)
 }
 
 func (p FilteringProxy) dialer(decision Decision) DialFunc {

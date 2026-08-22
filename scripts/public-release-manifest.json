@@ -31,13 +31,16 @@
     "docs/benchmarks/2026-07-20-node-direct-readiness.json",
     "docs/benchmarks/2026-07-29-node-direct-readiness.json",
     "docs/benchmarks/2026-08-20-node-direct-readiness.json",
+    "docs/benchmarks/2026-08-22-node-direct-readiness.json",
     "docs/personas/2026-07-29-node-direct-readiness.json",
-    "docs/personas/2026-08-20-node-direct-readiness.json"
+    "docs/personas/2026-08-20-node-direct-readiness.json",
+    "docs/personas/2026-08-22-node-direct-readiness.json"
   ],
   "scripts": [
     "audit-public-release.py",
     "benchmark-realpass.py",
     "check-agent-contracts.py",
+    "check-go-coverage.py",
     "check-python-removal-readiness.py",
     "check-public-release-contract.py",
     "fingerprint-audit.py",

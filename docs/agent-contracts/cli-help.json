@@ -1,7 +1,7 @@
 {
   "cli_guardrail_overrides": [
     "--allow-schemes <csv>",
-    "--allow-private-ips"
+    "--allow-localhost"
   ],
   "commands": [
     {

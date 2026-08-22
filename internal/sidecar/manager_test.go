@@ -20,6 +20,9 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/ehmo/gomoufox/internal/netguard"
+	"github.com/ehmo/gomoufox/internal/policy"
 )
 
 const diagnosticSecretFixture = `proxy=http://user:pass@example.com Authorization: Bearer abc.def Cookie: sid=secret Set-Cookie: auth=secret wss://127.0.0.1:9222/rawtoken token=secret {"cookies":[{"name":"sid","value":"cookie-secret"}],"origins":[{"origin":"https://example.com","localStorage":[{"name":"token","value":"storage-secret"}]}]}`
@@ -1147,6 +1150,30 @@ func TestManagerStopCleanupAndDiagnosticsEdges(t *testing.T) {
 	manager.Stop(context.Background())
 }
 
+func TestStartupDiagnosticsCaptureTruncationAndEmptyEdges(t *testing.T) {
+	var nilDiagnostics *startupDiagnostics
+	nilDiagnostics.WriteString("ignored")
+	if got := nilDiagnostics.Excerpt(); got != "" {
+		t.Fatalf("nil excerpt = %q", got)
+	}
+	empty := newStartupDiagnostics(0)
+	empty.WriteString("ignored")
+	empty.WriteString("")
+	if got := empty.Excerpt(); got != "" {
+		t.Fatalf("empty excerpt = %q", got)
+	}
+
+	diagnostics := newStartupDiagnostics(4)
+	diagnostics.WriteString("secret")
+	diagnostics.WriteString("more")
+	if got := diagnostics.Excerpt(); got != "secr\n... <truncated>" {
+		t.Fatalf("truncated excerpt = %q", got)
+	}
+	if err := startupErrorWithDiagnostics(errors.New("start failed"), newStartupDiagnostics(8), make(chan struct{})); err.Error() != "start failed" {
+		t.Fatalf("empty startup error = %v", err)
+	}
+}
+
 func TestManagerConfigReturnsDeepCopy(t *testing.T) {
 	humanize := 1.25
 	manager := New(Config{
@@ -1216,6 +1243,21 @@ func TestManagerFilteringProxyOperatorProxyBranches(t *testing.T) {
 		t.Fatalf("launch proxy = %#v", manager.cfg.LaunchProxy)
 	}
 	manager.setDead()
+}
+
+func TestManagerFilteringProxyCarriesLocalhostPolicy(t *testing.T) {
+	manager := New(Config{Policy: policy.Config{AllowLocalhost: true}})
+	if err := manager.startFilteringProxy(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(manager.setDead)
+	proxy, ok := manager.proxy.Handler.(netguard.FilteringProxy)
+	if !ok {
+		t.Fatalf("proxy handler = %T", manager.proxy.Handler)
+	}
+	if !proxy.Validator.Config.AllowLocalhost || proxy.Validator.Config.AllowPrivateIPs {
+		t.Fatalf("filtering proxy policy = %#v", proxy.Validator.Config)
+	}
 }
 
 func TestManagerDirectNetworkSkipsFilteringProxy(t *testing.T) {

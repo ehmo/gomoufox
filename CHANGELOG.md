@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.1.24
+
+- Add `--allow-localhost` to browser CLI commands so explicit localhost and
+  loopback HTTP(S) targets reach the browser filtering proxy, while broader
+  private networks and metadata endpoints stay blocked.
+- Remove the ineffective `--allow-private-ips` CLI flag and return marked
+  filtering-proxy blocks as exit 8 errors instead of successful page content.
+
 ## v0.1.23
 
 - Build with Go 1.26.6 to fix five reachable standard-library

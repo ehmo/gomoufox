@@ -57,7 +57,49 @@ var (
 			SHA256:   "58a5ff5cc8f2200e458bea22e329d5c1994aa1b111d499ca46ec2411d58239ca",
 		},
 	}
+	runtimeAssetFiles = runtimeAssetFileOperations{
+		stat:         os.Stat,
+		lstat:        os.Lstat,
+		readFile:     os.ReadFile,
+		writeFile:    os.WriteFile,
+		mkdirAll:     os.MkdirAll,
+		mkdirTemp:    os.MkdirTemp,
+		remove:       os.Remove,
+		removeAll:    os.RemoveAll,
+		rename:       os.Rename,
+		symlink:      os.Symlink,
+		open:         os.Open,
+		openFile:     os.OpenFile,
+		create:       os.Create,
+		walkDir:      filepath.WalkDir,
+		abs:          filepath.Abs,
+		evalSymlinks: filepath.EvalSymlinks,
+		rel:          filepath.Rel,
+	}
+	runtimeAssetCopy      = io.Copy
+	runtimeAssetCopyN     = io.CopyN
+	runtimeAssetCloseFile = func(file *os.File) error { return file.Close() }
 )
+
+type runtimeAssetFileOperations struct {
+	stat         func(string) (os.FileInfo, error)
+	lstat        func(string) (os.FileInfo, error)
+	readFile     func(string) ([]byte, error)
+	writeFile    func(string, []byte, os.FileMode) error
+	mkdirAll     func(string, os.FileMode) error
+	mkdirTemp    func(string, string) (string, error)
+	remove       func(string) error
+	removeAll    func(string) error
+	rename       func(string, string) error
+	symlink      func(string, string) error
+	open         func(string) (*os.File, error)
+	openFile     func(string, int, os.FileMode) (*os.File, error)
+	create       func(string) (*os.File, error)
+	walkDir      func(string, fs.WalkDirFunc) error
+	abs          func(string) (string, error)
+	evalSymlinks func(string) (string, error)
+	rel          func(string, string) (string, error)
+}
 
 type playwrightNodeAsset struct {
 	Filename string
@@ -175,7 +217,7 @@ func PopulateRuntimeAssetManifest(root RuntimeRoot, m *RuntimeAssetManifest) err
 			return fmt.Errorf("%w: unsafe runtime asset path %q", ErrVersionMismatch, asset.Path)
 		}
 		path := filepath.Join(root.Root, asset.Path)
-		st, err := os.Stat(path)
+		st, err := runtimeAssetFiles.stat(path)
 		if err != nil {
 			return fmt.Errorf("%w: stat runtime asset %s: %v", ErrNotInstalled, asset.Kind, err)
 		}
@@ -241,7 +283,7 @@ func ValidateRuntimeAssetManifest(m RuntimeAssetManifest, goos, goarch string) e
 
 func LoadRuntimeAssetManifest(path string) (RuntimeAssetManifest, error) {
 	var m RuntimeAssetManifest
-	raw, err := os.ReadFile(path)
+	raw, err := runtimeAssetFiles.readFile(path)
 	if err != nil {
 		return m, err
 	}
@@ -252,15 +294,12 @@ func LoadRuntimeAssetManifest(path string) (RuntimeAssetManifest, error) {
 }
 
 func WriteRuntimeAssetManifest(path string, m RuntimeAssetManifest) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+	if err := runtimeAssetFiles.mkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return err
 	}
-	raw, err := json.MarshalIndent(m, "", "  ")
-	if err != nil {
-		return err
-	}
+	raw, _ := json.MarshalIndent(m, "", "  ")
 	raw = append(raw, '\n')
-	return os.WriteFile(path, raw, 0o600)
+	return runtimeAssetFiles.writeFile(path, raw, 0o600)
 }
 
 func ResolveRuntimeAssets(cacheDir string) (RuntimeRoot, RuntimeAssetManifest, error) {
@@ -269,7 +308,7 @@ func ResolveRuntimeAssets(cacheDir string) (RuntimeRoot, RuntimeAssetManifest, e
 	if err != nil {
 		return RuntimeRoot{}, RuntimeAssetManifest{}, fmt.Errorf("%w: load node-direct runtime manifest: %v", ErrNotInstalled, err)
 	}
-	if _, err := os.Stat(root.ReadyMarkerPath); err != nil {
+	if _, err := runtimeAssetFiles.stat(root.ReadyMarkerPath); err != nil {
 		return RuntimeRoot{}, RuntimeAssetManifest{}, fmt.Errorf("%w: node-direct runtime is not marked ready: %v", ErrNotInstalled, err)
 	}
 	if err := VerifyRuntimeAssets(root, m, sidecarGOOS, sidecarGOARCH); err != nil {
@@ -285,7 +324,7 @@ func ResolveRuntimeAssets(cacheDir string) (RuntimeRoot, RuntimeAssetManifest, e
 }
 
 func VerifyRuntimeLaunchServerFresh(root RuntimeRoot) error {
-	raw, err := os.ReadFile(root.LaunchServerJS)
+	raw, err := runtimeAssetFiles.readFile(root.LaunchServerJS)
 	if err != nil {
 		return fmt.Errorf("%w: read runtime launch server: %v", ErrNotInstalled, err)
 	}
@@ -307,7 +346,7 @@ func VerifyRuntimeAssets(root RuntimeRoot, m RuntimeAssetManifest, goos, goarch 
 			return fmt.Errorf("%w: unsafe runtime asset path %q", ErrVersionMismatch, a.Path)
 		}
 		path := filepath.Join(root.Root, a.Path)
-		st, err := os.Stat(path)
+		st, err := runtimeAssetFiles.stat(path)
 		if err != nil {
 			return fmt.Errorf("%w: missing runtime asset %s at %s", ErrNotInstalled, a.Kind, path)
 		}
@@ -370,7 +409,7 @@ func EnsureRuntimeAssets(ctx context.Context, opts InstallOptions) (RuntimeRoot,
 		root.PlaywrightPackageDir,
 		root.BrowserResourcesDir,
 	} {
-		if err := os.MkdirAll(dir, 0o700); err != nil {
+		if err := runtimeAssetFiles.mkdirAll(dir, 0o700); err != nil {
 			return RuntimeRoot{}, err
 		}
 	}
@@ -393,16 +432,13 @@ func EnsureRuntimeAssets(ctx context.Context, opts InstallOptions) (RuntimeRoot,
 	if err := WriteRuntimeAssetManifest(root.ManifestPath, m); err != nil {
 		return RuntimeRoot{}, err
 	}
-	if err := ValidateRuntimeAssetManifest(m, sidecarGOOS, sidecarGOARCH); err != nil {
-		return RuntimeRoot{}, err
-	}
 	if err := VerifyRuntimeAssets(root, m, sidecarGOOS, sidecarGOARCH); err != nil {
 		return RuntimeRoot{}, err
 	}
 	if err := verifyRuntimePlaywrightCoreModule(root, sidecarGOOS); err != nil {
 		return RuntimeRoot{}, err
 	}
-	if err := os.WriteFile(root.ReadyMarkerPath, []byte("manifest-ready\n"), 0o600); err != nil {
+	if err := runtimeAssetFiles.writeFile(root.ReadyMarkerPath, []byte("manifest-ready\n"), 0o600); err != nil {
 		return RuntimeRoot{}, err
 	}
 	return root, nil
@@ -413,28 +449,28 @@ func ensureRuntimePlaywrightCoreModule(root RuntimeRoot, goos string) error {
 		return nil
 	}
 	parent := filepath.Dir(root.PlaywrightCoreModule)
-	if err := os.MkdirAll(parent, 0o700); err != nil {
+	if err := runtimeAssetFiles.mkdirAll(parent, 0o700); err != nil {
 		return err
 	}
-	staging, err := os.MkdirTemp(parent, ".playwright-core-")
+	staging, err := runtimeAssetFiles.mkdirTemp(parent, ".playwright-core-")
 	if err != nil {
 		return err
 	}
-	defer func() { _ = os.RemoveAll(staging) }()
+	defer func() { _ = runtimeAssetFiles.removeAll(staging) }()
 
 	if goos == "windows" {
 		if err := copyTree(root.PlaywrightPackageDir, staging); err != nil {
 			return fmt.Errorf("copy playwright-core module: %w", err)
 		}
 	} else {
-		if err := os.Remove(staging); err != nil {
+		if err := runtimeAssetFiles.remove(staging); err != nil {
 			return err
 		}
-		target, err := filepath.Rel(parent, root.PlaywrightPackageDir)
+		target, err := runtimeAssetFiles.rel(parent, root.PlaywrightPackageDir)
 		if err != nil {
 			return err
 		}
-		if err := os.Symlink(target, staging); err != nil {
+		if err := runtimeAssetFiles.symlink(target, staging); err != nil {
 			return fmt.Errorf("link playwright-core module: %w", err)
 		}
 	}
@@ -445,7 +481,7 @@ func ensureRuntimePlaywrightCoreModule(root RuntimeRoot, goos string) error {
 }
 
 func verifyRuntimePlaywrightCoreModule(root RuntimeRoot, goos string) error {
-	info, err := os.Lstat(root.PlaywrightCoreModule)
+	info, err := runtimeAssetFiles.lstat(root.PlaywrightCoreModule)
 	if err != nil {
 		return fmt.Errorf("%w: playwright-core module is unavailable: %v", ErrNotInstalled, err)
 	}
@@ -469,7 +505,7 @@ func verifyRuntimePlaywrightCoreModule(root RuntimeRoot, goos string) error {
 	if info.Mode()&os.ModeSymlink == 0 {
 		return fmt.Errorf("%w: playwright-core module is not a symlink", ErrVersionMismatch)
 	}
-	resolved, err := filepath.EvalSymlinks(root.PlaywrightCoreModule)
+	resolved, err := runtimeAssetFiles.evalSymlinks(root.PlaywrightCoreModule)
 	if err != nil {
 		return fmt.Errorf("%w: resolve playwright-core module: %v", ErrNotInstalled, err)
 	}
@@ -515,14 +551,14 @@ func installRuntimePlaywrightDriver(ctx context.Context, root RuntimeRoot, opts 
 	}
 
 	parent := filepath.Dir(root.PlaywrightDriverDir)
-	if err := os.MkdirAll(parent, 0o700); err != nil {
+	if err := runtimeAssetFiles.mkdirAll(parent, 0o700); err != nil {
 		return err
 	}
-	staging, err := os.MkdirTemp(parent, ".playwright-driver-")
+	staging, err := runtimeAssetFiles.mkdirTemp(parent, ".playwright-driver-")
 	if err != nil {
 		return err
 	}
-	defer func() { _ = os.RemoveAll(staging) }()
+	defer func() { _ = runtimeAssetFiles.removeAll(staging) }()
 	if err := extractPlaywrightCoreArchive(coreArchive, staging); err != nil {
 		return err
 	}
@@ -613,7 +649,7 @@ func extractPlaywrightCoreArchive(raw []byte, dst string) error {
 			return err
 		}
 		if header.Typeflag == tar.TypeDir {
-			if err := os.MkdirAll(filepath.Join(dst, filepath.FromSlash(name)), 0o700); err != nil {
+			if err := runtimeAssetFiles.mkdirAll(filepath.Join(dst, filepath.FromSlash(name)), 0o700); err != nil {
 				return err
 			}
 			continue
@@ -626,19 +662,19 @@ func extractPlaywrightCoreArchive(raw []byte, dst string) error {
 		}
 		total += header.Size
 		target := filepath.Join(dst, filepath.FromSlash(name))
-		if err := os.MkdirAll(filepath.Dir(target), 0o700); err != nil {
+		if err := runtimeAssetFiles.mkdirAll(filepath.Dir(target), 0o700); err != nil {
 			return err
 		}
 		mode := os.FileMode(0o600)
 		if os.FileMode(header.Mode).Perm()&0o111 != 0 {
 			mode = 0o700
 		}
-		out, err := os.OpenFile(target, os.O_CREATE|os.O_EXCL|os.O_WRONLY, mode)
+		out, err := runtimeAssetFiles.openFile(target, os.O_CREATE|os.O_EXCL|os.O_WRONLY, mode)
 		if err != nil {
 			return err
 		}
-		_, copyErr := io.CopyN(out, tr, header.Size)
-		closeErr := out.Close()
+		_, copyErr := runtimeAssetCopyN(out, tr, header.Size)
+		closeErr := runtimeAssetCloseFile(out)
 		if copyErr != nil {
 			return copyErr
 		}
@@ -647,7 +683,7 @@ func extractPlaywrightCoreArchive(raw []byte, dst string) error {
 		}
 	}
 	for _, required := range []string{"cli.js", "package.json"} {
-		if st, err := os.Stat(filepath.Join(dst, "package", required)); err != nil || !st.Mode().IsRegular() {
+		if st, err := runtimeAssetFiles.stat(filepath.Join(dst, "package", required)); err != nil || !st.Mode().IsRegular() {
 			return fmt.Errorf("%w: playwright-core archive missing package/%s", ErrVersionMismatch, required)
 		}
 	}
@@ -681,12 +717,12 @@ func extractPlaywrightNodeArchive(raw []byte, filename, dst string) error {
 			return fmt.Errorf("%w: Playwright Node.js binary has invalid size", ErrVersionMismatch)
 		}
 		target := filepath.Join(dst, nodeExecutableName())
-		out, err := os.OpenFile(target, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o700)
+		out, err := runtimeAssetFiles.openFile(target, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o700)
 		if err != nil {
 			return err
 		}
-		_, copyErr := io.CopyN(out, tr, header.Size)
-		closeErr := out.Close()
+		_, copyErr := runtimeAssetCopyN(out, tr, header.Size)
+		closeErr := runtimeAssetCloseFile(out)
 		if copyErr != nil {
 			return copyErr
 		}
@@ -708,11 +744,11 @@ func safeRuntimeArchiveMember(name, requiredRoot string) (string, error) {
 
 func verifyPinnedPlaywrightDriver(ctx context.Context, driverDir string) error {
 	node := filepath.Join(driverDir, nodeExecutableName())
-	if st, err := os.Stat(node); err != nil || !st.Mode().IsRegular() || st.Mode().Perm()&0o111 == 0 {
+	if st, err := runtimeAssetFiles.stat(node); err != nil || !st.Mode().IsRegular() || st.Mode().Perm()&0o111 == 0 {
 		return fmt.Errorf("%w: pinned Playwright Node.js executable is unavailable", ErrNotInstalled)
 	}
 	packageJSON := filepath.Join(driverDir, "package", "package.json")
-	raw, err := os.ReadFile(packageJSON)
+	raw, err := runtimeAssetFiles.readFile(packageJSON)
 	if err != nil {
 		return fmt.Errorf("%w: read pinned playwright-core package: %v", ErrNotInstalled, err)
 	}
@@ -726,7 +762,7 @@ func verifyPinnedPlaywrightDriver(ctx context.Context, driverDir string) error {
 		return fmt.Errorf("%w: installed playwright-core %s, required %s", ErrVersionMismatch, pkg.Version, RequiredPlaywright)
 	}
 	cli := filepath.Join(driverDir, "package", "cli.js")
-	if st, err := os.Stat(cli); err != nil || !st.Mode().IsRegular() {
+	if st, err := runtimeAssetFiles.stat(cli); err != nil || !st.Mode().IsRegular() {
 		return fmt.Errorf("%w: pinned Playwright CLI is unavailable", ErrNotInstalled)
 	}
 	out, err := exec.CommandContext(ctx, node, cli, "--version").CombinedOutput()
@@ -742,31 +778,31 @@ func verifyPinnedPlaywrightDriver(ctx context.Context, driverDir string) error {
 func replaceRuntimeAsset(source, target string) error {
 	parent := filepath.Dir(target)
 	backup := ""
-	if _, err := os.Lstat(target); err == nil {
-		placeholder, err := os.MkdirTemp(parent, ".runtime-asset-backup-")
+	if _, err := runtimeAssetFiles.lstat(target); err == nil {
+		placeholder, err := runtimeAssetFiles.mkdirTemp(parent, ".runtime-asset-backup-")
 		if err != nil {
 			return err
 		}
-		if err := os.Remove(placeholder); err != nil {
+		if err := runtimeAssetFiles.remove(placeholder); err != nil {
 			return err
 		}
 		backup = placeholder
-		if err := os.Rename(target, backup); err != nil {
+		if err := runtimeAssetFiles.rename(target, backup); err != nil {
 			return err
 		}
 	} else if !os.IsNotExist(err) {
 		return err
 	}
-	if err := os.Rename(source, target); err != nil {
+	if err := runtimeAssetFiles.rename(source, target); err != nil {
 		if backup != "" {
-			if restoreErr := os.Rename(backup, target); restoreErr != nil {
+			if restoreErr := runtimeAssetFiles.rename(backup, target); restoreErr != nil {
 				return fmt.Errorf("replace runtime asset %s: %v; restore previous asset: %w", target, err, restoreErr)
 			}
 		}
 		return fmt.Errorf("replace runtime asset %s: %w", target, err)
 	}
 	if backup != "" {
-		if err := os.RemoveAll(backup); err != nil {
+		if err := runtimeAssetFiles.removeAll(backup); err != nil {
 			return err
 		}
 	}
@@ -817,17 +853,17 @@ func copyRuntimeCamoufoxBrowser(source string, root RuntimeRoot) error {
 	if sameFileTree(source, root.BrowserResourcesDir) {
 		return nil
 	}
-	if err := os.RemoveAll(root.BrowserResourcesDir); err != nil {
+	if err := runtimeAssetFiles.removeAll(root.BrowserResourcesDir); err != nil {
 		return err
 	}
 	return copyTree(source, root.BrowserResourcesDir)
 }
 
 func writeRuntimeLaunchServer(root RuntimeRoot) error {
-	if err := os.MkdirAll(filepath.Dir(root.LaunchServerJS), 0o700); err != nil {
+	if err := runtimeAssetFiles.mkdirAll(filepath.Dir(root.LaunchServerJS), 0o700); err != nil {
 		return err
 	}
-	return os.WriteFile(root.LaunchServerJS, []byte(runtimeLaunchServerJS), 0o600)
+	return runtimeAssetFiles.writeFile(root.LaunchServerJS, []byte(runtimeLaunchServerJS), 0o600)
 }
 
 const runtimeLaunchServerJS = `"use strict";
@@ -875,10 +911,7 @@ func downloadRuntimeCamoufoxBrowser(ctx context.Context, root RuntimeRoot, opts 
 			_, _ = fmt.Fprintln(binarySizeWarningWriter, "gomoufox: Camoufox browser download is approximately 300-660 MB")
 		}
 	})
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, assetURL, nil)
-	if err != nil {
-		return err
-	}
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, assetURL, nil)
 	resp, err := runtimeAssetHTTPClient.Do(req)
 	if err != nil {
 		return fmt.Errorf("download Camoufox browser asset: %w", err)
@@ -887,21 +920,21 @@ func downloadRuntimeCamoufoxBrowser(ctx context.Context, root RuntimeRoot, opts 
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
 		return fmt.Errorf("download Camoufox browser asset: HTTP %s", resp.Status)
 	}
-	tmp, err := os.MkdirTemp(filepath.Dir(root.Root), "camoufox-browser-*")
+	tmp, err := runtimeAssetFiles.mkdirTemp(filepath.Dir(root.Root), "camoufox-browser-*")
 	if err != nil {
 		return err
 	}
-	defer func() { _ = os.RemoveAll(tmp) }()
+	defer func() { _ = runtimeAssetFiles.removeAll(tmp) }()
 	archivePath := filepath.Join(tmp, "camoufox.zip")
-	out, err := os.Create(archivePath)
+	out, err := runtimeAssetFiles.create(archivePath)
 	if err != nil {
 		return err
 	}
-	if _, err := io.Copy(out, resp.Body); err != nil {
-		_ = out.Close()
+	if _, err := runtimeAssetCopy(out, resp.Body); err != nil {
+		_ = runtimeAssetCloseFile(out)
 		return err
 	}
-	if err := out.Close(); err != nil {
+	if err := runtimeAssetCloseFile(out); err != nil {
 		return err
 	}
 	extractDir := filepath.Join(tmp, "extract")
@@ -923,7 +956,7 @@ func discoverDownloadedBrowserDir(root string) (string, error) {
 		return usable, nil
 	}
 	var found string
-	err := filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
+	err := runtimeAssetFiles.walkDir(root, func(path string, d os.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
@@ -949,7 +982,7 @@ func discoverDirectBrowserDir(root string) (string, error) {
 	if isExecutableFile(root) {
 		return filepath.Dir(root), nil
 	}
-	st, err := os.Stat(root)
+	st, err := runtimeAssetFiles.stat(root)
 	if err != nil {
 		return "", err
 	}
@@ -988,7 +1021,7 @@ func unzipRuntimeAsset(archivePath, dst string) error {
 		return fmt.Errorf("open Camoufox browser archive: %w", err)
 	}
 	defer func() { _ = reader.Close() }()
-	if err := os.MkdirAll(dst, 0o700); err != nil {
+	if err := runtimeAssetFiles.mkdirAll(dst, 0o700); err != nil {
 		return err
 	}
 	for _, f := range reader.File {
@@ -998,12 +1031,12 @@ func unzipRuntimeAsset(archivePath, dst string) error {
 		}
 		target := filepath.Join(dst, name)
 		if f.FileInfo().IsDir() {
-			if err := os.MkdirAll(target, 0o700); err != nil {
+			if err := runtimeAssetFiles.mkdirAll(target, 0o700); err != nil {
 				return err
 			}
 			continue
 		}
-		if err := os.MkdirAll(filepath.Dir(target), 0o700); err != nil {
+		if err := runtimeAssetFiles.mkdirAll(filepath.Dir(target), 0o700); err != nil {
 			return err
 		}
 		src, err := f.Open()
@@ -1011,63 +1044,60 @@ func unzipRuntimeAsset(archivePath, dst string) error {
 			return err
 		}
 		mode := f.FileInfo().Mode()
-		if mode == 0 {
+		if mode.Perm() == 0 {
 			mode = 0o600
 		}
-		dstFile, err := os.OpenFile(target, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, mode.Perm())
+		dstFile, err := runtimeAssetFiles.openFile(target, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, mode.Perm())
 		if err != nil {
 			_ = src.Close()
 			return err
 		}
-		_, copyErr := io.Copy(dstFile, src)
-		closeErr := dstFile.Close()
-		srcErr := src.Close()
+		_, copyErr := runtimeAssetCopy(dstFile, src)
+		closeErr := runtimeAssetCloseFile(dstFile)
+		_ = src.Close()
 		if copyErr != nil {
 			return copyErr
 		}
 		if closeErr != nil {
 			return closeErr
 		}
-		if srcErr != nil {
-			return srcErr
-		}
 	}
 	return nil
 }
 
 func sameFileTree(a, b string) bool {
-	absA, errA := filepath.Abs(a)
-	absB, errB := filepath.Abs(b)
+	absA, errA := runtimeAssetFiles.abs(a)
+	absB, errB := runtimeAssetFiles.abs(b)
 	return errA == nil && errB == nil && absA == absB
 }
 
 func sameCanonicalFileTree(a, b string) bool {
-	absA, errA := filepath.Abs(a)
-	absB, errB := filepath.Abs(b)
+	absA, errA := runtimeAssetFiles.abs(a)
+	absB, errB := runtimeAssetFiles.abs(b)
 	if errA != nil || errB != nil {
 		return false
 	}
-	if resolved, err := filepath.EvalSymlinks(absA); err == nil {
+	if resolved, err := runtimeAssetFiles.evalSymlinks(absA); err == nil {
 		absA = resolved
 	}
-	if resolved, err := filepath.EvalSymlinks(absB); err == nil {
+	if resolved, err := runtimeAssetFiles.evalSymlinks(absB); err == nil {
 		absB = resolved
 	}
 	return absA == absB
 }
 
 func copyTree(src, dst string) error {
-	return filepath.WalkDir(src, func(path string, d os.DirEntry, err error) error {
+	return runtimeAssetFiles.walkDir(src, func(path string, d os.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
-		rel, err := filepath.Rel(src, path)
+		rel, err := runtimeAssetFiles.rel(src, path)
 		if err != nil {
 			return err
 		}
 		target := filepath.Join(dst, rel)
 		if d.IsDir() {
-			return os.MkdirAll(target, 0o700)
+			return runtimeAssetFiles.mkdirAll(target, 0o700)
 		}
 		info, err := d.Info()
 		if err != nil {
@@ -1076,25 +1106,25 @@ func copyTree(src, dst string) error {
 		if !info.Mode().IsRegular() {
 			return nil
 		}
-		in, err := os.Open(path)
+		in, err := runtimeAssetFiles.open(path)
 		if err != nil {
 			return err
 		}
 		defer func() { _ = in.Close() }()
-		out, err := os.OpenFile(target, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, info.Mode().Perm())
+		out, err := runtimeAssetFiles.openFile(target, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, info.Mode().Perm())
 		if err != nil {
 			return err
 		}
-		if _, err := io.Copy(out, in); err != nil {
-			_ = out.Close()
+		if _, err := runtimeAssetCopy(out, in); err != nil {
+			_ = runtimeAssetCloseFile(out)
 			return err
 		}
-		return out.Close()
+		return runtimeAssetCloseFile(out)
 	})
 }
 
 func fileSHA256(path string) (string, error) {
-	f, err := os.Open(path)
+	f, err := runtimeAssetFiles.open(path)
 	if err != nil {
 		return "", err
 	}
@@ -1107,7 +1137,7 @@ func fileSHA256(path string) (string, error) {
 }
 
 func treeSHA256(root string) (string, error) {
-	info, err := os.Lstat(root)
+	info, err := runtimeAssetFiles.lstat(root)
 	if err != nil {
 		return "", err
 	}
@@ -1115,11 +1145,11 @@ func treeSHA256(root string) (string, error) {
 		return "", fmt.Errorf("hash tree root is not a directory: %s", root)
 	}
 	var records []string
-	if err := filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
+	if err := runtimeAssetFiles.walkDir(root, func(path string, d os.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
-		rel, err := filepath.Rel(root, path)
+		rel, err := runtimeAssetFiles.rel(root, path)
 		if err != nil {
 			return err
 		}
@@ -1151,15 +1181,13 @@ func treeSHA256(root string) (string, error) {
 	sort.Strings(records)
 	h := sha256.New()
 	for _, record := range records {
-		if _, err := io.WriteString(h, record+"\n"); err != nil {
-			return "", err
-		}
+		_, _ = io.WriteString(h, record+"\n")
 	}
 	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
 func relPath(root, path string) string {
-	rel, err := filepath.Rel(root, path)
+	rel, err := runtimeAssetFiles.rel(root, path)
 	if err != nil {
 		return filepath.ToSlash(path)
 	}

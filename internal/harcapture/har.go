@@ -40,9 +40,15 @@ var (
 	harEvalSymlinks = filepath.EvalSymlinks
 	harMkdirTemp    = os.MkdirTemp
 	harChmod        = os.Chmod
-	harOpenFile     = os.OpenFile
-	harRemoveAll    = os.RemoveAll
-	harWriteFile    = safefile.WriteFile0600
+	harOpenFile     = func(path string, flag int, perm os.FileMode) (io.Closer, error) {
+		return os.OpenFile(path, flag, perm)
+	}
+	harLstat                  = os.Lstat
+	harOpen                   = func(path string) (io.ReadCloser, error) { return os.Open(path) }
+	harReadAll                = io.ReadAll
+	harValidateRawContentSize = validateRawContentSize
+	harRemoveAll              = os.RemoveAll
+	harWriteFile              = safefile.WriteFile0600
 )
 
 type Capture string
@@ -177,7 +183,7 @@ func normalizeOptions(opts Options) (Options, error) {
 }
 
 func validateDestination(path string, overwrite bool) error {
-	st, err := os.Lstat(path)
+	st, err := harLstat(path)
 	if os.IsNotExist(err) {
 		return nil
 	}
@@ -292,7 +298,7 @@ func (r *Recorder) Discard() error {
 }
 
 func readRawHAR(path string) ([]byte, error) {
-	st, err := os.Lstat(path)
+	st, err := harLstat(path)
 	if err != nil {
 		return nil, fmt.Errorf("%w: inspect completed artifact: %v", ErrInvalidHAR, err)
 	}
@@ -305,19 +311,26 @@ func readRawHAR(path string) ([]byte, error) {
 	if err := harChmod(path, 0o600); err != nil {
 		return nil, fmt.Errorf("%w: secure completed artifact: %v", ErrDestination, err)
 	}
-	f, err := os.Open(path)
+	f, err := harOpen(path)
 	if err != nil {
 		return nil, fmt.Errorf("%w: open completed artifact: %v", ErrInvalidHAR, err)
 	}
 	defer f.Close()
-	data, err := io.ReadAll(io.LimitReader(f, HardMaxBytes+1))
+	data, err := harReadAll(io.LimitReader(f, HardMaxBytes+1))
 	if err != nil {
 		return nil, fmt.Errorf("%w: read completed artifact: %v", ErrInvalidHAR, err)
 	}
-	if int64(len(data)) > HardMaxBytes {
-		return nil, fmt.Errorf("%w: raw content exceeds %d", ErrTooLarge, HardMaxBytes)
+	if err := harValidateRawContentSize(int64(len(data)), HardMaxBytes); err != nil {
+		return nil, err
 	}
 	return data, nil
+}
+
+func validateRawContentSize(size, limit int64) error {
+	if size > limit {
+		return fmt.Errorf("%w: raw content exceeds %d", ErrTooLarge, limit)
+	}
+	return nil
 }
 
 // InspectFile validates a completed HAR and returns a bounded, redacted route
@@ -480,10 +493,7 @@ func process(data []byte, capture Capture, routeLimit int) ([]byte, int, []Route
 	if err != nil {
 		return nil, 0, nil, false, err
 	}
-	out, err := json.MarshalIndent(metadataArchive{Log: projected}, "", "  ")
-	if err != nil {
-		return nil, 0, nil, false, fmt.Errorf("%w: encode metadata: %v", ErrInvalidHAR, err)
-	}
+	out, _ := json.MarshalIndent(metadataArchive{Log: projected}, "", "  ")
 	out = append(out, '\n')
 	return out, len(raw.Entries), routes, truncated, nil
 }
@@ -617,12 +627,8 @@ func redactURL(raw string) (string, error) {
 			return "", err
 		}
 		for name, items := range values {
-			if len(items) == 0 {
-				items = []string{RedactedValue}
-			} else {
-				for i := range items {
-					items[i] = RedactedValue
-				}
+			for i := range items {
+				items[i] = RedactedValue
 			}
 			values[name] = items
 		}

@@ -2,8 +2,16 @@ package a11y
 
 import (
 	"errors"
+	"strings"
 	"testing"
 )
+
+func TestElementUnmarshalRejectsMalformedJSON(t *testing.T) {
+	var element Element
+	if err := element.UnmarshalJSON([]byte("{")); err == nil || !strings.Contains(err.Error(), "unexpected end") {
+		t.Fatalf("malformed element error = %v", err)
+	}
+}
 
 func TestCaptureAssignsRefsAndOccurrences(t *testing.T) {
 	store := NewStore()

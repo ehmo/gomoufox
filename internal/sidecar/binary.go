@@ -26,9 +26,16 @@ var (
 			"41dbd88d7bf89ec667586b77bf4ea33518233bca4e4824c61d89d1cc052de4c7",
 		},
 	}
-	camoufoxManifestRel  = filepath.Rel
-	camoufoxManifestInfo = func(d fs.DirEntry) (fs.FileInfo, error) { return d.Info() }
-	userCacheDir         = os.UserCacheDir
+	camoufoxManifestRel    = filepath.Rel
+	camoufoxManifestInfo   = func(d fs.DirEntry) (fs.FileInfo, error) { return d.Info() }
+	userCacheDir           = os.UserCacheDir
+	binaryDefaultCacheDir  = DefaultCacheDir
+	binaryMkdirAll         = os.MkdirAll
+	binaryInstallBrowser   = installRuntimeCamoufoxBrowser
+	binaryResolveManaged   = ResolveManagedCamoufoxExecutable
+	binaryValidateBrowser  = validateCamoufoxBrowserDir
+	binaryVerifyManifest   = verifyCamoufoxManifest
+	binaryInstalledBrowser = installedRuntimeBrowserExecutable
 )
 
 const (
@@ -50,16 +57,16 @@ var camoufoxSupportedPlatforms = []camoufoxPlatform{
 func EnsureBinary(ctx context.Context, venvPython string, opts InstallOptions) error {
 	_ = venvPython // Browser provisioning is Go-managed and does not invoke `camoufox fetch`.
 	if opts.VenvDir == "" {
-		opts.VenvDir = DefaultCacheDir()
+		opts.VenvDir = binaryDefaultCacheDir()
 	}
 	root := RuntimeAssetCacheRoot(opts.VenvDir, sidecarGOOS, sidecarGOARCH)
-	if err := os.MkdirAll(filepath.Dir(root.Root), 0o700); err != nil {
+	if err := binaryMkdirAll(filepath.Dir(root.Root), 0o700); err != nil {
 		return err
 	}
-	if err := installRuntimeCamoufoxBrowser(ctx, root, opts); err != nil {
+	if err := binaryInstallBrowser(ctx, root, opts); err != nil {
 		return err
 	}
-	_, err := ResolveManagedCamoufoxExecutable(opts.VenvDir)
+	_, err := binaryResolveManaged(opts.VenvDir)
 	return err
 }
 
@@ -68,15 +75,15 @@ func EnsureBinary(ctx context.Context, venvPython string, opts InstallOptions) e
 // browser tree instead of consulting Camoufox's moving global cache at launch.
 func ResolveManagedCamoufoxExecutable(venvDir string) (string, error) {
 	root := RuntimeAssetCacheRoot(venvDir, sidecarGOOS, sidecarGOARCH)
-	if err := validateCamoufoxBrowserDir(root.BrowserResourcesDir); err != nil {
+	if err := binaryValidateBrowser(root.BrowserResourcesDir); err != nil {
 		return "", fmt.Errorf("%w: managed Camoufox browser is unavailable: %v", ErrNotInstalled, err)
 	}
 	if !trustUnverifiedCamoufoxPath() {
-		if err := verifyCamoufoxManifest(root.BrowserResourcesDir); err != nil {
+		if err := binaryVerifyManifest(root.BrowserResourcesDir); err != nil {
 			return "", fmt.Errorf("%w: managed Camoufox browser failed manifest verification: %v", ErrVersionMismatch, err)
 		}
 	}
-	executable, err := installedRuntimeBrowserExecutable(root)
+	executable, err := binaryInstalledBrowser(root)
 	if err != nil {
 		return "", fmt.Errorf("%w: locate managed Camoufox browser executable: %v", ErrNotInstalled, err)
 	}

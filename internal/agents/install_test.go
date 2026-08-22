@@ -2,10 +2,13 @@ package agents
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	skillreg "github.com/ehmo/gomoufox/internal/skills"
 )
 
 func TestInstallDryRunAllDedupesSharedSkillPaths(t *testing.T) {
@@ -264,5 +267,229 @@ func TestMergeCodexTOMLPreservesExistingConfigAndReplacesManagedBlock(t *testing
 func TestMergeCodexTOMLRejectsUnmanagedExistingServer(t *testing.T) {
 	if _, err := mergeCodexTOML([]byte("[mcp_servers.gomoufox]\ncommand = \"bad\"\n"), "core", nil); err == nil {
 		t.Fatal("unmanaged existing server accepted")
+	}
+}
+
+func TestInstallReportsPlanningReadMergeAndWriteFailures(t *testing.T) {
+	base := Options{Target: TargetCodex, Scope: ScopeUser, Features: []string{FeatureMCP}, HomeDir: t.TempDir(), WorkDir: t.TempDir()}
+	if _, err := Install(Options{Target: TargetCodex, HomeDir: filepath.Join(t.TempDir(), "missing"), WorkDir: t.TempDir()}); err == nil {
+		t.Fatal("missing home root accepted")
+	}
+
+	oldResolve, oldExists, oldRead, oldWrite := resolveAgentWrite, agentRegularFileExists, agentReadFile, agentWriteFile0600
+	t.Cleanup(func() {
+		resolveAgentWrite, agentRegularFileExists, agentReadFile, agentWriteFile0600 = oldResolve, oldExists, oldRead, oldWrite
+	})
+	wantErr := errors.New("injected")
+	resolveAgentWrite = func(string, bool) (string, error) { return "", wantErr }
+	if _, err := Install(base); !errors.Is(err, wantErr) {
+		t.Fatalf("resolve error = %v", err)
+	}
+	resolveAgentWrite = oldResolve
+	agentRegularFileExists = func(string) (bool, error) { return false, wantErr }
+	if _, err := Install(base); !errors.Is(err, wantErr) {
+		t.Fatalf("exists error = %v", err)
+	}
+	agentRegularFileExists = oldExists
+	agentReadFile = func(string) ([]byte, error) { return nil, wantErr }
+	if _, err := Install(base); !errors.Is(err, wantErr) {
+		t.Fatalf("read error = %v", err)
+	}
+	agentReadFile = func(string) ([]byte, error) { return []byte("# BEGIN gomoufox managed mcp server\n"), nil }
+	if _, err := Install(base); err == nil || !strings.Contains(err.Error(), "missing end marker") {
+		t.Fatalf("merge error = %v", err)
+	}
+	agentReadFile = oldRead
+	for _, tc := range []struct {
+		name string
+		err  error
+		want string
+	}{
+		{name: "existing race", err: os.ErrExist, want: "pass --force"},
+		{name: "write failure", err: wantErr, want: "injected"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			agentWriteFile0600 = func(string, []byte, bool) error { return tc.err }
+			_, err := Install(base)
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("write error = %v, want %q", err, tc.want)
+			}
+		})
+	}
+}
+
+func TestAgentPathChecksRejectUnsafeAndUnreadableTargets(t *testing.T) {
+	root, err := canonicalRoot(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	file := filepath.Join(root, "file")
+	if err := os.WriteFile(file, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Join(root, "dir")
+	if err := os.Mkdir(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(root, "link")
+	if err := os.Symlink(file, link); err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{dir, link} {
+		if _, err := regularFileExists(path); err == nil {
+			t.Fatalf("regularFileExists(%q) accepted unsafe target", path)
+		}
+		if _, err := resolveSafeWrite(path, true); err == nil {
+			t.Fatalf("resolveSafeWrite(%q) accepted unsafe target", path)
+		}
+	}
+	if exists, err := regularFileExists(filepath.Join(root, "missing")); err != nil || exists {
+		t.Fatalf("missing file = %v, %v", exists, err)
+	}
+	if _, err := resolveSafeWrite(file, false); err == nil {
+		t.Fatal("existing path accepted without overwrite")
+	}
+	if got, err := resolveSafeWrite(filepath.Join(root, "missing"), true); err != nil || !filepath.IsAbs(got) {
+		t.Fatalf("safe missing path = %q, %v", got, err)
+	}
+
+	parentLink := filepath.Join(root, "parent-link")
+	if err := os.Symlink(dir, parentLink); err != nil {
+		t.Fatal(err)
+	}
+	if err := rejectExistingParentSymlinks(filepath.Join(parentLink, "child")); err == nil {
+		t.Fatal("symlink parent accepted")
+	}
+	if _, err := resolveSafeWrite(filepath.Join(parentLink, "child"), true); err == nil {
+		t.Fatal("resolveSafeWrite accepted a symlink parent")
+	}
+	if err := rejectExistingParentSymlinks(filepath.Join(file, "child")); err == nil {
+		t.Fatal("file parent accepted")
+	}
+	if err := rejectExistingParentSymlinks(filepath.Join(root, "missing", "child")); err != nil {
+		t.Fatalf("missing prospective parent rejected: %v", err)
+	}
+	if err := rejectExistingParentSymlinks(string(os.PathSeparator) + "child"); err != nil {
+		t.Fatalf("root parent rejected: %v", err)
+	}
+}
+
+func TestAgentFilesystemErrorsPropagate(t *testing.T) {
+	wantErr := errors.New("injected")
+	oldExistsLstat, oldResolveLstat, oldParentLstat := agentExistsLstat, agentResolveLstat, agentParentLstat
+	oldAbs, oldEval, oldHome, oldGetwd := agentAbs, agentEvalSymlinks, agentUserHomeDir, agentGetwd
+	t.Cleanup(func() {
+		agentExistsLstat, agentResolveLstat, agentParentLstat = oldExistsLstat, oldResolveLstat, oldParentLstat
+		agentAbs, agentEvalSymlinks, agentUserHomeDir, agentGetwd = oldAbs, oldEval, oldHome, oldGetwd
+	})
+	agentExistsLstat = func(string) (os.FileInfo, error) { return nil, wantErr }
+	if _, err := regularFileExists("x"); !errors.Is(err, wantErr) {
+		t.Fatalf("regularFileExists error = %v", err)
+	}
+	agentResolveLstat = func(string) (os.FileInfo, error) { return nil, wantErr }
+	if _, err := resolveSafeWrite("x", true); !errors.Is(err, wantErr) {
+		t.Fatalf("resolveSafeWrite lstat error = %v", err)
+	}
+	agentResolveLstat = oldResolveLstat
+	agentParentLstat = func(string) (os.FileInfo, error) { return nil, wantErr }
+	if err := rejectExistingParentSymlinks(filepath.Join(t.TempDir(), "child")); !errors.Is(err, wantErr) {
+		t.Fatalf("parent lstat error = %v", err)
+	}
+	agentParentLstat = oldParentLstat
+	agentAbs = func(string) (string, error) { return "", wantErr }
+	if _, err := canonicalRoot("x"); !errors.Is(err, wantErr) {
+		t.Fatalf("canonicalRoot abs error = %v", err)
+	}
+	if _, err := resolveSafeWrite("x", true); !errors.Is(err, wantErr) {
+		t.Fatalf("resolveSafeWrite abs error = %v", err)
+	}
+	agentAbs = oldAbs
+	agentEvalSymlinks = func(string) (string, error) { return "", wantErr }
+	if _, err := canonicalRoot("x"); !errors.Is(err, wantErr) {
+		t.Fatalf("canonicalRoot eval error = %v", err)
+	}
+	agentEvalSymlinks = oldEval
+	agentUserHomeDir = func() (string, error) { return "", wantErr }
+	if _, _, err := roots(Options{WorkDir: t.TempDir()}); !errors.Is(err, wantErr) {
+		t.Fatalf("home error = %v", err)
+	}
+	agentUserHomeDir = oldHome
+	agentGetwd = func() (string, error) { return "", wantErr }
+	if _, _, err := roots(Options{HomeDir: t.TempDir()}); !errors.Is(err, wantErr) {
+		t.Fatalf("getwd error = %v", err)
+	}
+	agentGetwd = oldGetwd
+	if _, _, err := roots(Options{HomeDir: t.TempDir(), WorkDir: filepath.Join(t.TempDir(), "missing")}); err == nil || !strings.Contains(err.Error(), "working directory") {
+		t.Fatalf("missing work root error = %v", err)
+	}
+}
+
+func TestAgentConfigHelpersCoverEveryTargetAndValidationBranch(t *testing.T) {
+	home, work := t.TempDir(), t.TempDir()
+	for _, target := range []string{TargetCodex, TargetClaude, TargetCursor, TargetGemini, "unknown"} {
+		for _, scope := range []string{ScopeUser, ScopeProject} {
+			write := mcpWriteFor(target, scope, home, work, "core", []string{"--max-sessions=2"})
+			if target == "unknown" {
+				if write.path != "" || write.merge != nil {
+					t.Fatalf("unknown target write = %#v", write)
+				}
+				continue
+			}
+			if write.path == "" || write.merge == nil {
+				t.Fatalf("mcpWriteFor(%s, %s) = %#v", target, scope, write)
+			}
+			if _, err := write.merge(nil); err != nil {
+				t.Fatalf("merge %s/%s: %v", target, scope, err)
+			}
+		}
+	}
+	for _, tc := range []struct{ target, scope, want string }{
+		{TargetClaude, ScopeProject, filepath.Join(work, ".claude", "skills")},
+		{TargetClaude, ScopeUser, filepath.Join(home, ".claude", "skills")},
+		{TargetCodex, ScopeProject, filepath.Join(work, ".agents", "skills")},
+		{TargetCodex, ScopeUser, filepath.Join(home, ".agents", "skills")},
+	} {
+		if got := skillRootFor(tc.target, tc.scope, home, work); got != tc.want {
+			t.Fatalf("skillRootFor(%s, %s) = %q, want %q", tc.target, tc.scope, got, tc.want)
+		}
+	}
+	if _, err := mergeMCPJSON([]byte("["), "core", nil); err == nil {
+		t.Fatal("malformed MCP JSON accepted")
+	}
+	if _, err := mergeCodexTOML([]byte("# BEGIN gomoufox managed mcp server\n"), "core", nil); err == nil {
+		t.Fatal("unterminated managed TOML block accepted")
+	}
+	for _, tc := range [][2]string{
+		{"", "SKILL.md"}, {"nested/skill", "SKILL.md"}, {".hidden", "SKILL.md"}, {"skill", "."}, {"skill", "../escape"},
+	} {
+		if _, err := installableRelativePath(tc[0], tc[1]); err == nil {
+			t.Fatalf("installableRelativePath(%q, %q) succeeded", tc[0], tc[1])
+		}
+	}
+	if !containsTarget("codex,claude", "claude") || containsTarget("codex,claude", "gemini") {
+		t.Fatal("containsTarget returned the wrong membership")
+	}
+	writes := dedupeWrites([]fileWrite{{target: "codex", path: "b"}, {target: "codex", path: "b"}, {target: "claude", path: "b"}, {target: "cursor", path: "a"}})
+	if len(writes) != 2 || writes[0].path != "a" || writes[1].target != "codex,claude" {
+		t.Fatalf("dedupeWrites = %#v", writes)
+	}
+	defaults := normalizeOptions(Options{})
+	if defaults.Target != TargetAll || defaults.Scope != ScopeUser || defaults.Toolset != DefaultToolset || len(defaults.Features) != 2 {
+		t.Fatalf("normalizeOptions defaults = %#v", defaults)
+	}
+}
+
+func TestAgentPlanRejectsUnsafePackagedSkillPath(t *testing.T) {
+	old := agentInstallableSkills
+	agentInstallableSkills = func() []skillreg.InstallableSkill {
+		return []skillreg.InstallableSkill{{Directory: "../unsafe", Files: []skillreg.InstallableFile{{Path: "SKILL.md"}}}}
+	}
+	t.Cleanup(func() { agentInstallableSkills = old })
+	_, err := planWrites(Options{
+		Target: TargetCodex, Scope: ScopeUser, Features: []string{FeatureSkills},
+		HomeDir: t.TempDir(), WorkDir: t.TempDir(),
+	})
+	if err == nil || !strings.Contains(err.Error(), "invalid installable skill directory") {
+		t.Fatalf("unsafe packaged skill error = %v", err)
 	}
 }

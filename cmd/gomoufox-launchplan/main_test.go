@@ -248,6 +248,19 @@ func TestRunErrorBranches(t *testing.T) {
 	}
 }
 
+func TestRunReportsManagedBrowserResolutionFailure(t *testing.T) {
+	oldResolve := resolveManagedCamoufoxExecutable
+	resolveManagedCamoufoxExecutable = func(string) (string, error) {
+		return "", errors.New("token=secret")
+	}
+	t.Cleanup(func() { resolveManagedCamoufoxExecutable = oldResolve })
+	var stdout, stderr bytes.Buffer
+	code := run(context.Background(), []string{"--scenario", "fixed", "--python", "/managed/python"}, &stdout, &stderr)
+	if code != 1 || strings.Contains(stderr.String(), "secret") {
+		t.Fatalf("code=%d stdout=%q stderr=%q", code, stdout.String(), stderr.String())
+	}
+}
+
 func TestHelpers(t *testing.T) {
 	t.Setenv("PYTHON", "/env/python")
 	if got := selectPython("", filepath.Join(t.TempDir(), "missing")); got != "/env/python" {

@@ -228,6 +228,8 @@ type Request interface {
 	URL() string
 	Method() string
 	Headers() map[string]string
+	Failure() error
+	RedirectedFrom() Request
 	PostData() string
 	PostDataBytes() []byte
 	ResourceType() string

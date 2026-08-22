@@ -5,15 +5,19 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 	"unsafe"
 
 	"github.com/ehmo/gomoufox/camoufoxcfg"
+	"github.com/ehmo/gomoufox/internal/netguard"
 	"github.com/ehmo/gomoufox/internal/policy"
 	"github.com/ehmo/gomoufox/internal/pwbridge"
 	sidecarpkg "github.com/ehmo/gomoufox/internal/sidecar"
@@ -266,6 +270,9 @@ func TestNewAndBrowserCreationErrorEdges(t *testing.T) {
 	}
 	if _, err := b.NewContext(context.Background()); !errors.Is(err, raw.newCtxErr) {
 		t.Fatalf("new context raw err = %v", err)
+	}
+	if _, err := b.NewContext(context.Background(), WithHARRecording(HAROptions{})); err == nil {
+		t.Fatal("context with invalid HAR options succeeded")
 	}
 	if _, err := b.NewPage(canceled); !errors.Is(err, context.Canceled) {
 		t.Fatalf("new page canceled = %v", err)
@@ -559,6 +566,13 @@ func TestNavigationAndScreenshotOptions(t *testing.T) {
 	defer cancelExpired()
 	if d := deadlineTimeout(expired, time.Second); d != time.Nanosecond {
 		t.Fatalf("expired timeout = %s", d)
+	}
+}
+
+func TestMapDownloadErrorPreservesNonTimeoutError(t *testing.T) {
+	wantErr := errors.New("download failed")
+	if got := mapDownloadError(wantErr); !errors.Is(got, wantErr) {
+		t.Fatalf("mapped download error = %v", got)
 	}
 }
 
@@ -1148,6 +1162,14 @@ func TestConfigureConnectorUsesManagedDriverForBothRuntimes(t *testing.T) {
 	if got := cfg.connector.(pwbridge.RealConnector).DriverDirectory; got != managedPlaywrightDriverDir(cfg.venvDir) {
 		t.Fatalf("python runtime driver directory = %q, want managed", got)
 	}
+	pointer := &pwbridge.RealConnector{}
+	cfg.connector = pointer
+	configureConnectorForRuntime(&cfg)
+	if pointer.DriverDirectory != managedPlaywrightDriverDir(cfg.venvDir) {
+		t.Fatalf("pointer driver directory = %q", pointer.DriverDirectory)
+	}
+	cfg.connector = (*pwbridge.RealConnector)(nil)
+	configureConnectorForRuntime(&cfg)
 }
 
 func TestEnsureInstalledInstallsPlaywrightDriverForLegacyPython(t *testing.T) {
@@ -1184,6 +1206,12 @@ func TestEnsureInstalledInstallsPlaywrightDriverForLegacyPython(t *testing.T) {
 	sidecarEnsureManagedPlaywrightDriver = func(context.Context, sidecarpkg.InstallOptions) error { return driverErr }
 	if err := EnsureInstalled(context.Background(), func(o *InstallOptions) { o.Runtime = SidecarRuntimePython }); !errors.Is(err, ErrNotInstalled) || !strings.Contains(err.Error(), "playwright driver install failed") {
 		t.Fatalf("driver install err = %v", err)
+	}
+	sidecarEnsureManagedPlaywrightDriver = func(context.Context, sidecarpkg.InstallOptions) error {
+		return sidecarpkg.ErrVersionMismatch
+	}
+	if err := EnsureInstalled(context.Background(), func(o *InstallOptions) { o.Runtime = SidecarRuntimePython }); !errors.Is(err, ErrVersionMismatch) {
+		t.Fatalf("driver version error = %v", err)
 	}
 }
 
@@ -1515,6 +1543,16 @@ func TestPageWrappersAndRouteRegistry(t *testing.T) {
 	if err := download.SaveAs(canceledDownloadCtx, savePath); !errors.Is(err, context.Canceled) {
 		t.Fatalf("canceled download save = %v", err)
 	}
+	blocking := &fakeDownload{saveStarted: make(chan struct{}), saveRelease: make(chan struct{})}
+	blockingDownload := &Download{raw: blocking}
+	ctxDuringSave, cancelDuringSave := context.WithCancel(context.Background())
+	saveDone := make(chan error, 1)
+	go func() { saveDone <- blockingDownload.SaveAs(ctxDuringSave, savePath) }()
+	<-blocking.saveStarted
+	cancelDuringSave()
+	if err := <-saveDone; !errors.Is(err, context.Canceled) || blocking.cancelCalls != 1 {
+		t.Fatalf("save cancellation err=%v cancelCalls=%d", err, blocking.cancelCalls)
+	}
 	if err := download.Failure(canceledDownloadCtx); !errors.Is(err, context.Canceled) {
 		t.Fatalf("canceled download failure = %v", err)
 	}
@@ -1529,6 +1567,9 @@ func TestPageWrappersAndRouteRegistry(t *testing.T) {
 		t.Fatalf("download wait timeout = %v", err)
 	}
 	fp.downloadErr = nil
+	if _, err := page.RunAndWaitForDownload(canceledDownloadCtx, func() error { return nil }); !errors.Is(err, context.Canceled) {
+		t.Fatalf("canceled download wait = %v", err)
+	}
 	if err := page.Wheel(context.Background(), 4, 8); err != nil || fp.wheelX != 4 || fp.wheelY != 8 {
 		t.Fatalf("wheel = %v deltas=%v/%v", err, fp.wheelX, fp.wheelY)
 	}
@@ -1656,6 +1697,9 @@ func TestLocatorWrappers(t *testing.T) {
 func TestNavigationErrorMapping(t *testing.T) {
 	if got := mapNavigationError(nil); got != nil {
 		t.Fatalf("nil = %v", got)
+	}
+	if got := mapNavigationError(errors.New("Frame.Goto: NS_ERROR_PROXY_FORBIDDEN")); !errors.Is(got, ErrURLBlocked) {
+		t.Fatalf("proxy block mapped to %v", got)
 	}
 	if !errors.Is(mapNavigationError(context.DeadlineExceeded), ErrNavigationTimeout) {
 		t.Fatalf("deadline not mapped")
@@ -1991,6 +2035,7 @@ func (c *fakeContext) Raw() any { return c }
 type fakePage struct {
 	evaluateResult   any
 	evaluateErr      error
+	evaluateHook     func(*fakePage)
 	evaluateArg      any
 	internalEvalArg  any
 	locator          pwbridge.Locator
@@ -2111,6 +2156,9 @@ func (p *fakePage) EvaluateInternal(_ string, args ...any) (any, error) {
 	if len(args) > 0 {
 		p.internalEvalArg = args[0]
 	}
+	if p.evaluateHook != nil {
+		p.evaluateHook(p)
+	}
 	return p.evaluateResult, p.evaluateErr
 }
 func (p *fakePage) AddInitScript(script string) error {
@@ -2227,17 +2275,27 @@ type fakeDownload struct {
 	cancelErr         error
 	deleteErr         error
 	cancelCalls       int
+	saveStarted       chan struct{}
+	saveRelease       chan struct{}
+	releaseOnce       sync.Once
 }
 
 func (d *fakeDownload) URL() string               { return d.url }
 func (d *fakeDownload) SuggestedFilename() string { return d.suggestedFilename }
 func (d *fakeDownload) SaveAs(path string) error {
 	d.savePath = path
+	if d.saveStarted != nil {
+		close(d.saveStarted)
+		<-d.saveRelease
+	}
 	return d.saveErr
 }
 func (d *fakeDownload) Failure() error { return d.failureErr }
 func (d *fakeDownload) Cancel() error {
 	d.cancelCalls++
+	if d.saveRelease != nil {
+		d.releaseOnce.Do(func() { close(d.saveRelease) })
+	}
 	return d.cancelErr
 }
 func (d *fakeDownload) Delete() error { return d.deleteErr }
@@ -2283,19 +2341,25 @@ func (r *fakeRoute) Fetch(*pwbridge.FetchOptions) (pwbridge.Response, error) {
 }
 
 type fakeRequest struct {
-	url     string
-	method  string
-	headers map[string]string
-	post    string
+	url            string
+	method         string
+	headers        map[string]string
+	post           string
+	failureErr     error
+	redirectedFrom pwbridge.Request
 }
 
 func (r *fakeRequest) URL() string                { return r.url }
 func (r *fakeRequest) Method() string             { return r.method }
 func (r *fakeRequest) Headers() map[string]string { return r.headers }
-func (r *fakeRequest) PostData() string           { return r.post }
-func (r *fakeRequest) PostDataBytes() []byte      { return []byte(r.post) }
-func (r *fakeRequest) ResourceType() string       { return "document" }
-func (r *fakeRequest) IsNavigationRequest() bool  { return true }
+func (r *fakeRequest) Failure() error             { return r.failureErr }
+func (r *fakeRequest) RedirectedFrom() pwbridge.Request {
+	return r.redirectedFrom
+}
+func (r *fakeRequest) PostData() string          { return r.post }
+func (r *fakeRequest) PostDataBytes() []byte     { return []byte(r.post) }
+func (r *fakeRequest) ResourceType() string      { return "document" }
+func (r *fakeRequest) IsNavigationRequest() bool { return true }
 
 type fakeResponse struct {
 	url     string
@@ -2304,12 +2368,16 @@ type fakeResponse struct {
 	body    []byte
 	request pwbridge.Request
 	bodyErr error
+	headers map[string]string
 }
 
 func (r *fakeResponse) URL() string        { return r.url }
 func (r *fakeResponse) Status() int        { return r.status }
 func (r *fakeResponse) StatusText() string { return "Created" }
 func (r *fakeResponse) Headers() map[string]string {
+	if r.headers != nil {
+		return r.headers
+	}
 	return map[string]string{"content-type": "application/json"}
 }
 func (r *fakeResponse) Body() ([]byte, error)     { return r.body, r.bodyErr }
@@ -2505,7 +2573,7 @@ func TestFetchHeadersForEvaluationUsesSerializableMap(t *testing.T) {
 }
 
 func TestFetchBytesWithOptionsReportsBrowserSideTruncation(t *testing.T) {
-	page := &Page{raw: &fakePage{evaluateResult: map[string]any{"ok": true, "status": 200, "body": "abcd", "url": "https://example.com", "headers": map[string]string{}, "truncated": true}}}
+	page := &Page{raw: &fakePage{evaluateResult: map[string]any{"ok": true, "status": 200, "body": "abcd", "url": "https://example.com", "headers": map[string]string{"X-Test": "yes"}, "truncated": true}}}
 	result, err := page.FetchBytesWithOptions(context.Background(), "https://example.com", "", nil, nil, FetchBytesOptions{MaxBytes: 4})
 	if err != nil {
 		t.Fatal(err)
@@ -2516,6 +2584,370 @@ func TestFetchBytesWithOptionsReportsBrowserSideTruncation(t *testing.T) {
 	if arg, ok := page.raw.(*fakePage).internalEvalArg.(map[string]any); !ok || arg["maxBytes"] != 4 {
 		t.Fatalf("internal evaluate arg = %#v", page.raw.(*fakePage).internalEvalArg)
 	}
+}
+
+func TestFetchBytesWithOptionsRejectsInvalidBase64(t *testing.T) {
+	page := &Page{raw: &fakePage{evaluateResult: map[string]any{
+		"ok": true, "status": 200, "body_encoding": "base64", "body_base64": "!",
+	}}}
+	if _, err := page.FetchBytesWithOptions(context.Background(), "https://example.com", http.MethodGet, nil, nil, FetchBytesOptions{}); err == nil {
+		t.Fatal("invalid base64 response was accepted")
+	}
+}
+
+func TestFetchBytesWithOptionsClassifiesBlockedEvaluateOutcomes(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		result any
+		err    error
+	}{
+		{name: "evaluate_error", err: errors.New("evaluate failed")},
+		{name: "successful_payload", result: map[string]any{"ok": true, "status": 200, "body": "blocked"}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			marker := testBlockedMarker(t)
+			root := &fakeRequest{url: "http://public.example/start", method: http.MethodGet}
+			raw := &fakePage{evaluateResult: test.result, evaluateErr: test.err}
+			raw.evaluateHook = func(page *fakePage) {
+				page.onResponse(&fakeResponse{
+					status: http.StatusForbidden, headers: map[string]string{netguard.BlockedHeader: marker}, request: root,
+				})
+			}
+			page := &Page{raw: raw}
+			if _, err := page.FetchBytesWithOptions(context.Background(), root.url, root.method, nil, nil, FetchBytesOptions{}); !errors.Is(err, ErrURLBlocked) {
+				t.Fatalf("fetch error = %v", err)
+			}
+		})
+	}
+}
+
+func TestFetchBytesWithOptionsClassifiesBlockedHTTPRedirect(t *testing.T) {
+	marker := testBlockedMarker(t)
+	root := &fakeRequest{url: "http://public.example/start", method: http.MethodGet}
+	blocked := &fakeRequest{url: "http://10.0.0.1/private", method: http.MethodGet, redirectedFrom: root}
+	raw := &fakePage{evaluateResult: map[string]any{
+		"ok": false, "code": "cors_denied", "url": "http://public.example/start", "status": 0, "message": "NetworkError",
+	}}
+	raw.evaluateHook = func(page *fakePage) {
+		page.onResponse(&fakeResponse{
+			status:  http.StatusForbidden,
+			headers: map[string]string{netguard.BlockedHeader: marker},
+			request: blocked,
+		})
+	}
+	page := &Page{raw: raw}
+	_, err := page.FetchBytesWithOptions(context.Background(), root.url, http.MethodGet, nil, nil, FetchBytesOptions{})
+	if !errors.Is(err, ErrURLBlocked) || !strings.Contains(err.Error(), "resolved address") {
+		t.Fatalf("fetch err = %v", err)
+	}
+}
+
+func TestFetchBytesWithOptionsClassifiesBlockedHTTPSRedirect(t *testing.T) {
+	root := &fakeRequest{url: "http://public.example/start", method: http.MethodGet}
+	blocked := &fakeRequest{
+		url: "https://10.0.0.1/private", method: http.MethodGet, redirectedFrom: root,
+		failureErr: errors.New("NS_ERROR_PROXY_FORBIDDEN"),
+	}
+	raw := &fakePage{evaluateResult: map[string]any{
+		"ok": false, "code": "cors_denied", "url": "http://public.example/start", "status": 0, "message": "NetworkError",
+	}}
+	raw.evaluateHook = func(page *fakePage) { page.onRequestFailed(blocked) }
+	page := &Page{raw: raw}
+	_, err := page.FetchBytesWithOptions(context.Background(), root.url, http.MethodGet, nil, nil, FetchBytesOptions{})
+	if !errors.Is(err, ErrURLBlocked) {
+		t.Fatalf("fetch err = %v", err)
+	}
+}
+
+func TestFetchBytesWithOptionsClassifiesCORSHiddenPrivateRedirect(t *testing.T) {
+	root := &fakeRequest{url: "http://public.example/start", method: http.MethodGet}
+	raw := &fakePage{evaluateResult: map[string]any{
+		"ok": false, "code": "cors_denied", "url": root.url, "status": 0, "message": "NetworkError",
+	}}
+	raw.evaluateHook = func(page *fakePage) {
+		page.onResponse(&fakeResponse{
+			url: root.url, status: http.StatusFound,
+			headers: map[string]string{"Location": "http://10.0.0.1/private?secret=must-not-surface"},
+			request: root,
+		})
+	}
+	page := &Page{browser: &Browser{cfg: defaultLaunchConfig()}, raw: raw}
+	_, err := page.FetchBytesWithOptions(context.Background(), root.url, http.MethodGet, nil, nil, FetchBytesOptions{})
+	if !errors.Is(err, ErrURLBlocked) || strings.Contains(err.Error(), "must-not-surface") {
+		t.Fatalf("fetch err = %v", err)
+	}
+}
+
+func TestFetchBytesWithOptionsPreservesCORSErrorForPublicRedirect(t *testing.T) {
+	root := &fakeRequest{url: "http://public.example/start", method: http.MethodGet}
+	raw := &fakePage{evaluateResult: map[string]any{
+		"ok": false, "code": "cors_denied", "url": root.url, "status": 0, "message": "NetworkError",
+	}}
+	raw.evaluateHook = func(page *fakePage) {
+		page.onResponse(&fakeResponse{
+			url: root.url, status: http.StatusFound,
+			headers: map[string]string{"Location": "https://93.184.216.34/public"},
+			request: root,
+		})
+	}
+	page := &Page{browser: &Browser{cfg: defaultLaunchConfig()}, raw: raw}
+	_, err := page.FetchBytesWithOptions(context.Background(), root.url, http.MethodGet, nil, nil, FetchBytesOptions{})
+	if !errors.Is(err, ErrBrowserFetch) || errors.Is(err, ErrURLBlocked) {
+		t.Fatalf("fetch err = %v", err)
+	}
+}
+
+func TestFetchBytesWithOptionsIgnoresNonRedirectLocation(t *testing.T) {
+	for _, status := range []int{http.StatusMultipleChoices, http.StatusNotModified, http.StatusUseProxy, 306} {
+		t.Run(fmt.Sprintf("status_%d", status), func(t *testing.T) {
+			root := &fakeRequest{url: "http://public.example/start", method: http.MethodGet}
+			raw := &fakePage{evaluateResult: map[string]any{
+				"ok": false, "code": "cors_denied", "url": root.url, "status": status, "message": "NetworkError",
+			}}
+			raw.evaluateHook = func(page *fakePage) {
+				page.onResponse(&fakeResponse{
+					url: root.url, status: status,
+					headers: map[string]string{"Location": "http://10.0.0.1/private"},
+					request: root,
+				})
+			}
+			page := &Page{browser: &Browser{cfg: defaultLaunchConfig()}, raw: raw}
+			_, err := page.FetchBytesWithOptions(context.Background(), root.url, http.MethodGet, nil, nil, FetchBytesOptions{})
+			if !errors.Is(err, ErrBrowserFetch) || errors.Is(err, ErrURLBlocked) {
+				t.Fatalf("fetch err = %v", err)
+			}
+		})
+	}
+}
+
+func TestFetchBytesWithOptionsMatchesBrowserNormalizedURL(t *testing.T) {
+	for _, target := range []string{
+		"http://public.example/a/../start",
+		"http://public.example:80/start",
+		"http://public.example:080/start",
+		"http://public.example/a/%2e%2e/start",
+		`http://public.example/a\../start`,
+	} {
+		t.Run(target, func(t *testing.T) {
+			root := &fakeRequest{url: "http://public.example/start", method: http.MethodGet}
+			raw := &fakePage{evaluateResult: map[string]any{
+				"ok": false, "code": "cors_denied", "url": target, "status": 0, "message": "NetworkError",
+			}}
+			raw.evaluateHook = func(page *fakePage) {
+				page.onResponse(&fakeResponse{
+					url: root.url, status: http.StatusFound,
+					headers: map[string]string{"Location": "http://10.0.0.1/private"},
+					request: root,
+				})
+			}
+			page := &Page{browser: &Browser{cfg: defaultLaunchConfig()}, raw: raw}
+			_, err := page.FetchBytesWithOptions(context.Background(), target, http.MethodGet, nil, nil, FetchBytesOptions{})
+			if !errors.Is(err, ErrURLBlocked) {
+				t.Fatalf("fetch err = %v", err)
+			}
+		})
+	}
+}
+
+func TestSameFetchURLNormalizesIDNA(t *testing.T) {
+	if !sameFetchURL("http://xn--bcher-kva.de/start", "http://bücher.de/start") {
+		t.Fatal("IDNA-equivalent fetch URLs did not match")
+	}
+}
+
+func TestSameFetchURLNormalizesIPv6(t *testing.T) {
+	if !sameFetchURL("http://[2001:4860:4860::8888]/start", "http://[2001:4860:4860:0:0:0:0:8888]/start") {
+		t.Fatal("IPv6-equivalent fetch URLs did not match")
+	}
+}
+
+func TestSameFetchURLNormalizesLegacyIPv4(t *testing.T) {
+	for _, legacy := range []string{
+		"http://0135.0270.0330.0042/start",
+		"http://0x5db8d822/start",
+		"http://1572395042/start",
+		"http://93.184.55330/start",
+	} {
+		if !sameFetchURL("http://93.184.216.34/start", legacy) {
+			t.Fatalf("IPv4-equivalent fetch URL did not match: %s", legacy)
+		}
+	}
+}
+
+func TestFetchURLNormalizationRejectsInvalidLegacyIPv4(t *testing.T) {
+	for _, host := range []string{
+		"1.2.3.4.5",
+		"1.2.3.999",
+		"256.2.3.4",
+		"0x100000000",
+		"0xnothex",
+	} {
+		if _, ok := canonicalURLIPv4(host); ok {
+			t.Fatalf("invalid IPv4 host was accepted: %s", host)
+		}
+	}
+	if got, ok := canonicalURLIPv4("127.0.0.1."); !ok || got != "127.0.0.1" {
+		t.Fatalf("trailing-dot IPv4 = %q, %v", got, ok)
+	}
+	if got, ok := canonicalURLIPv4("0x"); !ok || got != "0.0.0.0" {
+		t.Fatalf("empty hex digits = %q, %v", got, ok)
+	}
+}
+
+func TestFetchURLNormalizationEdgeCases(t *testing.T) {
+	if sameFetchURL("http://example.com/%", "http://example.com/") {
+		t.Fatal("invalid URL matched a valid URL")
+	}
+	if !sameFetchURL("http://example.com:8080/start", "HTTP://EXAMPLE.COM:08080/start#fragment") {
+		t.Fatal("equivalent non-default ports did not match")
+	}
+	for input, want := range map[string]string{
+		"":         "/",
+		"/path/.":  "/path/",
+		"/path/..": "/",
+	} {
+		if got := cleanURLPath(input); got != want {
+			t.Fatalf("cleanURLPath(%q) = %q, want %q", input, got, want)
+		}
+	}
+	if got := headerValue(map[string]string{"X-Test": "yes"}, "missing"); got != "" {
+		t.Fatalf("missing header = %q", got)
+	}
+}
+
+func TestGuardrailFetchObservationInactiveCases(t *testing.T) {
+	page := &Page{browser: &Browser{cfg: defaultLaunchConfig()}}
+	if page.activeFetchOwns(nil) {
+		t.Fatal("nil request belongs to inactive fetch")
+	}
+	if page.activeFetchOwns(&fakeRequest{url: "http://example.com", method: http.MethodGet}) {
+		t.Fatal("request belongs to inactive fetch")
+	}
+	page.guardrailFetchContext = context.Background()
+	for name, response := range map[string]*fakeResponse{
+		"missing_location": {url: "http://example.com", status: http.StatusFound},
+		"invalid_base":     {url: "%", status: http.StatusFound, headers: map[string]string{"Location": "http://10.0.0.1"}},
+		"invalid_target":   {url: "http://example.com", status: http.StatusFound, headers: map[string]string{"Location": "%"}},
+	} {
+		if reason, blocked := page.blockedFetchRedirectReason(response); blocked || reason != "" {
+			t.Fatalf("%s classified as blocked: %q", name, reason)
+		}
+	}
+	page.guardrailFetchContext = nil
+	if reason, blocked := page.blockedFetchRedirectReason(&fakeResponse{
+		url: "http://example.com", status: http.StatusFound,
+		headers: map[string]string{"Location": "http://10.0.0.1"},
+	}); blocked || reason != "" {
+		t.Fatalf("redirect without active context classified as blocked: %q", reason)
+	}
+}
+
+func TestAcquireFetchHonorsCancellationWhileBusy(t *testing.T) {
+	page := &Page{}
+	if err := page.acquireFetch(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := page.acquireFetch(ctx); !errors.Is(err, context.Canceled) {
+		t.Fatalf("busy acquire error = %v", err)
+	}
+	page.releaseFetch()
+}
+
+type errObservedContext struct {
+	context.Context
+	observed chan struct{}
+	once     sync.Once
+}
+
+func (c *errObservedContext) Err() error {
+	err := c.Context.Err()
+	if err == nil {
+		c.once.Do(func() { close(c.observed) })
+	}
+	return err
+}
+
+func TestFetchBytesWithOptionsReturnsBusyAcquireCancellation(t *testing.T) {
+	page := &Page{}
+	if err := page.acquireFetch(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	base, cancel := context.WithCancel(context.Background())
+	ctx := &errObservedContext{Context: base, observed: make(chan struct{})}
+	result := make(chan error, 1)
+	go func() {
+		_, err := page.FetchBytesWithOptions(ctx, "http://example.com", http.MethodGet, nil, nil, FetchBytesOptions{})
+		result <- err
+	}()
+	<-ctx.observed
+	cancel()
+	if err := <-result; !errors.Is(err, context.Canceled) {
+		t.Fatalf("fetch error = %v", err)
+	}
+	page.releaseFetch()
+}
+
+func TestFetchBytesWithOptionsCancelsWhileWaitingForPageFetch(t *testing.T) {
+	started := make(chan struct{})
+	release := make(chan struct{})
+	raw := &fakePage{evaluateResult: map[string]any{"ok": true, "status": 200, "body": "ok"}}
+	raw.evaluateHook = func(*fakePage) {
+		close(started)
+		<-release
+	}
+	page := &Page{raw: raw}
+	firstDone := make(chan error, 1)
+	go func() {
+		_, err := page.FetchBytesWithOptions(context.Background(), "http://public.example/first", http.MethodGet, nil, nil, FetchBytesOptions{})
+		firstDone <- err
+	}()
+	<-started
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := page.FetchBytesWithOptions(ctx, "http://public.example/second", http.MethodGet, nil, nil, FetchBytesOptions{}); !errors.Is(err, context.Canceled) {
+		t.Fatalf("waiting fetch err = %v", err)
+	}
+	close(release)
+	if err := <-firstDone; err != nil {
+		t.Fatalf("first fetch err = %v", err)
+	}
+}
+
+func TestFetchBytesWithOptionsIgnoresUnrelatedBlockedRequest(t *testing.T) {
+	marker := testBlockedMarker(t)
+	unrelated := &fakeRequest{url: "http://unrelated.example/", method: http.MethodGet}
+	raw := &fakePage{evaluateResult: map[string]any{
+		"ok": true, "url": "http://public.example/start", "status": 200, "body": "ok",
+	}}
+	raw.evaluateHook = func(page *fakePage) {
+		page.onResponse(&fakeResponse{
+			status:  http.StatusForbidden,
+			headers: map[string]string{netguard.BlockedHeader: marker},
+			request: unrelated,
+		})
+	}
+	page := &Page{raw: raw}
+	result, err := page.FetchBytesWithOptions(context.Background(), "http://public.example/start", http.MethodGet, nil, nil, FetchBytesOptions{})
+	if err != nil || string(result.Body) != "ok" {
+		t.Fatalf("fetch result=%#v err=%v", result, err)
+	}
+	if _, ok := netguard.ConsumeBlockedMarker(marker); !ok {
+		t.Fatal("unrelated response marker was consumed")
+	}
+}
+
+func testBlockedMarker(t *testing.T) string {
+	t.Helper()
+	rr := httptest.NewRecorder()
+	proxy := netguard.FilteringProxy{Validator: netguard.NewValidator(policy.DefaultConfig(), nil)}
+	proxy.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "http://127.0.0.1/", nil))
+	marker := rr.Header().Get(netguard.BlockedHeader)
+	if rr.Code != http.StatusForbidden || marker == "" {
+		t.Fatalf("test filtering proxy response code=%d headers=%v", rr.Code, rr.Header())
+	}
+	return marker
 }
 
 func TestFetchBytesWithOptionsPostTruncatesDecodedBody(t *testing.T) {
