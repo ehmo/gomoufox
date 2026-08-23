@@ -944,6 +944,9 @@ func TestRuntimePlatformHelpersCanBeExercisedLocally(t *testing.T) {
 	if got := browserExecutableCandidates(); len(got) != 2 || got[0] != "firefox" || got[1] != "camoufox" {
 		t.Fatalf("default candidates = %#v", got)
 	}
+	if !isBrowserExecutableName("firefox") || !isBrowserExecutableName("camoufox") || isBrowserExecutableName("camoufox-bin") {
+		t.Fatal("default executable classifier mismatch")
+	}
 	t.Setenv("XDG_CACHE_HOME", xdgCache)
 	if got, want := DefaultCacheDir(), filepath.Join(xdgCache, "gomoufox", "venv"); got != want {
 		t.Fatalf("xdg cache dir = %q want %q", got, want)

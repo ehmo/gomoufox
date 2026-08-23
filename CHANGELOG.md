@@ -1,5 +1,15 @@
 # Changelog
 
+## v0.1.27
+
+- Require exact 100% Go statement coverage in private and public fast and
+  release gates, including platform-specific branches exercised on Linux and
+  macOS.
+- Allow `ebay` and `ap-news` to remain shared blocked outcomes in release
+  parity checks while keeping runtime mismatches and failed targets blocking.
+- Give built-binary CLI integration tests a separate cold-build timeout so a
+  slow hosted runner does not consume the MCP interaction timeout.
+
 ## v0.1.24
 
 - Add `--allow-localhost` to browser CLI commands so explicit localhost and

@@ -1,13 +1,13 @@
 class Gomoufox < Formula
   desc "Go driver, CLI, and MCP server for Camoufox"
   homepage "https://github.com/ehmo/gomoufox"
-  version "0.1.24"
+  version "0.1.27"
   license "MIT"
 
   on_macos do
     if Hardware::CPU.arm?
-      url "https://github.com/ehmo/gomoufox/releases/download/v0.1.24/gomoufox_0.1.24_darwin_arm64.tar.gz"
-      sha256 "95846c57958c60e461d9dd8bb1a2ca23af87ec9c7db567d6455580f2064e9d60"
+      url "https://github.com/ehmo/gomoufox/releases/download/v0.1.27/gomoufox_0.1.27_darwin_arm64.tar.gz"
+      sha256 "13827e3e8a8179c1190b81afd97b5d5adc6b4b7fc03cbeffea133958b31c0117"
     else
       odie "gomoufox Homebrew requires Apple Silicon because pinned Camoufox has no supported macOS Intel browser binary"
     end
@@ -17,8 +17,8 @@ class Gomoufox < Formula
     if Hardware::CPU.arm?
       odie "gomoufox Homebrew requires Linux amd64 because pinned Camoufox has no supported Linux ARM browser binary"
     else
-      url "https://github.com/ehmo/gomoufox/releases/download/v0.1.24/gomoufox_0.1.24_linux_amd64.tar.gz"
-      sha256 "e1c025de53a00ca944571f11593721765f4a14e70f9ad7eee6e19506976ea2e9"
+      url "https://github.com/ehmo/gomoufox/releases/download/v0.1.27/gomoufox_0.1.27_linux_amd64.tar.gz"
+      sha256 "27fd9ee4931215ce84158571ae7e85d780502405a8ea6b7dd19a9196e9a4036d"
     end
   end
 

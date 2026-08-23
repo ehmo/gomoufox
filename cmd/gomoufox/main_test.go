@@ -68,11 +68,11 @@ func TestMainUsesProcessDefaults(t *testing.T) {
 }
 
 func TestBuiltBinarySpeaksMCPStdio(t *testing.T) {
+	version := "v0.1.0-test"
+	bin := buildGomoufoxBinaryForTest(t, version)
+
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-
-	version := "v0.1.0-test"
-	bin := buildGomoufoxBinaryForTest(t, ctx, version)
 
 	versionCmd := exec.CommandContext(ctx, bin, "--version")
 	versionOut, err := versionCmd.CombinedOutput()
@@ -189,10 +189,11 @@ func runMCPStdioForTest(t *testing.T, ctx context.Context, bin string, args []st
 }
 
 func TestBuiltBinaryMCPHTTPAuth(t *testing.T) {
+	bin := buildGomoufoxBinaryForTest(t, "v0.1.0-test")
+
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	bin := buildGomoufoxBinaryForTest(t, ctx, "v0.1.0-test")
 	port := freeTCPPortForTest(t)
 	serverCtx, stopServer := context.WithCancel(ctx)
 	defer stopServer()
@@ -256,8 +257,11 @@ func TestBuiltBinaryMCPHTTPAuth(t *testing.T) {
 	}
 }
 
-func buildGomoufoxBinaryForTest(t *testing.T, ctx context.Context, version string) string {
+func buildGomoufoxBinaryForTest(t *testing.T, version string) string {
 	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+
 	name := "gomoufox"
 	if runtime.GOOS == "windows" {
 		name += ".exe"

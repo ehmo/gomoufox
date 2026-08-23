@@ -5,9 +5,10 @@ from decimal import Decimal, InvalidOperation
 from pathlib import Path
 
 
-def parse_profile(path: Path) -> tuple[int, int]:
+def parse_profile(path: Path) -> tuple[int, int, list[tuple[str, int]]]:
     covered = 0
     total = 0
+    uncovered = []
     lines = path.read_text(encoding="utf-8").splitlines()
     if not lines or not lines[0].startswith("mode: "):
         raise ValueError("coverage profile is missing its mode header")
@@ -27,9 +28,11 @@ def parse_profile(path: Path) -> tuple[int, int]:
         total += statements
         if count > 0:
             covered += statements
+        elif statements > 0:
+            uncovered.append((fields[0], statements))
     if total == 0:
         raise ValueError("coverage profile contains no statements")
-    return covered, total
+    return covered, total, uncovered
 
 
 def main() -> int:
@@ -46,7 +49,7 @@ def main() -> int:
         print(f"coverage minimum must be between 0 and 100: {args.minimum}", file=sys.stderr)
         return 2
     try:
-        covered, total = parse_profile(Path(args.profile))
+        covered, total, uncovered = parse_profile(Path(args.profile))
     except (OSError, ValueError) as err:
         print(f"invalid coverage profile: {err}", file=sys.stderr)
         return 2
@@ -54,6 +57,9 @@ def main() -> int:
     report = f"coverage: {covered}/{total} = {percentage:.6f}%"
     if percentage < minimum:
         print(f"{report} < required {minimum}%", file=sys.stderr)
+        for source_range, statements in uncovered:
+            suffix = "statement" if statements == 1 else "statements"
+            print(f"uncovered: {source_range} ({statements} {suffix})", file=sys.stderr)
         return 1
     print(report)
     return 0

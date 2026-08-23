@@ -20,6 +20,7 @@ var (
 	errHARStopRequired     = errors.New("HAR stop required")
 	errHARNotRecording     = errors.New("session is not recording HAR")
 	errHARDestinationInUse = errors.New("HAR destination is already in use")
+	sessionStoreGOOS       = runtime.GOOS
 )
 
 type sessionLifecycle uint32
@@ -310,7 +311,7 @@ func (s *sessionStore) releaseHARPath(session *sessionState) {
 
 func harDestinationKey(path string) string {
 	key := filepath.Clean(path)
-	if runtime.GOOS == "darwin" || runtime.GOOS == "windows" {
+	if sessionStoreGOOS == "darwin" || sessionStoreGOOS == "windows" {
 		key = strings.ToLower(key)
 	}
 	return key

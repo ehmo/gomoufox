@@ -739,8 +739,15 @@ func TestRecordWarningAndCanonicalPathFailureEdges(t *testing.T) {
 		t.Fatalf("record warning code=%d stderr=%q", code, stderr.String())
 	}
 
-	oldAbs, oldEval := cliAbsPath, cliEvalSymlinks
-	t.Cleanup(func() { cliAbsPath, cliEvalSymlinks = oldAbs, oldEval })
+	oldAbs, oldEval, oldGOOS := cliAbsPath, cliEvalSymlinks, cliGOOS
+	t.Cleanup(func() { cliAbsPath, cliEvalSymlinks, cliGOOS = oldAbs, oldEval, oldGOOS })
+	cliAbsPath = func(path string) (string, error) { return path, nil }
+	cliEvalSymlinks = func(path string) (string, error) { return path, nil }
+	cliGOOS = "darwin"
+	if _, err := parseRecord([]string{"http://93.184.216.34", "--out", "/tmp/Capture.HAR", "--save-session", "/tmp/capture.har"}); err == nil || !strings.Contains(err.Error(), "different paths") {
+		t.Fatalf("case-folded alias collision error = %v", err)
+	}
+	cliGOOS = oldGOOS
 	cliAbsPath = func(string) (string, error) { return "", errors.New("absolute failed") }
 	if _, err := parseRecord([]string{"http://93.184.216.34", "--out", "out.har", "--save-session", "state.json"}); err == nil || !strings.Contains(err.Error(), "resolve --out") {
 		t.Fatalf("output path error = %v", err)

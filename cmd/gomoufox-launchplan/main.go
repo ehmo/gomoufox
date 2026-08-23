@@ -42,6 +42,7 @@ type valueDrift struct {
 var (
 	buildPythonLaunchPayload         = sidecar.BuildPythonLaunchPayload
 	resolveManagedCamoufoxExecutable = sidecar.ResolveManagedCamoufoxExecutable
+	venvPython                       = sidecar.VenvPython
 	nowUTC                           = func() time.Time { return time.Now().UTC() }
 	exitProcess                      = os.Exit
 )
@@ -182,7 +183,7 @@ func selectPython(override, venvDir string) string {
 	if override != "" {
 		return override
 	}
-	if python, err := sidecar.VenvPython(venvDir); err == nil {
+	if python, err := venvPython(venvDir); err == nil {
 		return python
 	}
 	if env := os.Getenv("PYTHON"); env != "" {

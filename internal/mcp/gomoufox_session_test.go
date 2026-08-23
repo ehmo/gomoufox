@@ -20,6 +20,20 @@ import (
 	"github.com/ehmo/gomoufox/internal/pwbridge"
 )
 
+func TestHARDestinationKeyUsesPlatformCaseRules(t *testing.T) {
+	oldGOOS := sessionStoreGOOS
+	t.Cleanup(func() { sessionStoreGOOS = oldGOOS })
+
+	sessionStoreGOOS = "darwin"
+	if got := harDestinationKey("Capture.HAR"); got != "capture.har" {
+		t.Fatalf("darwin HAR key = %q", got)
+	}
+	sessionStoreGOOS = "linux"
+	if got := harDestinationKey("Capture.HAR"); got != "Capture.HAR" {
+		t.Fatalf("linux HAR key = %q", got)
+	}
+}
+
 func TestGomoufoxFactoryCreatesSharedAndDedicatedSessions(t *testing.T) {
 	dir := t.TempDir()
 	statePath := filepath.Join(dir, "state.json")

@@ -262,6 +262,13 @@ func TestRunReportsManagedBrowserResolutionFailure(t *testing.T) {
 }
 
 func TestHelpers(t *testing.T) {
+	oldVenvPython := venvPython
+	t.Cleanup(func() { venvPython = oldVenvPython })
+	venvPython = func(string) (string, error) { return "/managed/python", nil }
+	if got := selectPython("", "/managed/venv"); got != "/managed/python" {
+		t.Fatalf("managed python = %q", got)
+	}
+	venvPython = func(string) (string, error) { return "", os.ErrNotExist }
 	t.Setenv("PYTHON", "/env/python")
 	if got := selectPython("", filepath.Join(t.TempDir(), "missing")); got != "/env/python" {
 		t.Fatalf("env python = %q", got)

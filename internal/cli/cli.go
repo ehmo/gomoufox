@@ -185,6 +185,7 @@ var (
 	setupDefaultDoctor       = defaultDoctor
 	cliAbsPath               = filepath.Abs
 	cliEvalSymlinks          = filepath.EvalSymlinks
+	cliGOOS                  = runtime.GOOS
 )
 
 type daemonUsageError struct {
@@ -2567,7 +2568,7 @@ func parseRecord(args []string) (parsedFlags, error) {
 			return parsed, fmt.Errorf("resolve --save-session: %w", sessionErr)
 		}
 		samePath := out == session
-		if (runtime.GOOS == "darwin" || runtime.GOOS == "windows") && strings.EqualFold(out, session) {
+		if (cliGOOS == "darwin" || cliGOOS == "windows") && strings.EqualFold(out, session) {
 			samePath = true
 		}
 		if samePath {
