@@ -441,19 +441,23 @@ func TestSkillsToolsListAndGet(t *testing.T) {
 	}
 
 	resp = server.Handle(context.Background(), "skills_get", raw(`{"name":"core"}`))
-	if resp.IsError || resp.Payload["name"] != "core" || resp.Payload["version"] != "0.1.0" || !strings.Contains(resp.Payload["body"].(string), "gomoufox core") || resp.Payload["truncated"] != false {
+	if resp.IsError || resp.Payload["name"] != "core" || resp.Payload["version"] != "0.1.1" || !strings.Contains(resp.Payload["body"].(string), "gomoufox core") || resp.Payload["truncated"] != false {
 		t.Fatalf("skills_get latest payload = %#v", resp)
 	}
 	if resp.Payload["bytes"] != resp.Payload["total_bytes"] {
 		t.Fatalf("untruncated bytes mismatch = %#v", resp.Payload)
 	}
 
-	resp = server.Handle(context.Background(), "skills_get", raw(`{"name":"core","version":"0.1.0","max_bytes":25}`))
+	resp = server.Handle(context.Background(), "skills_get", raw(`{"name":"core","version":"0.1.1","max_bytes":25}`))
 	if resp.IsError || resp.Payload["truncated"] != true || resp.Payload["bytes"] != 25 || resp.Payload["total_bytes"].(int) <= 25 {
 		t.Fatalf("skills_get truncated payload = %#v", resp)
 	}
 	if len(resp.Payload["body"].(string)) != 25 {
 		t.Fatalf("truncated body length = %d", len(resp.Payload["body"].(string)))
+	}
+	resp = server.Handle(context.Background(), "skills_get", raw(`{"name":"core","version":"0.1.0"}`))
+	if resp.IsError || resp.Payload["version"] != "0.1.0" {
+		t.Fatalf("skills_get legacy payload = %#v", resp)
 	}
 
 	assertError(t, server.Handle(context.Background(), "skills_list", raw(`{"name":"core"}`)), "invalid_arguments")

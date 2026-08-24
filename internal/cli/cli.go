@@ -736,7 +736,7 @@ func commandHelps() []commandHelp {
 			Name:     "eval",
 			Usage:    "gomoufox eval <url> --enable-eval (--script <js>|--script-file <path>)",
 			Summary:  "run JavaScript only when explicitly enabled",
-			Flags:    []string{"--enable-eval", "--script", "--script-file", "--wait-selector", "--wait-load-state", "--arg"},
+			Flags:    []string{"--enable-eval", "--script", "--script-file", "--wait-selector", "--wait-load-state", "--arg", "--arg-file"},
 			Examples: []string{"gomoufox --json eval https://example.com --enable-eval --script 'document.title'"},
 		},
 		{
@@ -1965,6 +1965,7 @@ func evalFlagSpecs() map[string]flagSpec {
 		"wait-selector":   {Kind: flagValue},
 		"wait-load-state": {Kind: flagValue},
 		"arg":             {Kind: flagValue},
+		"arg-file":        {Kind: flagValue},
 		"enable-eval":     {Kind: flagBool},
 	}
 }
@@ -2385,6 +2386,10 @@ func (r Runner) runEval(ctx context.Context, global globalFlags, args []string, 
 		writeDiagnosticLine(streams.Stderr, err)
 		return ExitUsage
 	}
+	if err := materializeEvalArg(&parsed); err != nil {
+		writeDiagnosticLine(streams.Stderr, err)
+		return ExitUsage
+	}
 	if code := r.validateBrowserInputs(ctx, global, parsed, commandEval, streams); code != ExitOK {
 		return code
 	}
@@ -2698,6 +2703,8 @@ func parseEvalFlags(args []string) (parsedFlags, error) {
 	return parsed, nil
 }
 
+const evalArgMaxBytes = 240 * 1024
+
 func validateEval(parsed parsedFlags) error {
 	if len(parsed.Positionals) != 1 {
 		return errors.New("usage: gomoufox eval <URL> --script <js>")
@@ -2708,8 +2715,37 @@ func validateEval(parsed parsedFlags) error {
 	if len(parsed.value("script")) > 64*1024 {
 		return errors.New("--script exceeds 65536 bytes")
 	}
+	if parsed.has("arg") && parsed.has("arg-file") {
+		return errors.New("--arg and --arg-file are mutually exclusive")
+	}
+	if parsed.has("arg-file") && parsed.value("arg-file") == "" {
+		return errors.New("--arg-file requires a non-empty path")
+	}
+	if len(parsed.value("arg")) > evalArgMaxBytes {
+		return fmt.Errorf("--arg exceeds %d bytes", evalArgMaxBytes)
+	}
+	if parsed.has("arg") && !json.Valid([]byte(parsed.value("arg"))) {
+		return errors.New("eval argument must be valid JSON")
+	}
 	if err := validateLoadState(parsed.valueDefault("wait-load-state", "domcontentloaded")); err != nil {
 		return err
+	}
+	return nil
+}
+
+func materializeEvalArg(parsed *parsedFlags) error {
+	raw := parsed.value("arg")
+	if path := parsed.value("arg-file"); path != "" {
+		var err error
+		raw, err = readCappedFile(path, evalArgMaxBytes)
+		if err != nil {
+			return fmt.Errorf("read --arg-file: %w", err)
+		}
+		parsed.values["arg"] = []string{raw}
+		delete(parsed.values, "arg-file")
+	}
+	if parsed.has("arg") && !json.Valid([]byte(raw)) {
+		return errors.New("eval argument must be valid JSON")
 	}
 	return nil
 }
@@ -2864,6 +2900,9 @@ func buildForwardRequest(global globalFlags, command string, args []string) (For
 		parsed, err = parseEval(args)
 		if err == nil && !parsed.bool("enable-eval") {
 			return ForwardRequest{}, errors.New("eval is disabled; pass --enable-eval")
+		}
+		if err == nil {
+			err = materializeEvalArg(&parsed)
 		}
 		endpoint = "/v1/commands/eval"
 		verb = "eval"

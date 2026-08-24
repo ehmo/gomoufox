@@ -182,6 +182,15 @@ func TestDefaultRegistry(t *testing.T) {
 			t.Fatalf("default skill = %#v", skill)
 		}
 	}
+	core, err := registry.Resolve("core", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, required := range []string{"skills_list", "skills_get", "If the gomoufox CLI is unavailable"} {
+		if !strings.Contains(core.Body, required) {
+			t.Fatalf("core skill missing MCP discovery fallback %q", required)
+		}
+	}
 }
 
 func TestInstallableSkillsMatchRepositoryArtifacts(t *testing.T) {

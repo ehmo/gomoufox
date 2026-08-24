@@ -1,9 +1,11 @@
 package agents
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -27,6 +29,15 @@ const (
 	FeatureMCP    = "mcp"
 
 	DefaultToolset = "core"
+
+	maxAgentFileBytes = 1024 * 1024
+
+	statusWrote       = "wrote"
+	statusUpdated     = "updated"
+	statusUnchanged   = "unchanged"
+	statusNeedsForce  = "needs_force"
+	statusWouldWrite  = "would_write"
+	statusWouldUpdate = "would_update"
 )
 
 var supportedTargets = []string{TargetCodex, TargetClaude, TargetCursor, TargetGemini}
@@ -34,7 +45,7 @@ var supportedTargets = []string{TargetCodex, TargetClaude, TargetCursor, TargetG
 var (
 	resolveAgentWrite      = resolveSafeWrite
 	agentRegularFileExists = regularFileExists
-	agentReadFile          = os.ReadFile
+	agentReadFile          = readAgentFile
 	agentWriteFile0600     = safefile.WriteFile0600
 	agentExistsLstat       = os.Lstat
 	agentResolveLstat      = os.Lstat
@@ -82,6 +93,14 @@ type fileWrite struct {
 	merge    func(existing []byte) ([]byte, error)
 }
 
+type preparedWrite struct {
+	write    fileWrite
+	path     string
+	contents []byte
+	exists   bool
+	status   string
+}
+
 func Install(opts Options) (Plan, error) {
 	opts = normalizeOptions(opts)
 	if err := validateOptions(opts); err != nil {
@@ -100,15 +119,8 @@ func Install(opts Options) (Plan, error) {
 		DryRun:   opts.DryRun,
 		Actions:  make([]Action, 0, len(writes)),
 	}
+	prepared := make([]preparedWrite, 0, len(writes))
 	for _, write := range writes {
-		status := "wrote"
-		if opts.DryRun {
-			status = "would_write"
-		}
-		if opts.DryRun {
-			plan.Actions = append(plan.Actions, Action{Target: write.target, Kind: write.kind, Path: write.path, Status: status})
-			continue
-		}
 		safePath, err := resolveAgentWrite(write.path, true)
 		if err != nil {
 			return Plan{}, err
@@ -117,29 +129,55 @@ func Install(opts Options) (Plan, error) {
 		if err != nil {
 			return Plan{}, err
 		}
-		if exists && write.merge == nil && !opts.Force {
-			plan.Actions = append(plan.Actions, Action{Target: write.target, Kind: write.kind, Path: write.path, Status: "skipped"})
-			continue
+		var existing []byte
+		if exists {
+			existing, err = agentReadFile(safePath)
+			if err != nil {
+				return Plan{}, err
+			}
 		}
 		contents := []byte(write.contents)
 		if write.merge != nil {
-			existing, err := agentReadFile(safePath)
-			if err != nil && !errors.Is(err, os.ErrNotExist) {
-				return Plan{}, err
-			}
 			contents, err = write.merge(existing)
 			if err != nil {
 				return Plan{}, err
 			}
 		}
-		allowExisting := opts.Force || write.merge != nil
-		if err := agentWriteFile0600(safePath, contents, allowExisting); err != nil {
+		status := statusWrote
+		if exists && bytes.Equal(existing, contents) && !opts.Force {
+			status = statusUnchanged
+		} else if exists && write.merge == nil && !opts.Force {
+			if opts.DryRun {
+				status = statusNeedsForce
+			} else {
+				return Plan{}, fmt.Errorf("%s differs from the bundled skill; pass --force to overwrite", safePath)
+			}
+		} else if exists {
+			status = statusUpdated
+		}
+		if opts.DryRun {
+			switch status {
+			case statusWrote:
+				status = statusWouldWrite
+			case statusUpdated:
+				status = statusWouldUpdate
+			}
+		}
+		prepared = append(prepared, preparedWrite{write: write, path: safePath, contents: contents, exists: exists, status: status})
+	}
+	for _, item := range prepared {
+		if opts.DryRun || item.status == statusUnchanged {
+			plan.Actions = append(plan.Actions, Action{Target: item.write.target, Kind: item.write.kind, Path: item.path, Status: item.status})
+			continue
+		}
+		allowExisting := item.exists && (opts.Force || item.write.merge != nil)
+		if err := agentWriteFile0600(item.path, item.contents, allowExisting); err != nil {
 			if errors.Is(err, os.ErrExist) {
-				return Plan{}, fmt.Errorf("%s already exists; pass --force to overwrite", safePath)
+				return Plan{}, fmt.Errorf("%s already exists; pass --force to overwrite", item.path)
 			}
 			return Plan{}, err
 		}
-		plan.Actions = append(plan.Actions, Action{Target: write.target, Kind: write.kind, Path: write.path, Status: status})
+		plan.Actions = append(plan.Actions, Action{Target: item.write.target, Kind: item.write.kind, Path: item.path, Status: item.status})
 	}
 	return plan, nil
 }
@@ -153,12 +191,35 @@ func regularFileExists(path string) (bool, error) {
 		if st.IsDir() {
 			return false, fmt.Errorf("path is a directory: %s", path)
 		}
+		if !st.Mode().IsRegular() {
+			return false, fmt.Errorf("path is not a regular file: %s", path)
+		}
 		return true, nil
 	}
 	if os.IsNotExist(err) {
 		return false, nil
 	}
 	return false, err
+}
+
+func readAgentFile(path string) ([]byte, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+	return readAgentReader(path, file)
+}
+
+func readAgentReader(path string, reader io.Reader) ([]byte, error) {
+	data, err := io.ReadAll(io.LimitReader(reader, maxAgentFileBytes+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(data) > maxAgentFileBytes {
+		return nil, fmt.Errorf("%s exceeds %d bytes", path, maxAgentFileBytes)
+	}
+	return data, nil
 }
 
 func resolveSafeWrite(path string, overwrite bool) (string, error) {
@@ -422,7 +483,13 @@ func mergeCodexTOML(existing []byte, toolset string, extraArgs []string) ([]byte
 			return nil, errors.New("existing gomoufox managed MCP block is missing end marker")
 		}
 		stop = start + stop + len(end)
-		replaced := strings.TrimRight(text[:start], "\n") + "\n\n" + block + strings.TrimLeft(text[stop:], "\n")
+		prefix := strings.TrimRight(text[:start], "\n")
+		suffix := strings.TrimLeft(text[stop:], "\n")
+		replaced := block
+		if prefix != "" {
+			replaced = prefix + "\n\n" + replaced
+		}
+		replaced += suffix
 		return []byte(replaced), nil
 	}
 	if strings.Contains(text, "[mcp_servers.gomoufox]") {

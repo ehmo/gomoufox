@@ -330,8 +330,8 @@ def inspect_archive(version: str, asset_dir: Path, goos: str, goarch: str, extra
     return root, {"archive": archive_name, "members": members}
 
 
-def json_command(binary: Path, args: list[str], label: str) -> dict:
-    result = require_ok(run([str(binary), *args], timeout=30), label)
+def json_command(binary: Path, args: list[str], label: str, *, env: dict[str, str] | None = None) -> dict:
+    result = require_ok(run([str(binary), *args], env=env, timeout=30), label)
     try:
         return json.loads(result.stdout)
     except json.JSONDecodeError as err:
@@ -354,7 +354,13 @@ def audit_binaries(version: str, root: Path, browser_smoke_url: str) -> dict:
         raise RuntimeError(f"unexpected skills list: {skills}")
     skill_dir = root.parent / "skills-install"
     install = json_command(gomoufox, ["skills", "install", "--target", "codex", "--dir", str(skill_dir), "--dry-run", "--json"], "gomoufox skills install")
-    agents_install = json_command(gomoufox, ["agents", "install", "--target", "all", "--scope", "user", "--features", "skills,mcp", "--toolset", "core", "--dry-run", "--json"], "gomoufox agents install")
+    agent_home = root.parent / "agent-home"
+    codex_home = agent_home / ".codex"
+    codex_home.mkdir(parents=True, exist_ok=True)
+    agent_env = os.environ.copy()
+    agent_env["HOME"] = str(agent_home)
+    agent_env["CODEX_HOME"] = str(codex_home)
+    agents_install = json_command(gomoufox, ["agents", "install", "--target", "all", "--scope", "user", "--features", "skills,mcp", "--toolset", "core", "--dry-run", "--json"], "gomoufox agents install", env=agent_env)
     browser = None
     if browser_smoke_url:
         started = time.time()

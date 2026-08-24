@@ -9,7 +9,7 @@ Use gomoufox when a task needs browser automation through Camoufox, the gomoufox
 
 ## Start
 
-Run these discovery commands before planning a workflow:
+When the gomoufox CLI is available, run these discovery commands before planning a workflow:
 
 ```bash
 gomoufox skills list
@@ -22,6 +22,8 @@ Load the MCP-specific skill when the task is driven through MCP:
 ```bash
 gomoufox skills show mcp
 ```
+
+If the gomoufox CLI is unavailable but gomoufox MCP tools are registered, call `skills_list` and then `skills_get` with `name: "mcp"`. The registered tool schemas and embedded skill are the installed server contract. Do not switch browser implementations only because the CLI is missing from the shell.
 
 ## CLI Workflow
 

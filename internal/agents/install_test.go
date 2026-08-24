@@ -11,6 +11,10 @@ import (
 	skillreg "github.com/ehmo/gomoufox/internal/skills"
 )
 
+type failingAgentReader struct{}
+
+func (failingAgentReader) Read([]byte) (int, error) { return 0, errors.New("injected read failure") }
+
 func TestInstallDryRunAllDedupesSharedSkillPaths(t *testing.T) {
 	home := t.TempDir()
 	work := t.TempDir()
@@ -148,7 +152,7 @@ func TestInstallMergesExistingMCPConfigWithoutForce(t *testing.T) {
 	}
 }
 
-func TestInstallExistingSkillSkipsWithoutForce(t *testing.T) {
+func TestInstallExistingSkillRequiresForceWhenContentsDiffer(t *testing.T) {
 	home := t.TempDir()
 	work := t.TempDir()
 	skillPath := filepath.Join(home, ".agents", "skills", "gomoufox", "SKILL.md")
@@ -159,30 +163,15 @@ func TestInstallExistingSkillSkipsWithoutForce(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	plan, err := Install(Options{
+	_, err := Install(Options{
 		Target:   TargetCodex,
 		Scope:    ScopeUser,
 		Features: []string{FeatureSkills},
 		HomeDir:  home,
 		WorkDir:  work,
 	})
-	if err != nil {
+	if err == nil || !strings.Contains(err.Error(), "differs from the bundled skill") || !strings.Contains(err.Error(), "--force") {
 		t.Fatalf("Install error = %v", err)
-	}
-	realHome, err := canonicalRoot(home)
-	if err != nil {
-		t.Fatal(err)
-	}
-	realSkillPath := filepath.Join(realHome, ".agents", "skills", "gomoufox", "SKILL.md")
-	var skipped bool
-	for _, action := range plan.Actions {
-		if action.Path == realSkillPath && action.Status == "skipped" {
-			skipped = true
-			break
-		}
-	}
-	if !skipped {
-		t.Fatalf("existing skill was not skipped: %#v", plan.Actions)
 	}
 	data, readErr := os.ReadFile(skillPath)
 	if readErr != nil {
@@ -190,6 +179,137 @@ func TestInstallExistingSkillSkipsWithoutForce(t *testing.T) {
 	}
 	if string(data) != "custom skill\n" {
 		t.Fatalf("skill was overwritten: %q", data)
+	}
+	plan, err := Install(Options{
+		Target: TargetCodex, Scope: ScopeUser, Features: []string{FeatureSkills}, DryRun: true, HomeDir: home, WorkDir: work,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var needsForce bool
+	for _, action := range plan.Actions {
+		if strings.HasSuffix(action.Path, filepath.Join("gomoufox", "SKILL.md")) && action.Status == "needs_force" {
+			needsForce = true
+		}
+	}
+	if !needsForce {
+		t.Fatalf("stale skill dry-run plan = %#v", plan.Actions)
+	}
+}
+
+func TestInstallExistingIdenticalSkillIsUnchanged(t *testing.T) {
+	home := t.TempDir()
+	work := t.TempDir()
+	installables := skillreg.DefaultInstallableSkills()
+	skillPath := filepath.Join(home, ".agents", "skills", "gomoufox", "SKILL.md")
+	if err := os.MkdirAll(filepath.Dir(skillPath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(skillPath, []byte(installables[0].Files[0].Contents), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	plan, err := Install(Options{
+		Target: TargetCodex, Scope: ScopeUser, Features: []string{FeatureSkills}, HomeDir: home, WorkDir: work,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	realHome, err := canonicalRoot(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	realSkillPath := filepath.Join(realHome, ".agents", "skills", "gomoufox", "SKILL.md")
+	var unchanged bool
+	for _, action := range plan.Actions {
+		if action.Path == realSkillPath && action.Status == "unchanged" {
+			unchanged = true
+		}
+	}
+	if !unchanged {
+		t.Fatalf("identical skill plan = %#v", plan.Actions)
+	}
+}
+
+func TestInstallForceRewritesExactSkillsWithMode0600(t *testing.T) {
+	home := t.TempDir()
+	work := t.TempDir()
+	if _, err := Install(Options{Target: TargetCodex, Scope: ScopeUser, Features: []string{FeatureSkills}, HomeDir: home, WorkDir: work}); err != nil {
+		t.Fatal(err)
+	}
+	for _, item := range skillreg.DefaultInstallableSkills() {
+		path := filepath.Join(home, ".agents", "skills", item.Directory, item.Files[0].Path)
+		if err := os.Chmod(path, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	dryRun, err := Install(Options{Target: TargetCodex, Scope: ScopeUser, Features: []string{FeatureSkills}, Force: true, DryRun: true, HomeDir: home, WorkDir: work})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, action := range dryRun.Actions {
+		if action.Status != statusWouldUpdate {
+			t.Fatalf("forced dry-run action = %#v", action)
+		}
+	}
+	plan, err := Install(Options{Target: TargetCodex, Scope: ScopeUser, Features: []string{FeatureSkills}, Force: true, HomeDir: home, WorkDir: work})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, action := range plan.Actions {
+		if action.Status != statusUpdated {
+			t.Fatalf("forced action = %#v", action)
+		}
+		info, err := os.Stat(action.Path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if info.Mode().Perm() != 0o600 {
+			t.Fatalf("forced mode for %s = %v", action.Path, info.Mode().Perm())
+		}
+	}
+}
+
+func TestInstallCodexMCPIsIdempotentAfterFirstWrite(t *testing.T) {
+	home := t.TempDir()
+	work := t.TempDir()
+	opts := Options{Target: TargetCodex, Scope: ScopeUser, Features: []string{FeatureMCP}, HomeDir: home, WorkDir: work}
+	first, err := Install(opts)
+	if err != nil || len(first.Actions) != 1 || first.Actions[0].Status != statusWrote {
+		t.Fatalf("first install plan=%#v err=%v", first, err)
+	}
+	second, err := Install(opts)
+	if err != nil || len(second.Actions) != 1 || second.Actions[0].Status != statusUnchanged {
+		t.Fatalf("second install plan=%#v err=%v", second, err)
+	}
+	data, err := os.ReadFile(filepath.Join(home, ".codex", "config.toml"))
+	if err != nil || strings.HasPrefix(string(data), "\n") {
+		t.Fatalf("config=%q err=%v", data, err)
+	}
+}
+
+func TestInstallStaleSkillDoesNotPartiallyWriteOtherSkills(t *testing.T) {
+	home := t.TempDir()
+	work := t.TempDir()
+	installables := skillreg.DefaultInstallableSkills()
+	if len(installables) < 2 {
+		t.Fatalf("need at least two bundled skills, got %d", len(installables))
+	}
+	stalePath := filepath.Join(home, ".agents", "skills", installables[1].Directory, installables[1].Files[0].Path)
+	if err := os.MkdirAll(filepath.Dir(stalePath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(stalePath, []byte("stale\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, err := Install(Options{
+		Target: TargetCodex, Scope: ScopeUser, Features: []string{FeatureSkills}, HomeDir: home, WorkDir: work,
+	})
+	if err == nil || !strings.Contains(err.Error(), "--force") {
+		t.Fatalf("Install error = %v", err)
+	}
+	firstPath := filepath.Join(home, ".agents", "skills", installables[0].Directory, installables[0].Files[0].Path)
+	if _, statErr := os.Stat(firstPath); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("Install partially wrote %s: %v", firstPath, statErr)
 	}
 }
 
@@ -290,7 +410,7 @@ func TestInstallReportsPlanningReadMergeAndWriteFailures(t *testing.T) {
 	if _, err := Install(base); !errors.Is(err, wantErr) {
 		t.Fatalf("exists error = %v", err)
 	}
-	agentRegularFileExists = oldExists
+	agentRegularFileExists = func(string) (bool, error) { return true, nil }
 	agentReadFile = func(string) ([]byte, error) { return nil, wantErr }
 	if _, err := Install(base); !errors.Is(err, wantErr) {
 		t.Fatalf("read error = %v", err)
@@ -299,6 +419,7 @@ func TestInstallReportsPlanningReadMergeAndWriteFailures(t *testing.T) {
 	if _, err := Install(base); err == nil || !strings.Contains(err.Error(), "missing end marker") {
 		t.Fatalf("merge error = %v", err)
 	}
+	agentRegularFileExists = oldExists
 	agentReadFile = oldRead
 	for _, tc := range []struct {
 		name string
@@ -345,6 +466,22 @@ func TestAgentPathChecksRejectUnsafeAndUnreadableTargets(t *testing.T) {
 	}
 	if exists, err := regularFileExists(filepath.Join(root, "missing")); err != nil || exists {
 		t.Fatalf("missing file = %v, %v", exists, err)
+	}
+	if _, err := regularFileExists(os.DevNull); err == nil || !strings.Contains(err.Error(), "regular file") {
+		t.Fatalf("special file error = %v", err)
+	}
+	large := filepath.Join(root, "large")
+	if err := os.WriteFile(large, []byte(strings.Repeat("x", maxAgentFileBytes+1)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := readAgentFile(large); err == nil || !strings.Contains(err.Error(), "exceeds") {
+		t.Fatalf("oversized agent file error = %v", err)
+	}
+	if _, err := readAgentFile(filepath.Join(root, "missing-read")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("missing agent file error = %v", err)
+	}
+	if _, err := readAgentReader("injected", failingAgentReader{}); err == nil {
+		t.Fatal("agent reader error was ignored")
 	}
 	if _, err := resolveSafeWrite(file, false); err == nil {
 		t.Fatal("existing path accepted without overwrite")

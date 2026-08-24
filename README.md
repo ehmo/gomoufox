@@ -35,9 +35,11 @@ agent. Use `--scope project` when you want repo-local MCP config. The default
 writes skill files plus a stdio MCP entry that runs
 `gomoufox mcp --toolset core`.
 
-Run the dry run first. It prints the exact files gomoufox would write.
-Reruns are safe: MCP config files are merged, and existing skill files are left
-alone unless you pass `--force`.
+Run the dry run first. It prints the exact files gomoufox would write. Without
+`--force`, exact skill matches report `unchanged`; differing files report `needs_force`
+and the apply step stops until you pass `--force`. MCP config files are merged.
+JSON plans use `wrote`, `updated`, and `unchanged` for applied actions;
+dry-run actions use `would_write`, `would_update`, `unchanged`, or `needs_force`.
 
 ## At a glance
 
@@ -365,8 +367,8 @@ installer writes:
 
 `list` and `show` read from the embedded skill bodies, so agents can discover
 the right instructions even when no skill directory exists yet. `export` and
-`install` write the same checked bodies that ship in the repo. Existing files are
-left alone unless you pass `--force`.
+`install` write the same checked bodies that ship in the repo. They refuse to
+replace existing files unless you pass `--force`.
 
 Install skills plus MCP configuration for a specific agent or project:
 
@@ -379,8 +381,8 @@ gomoufox agents install --target cursor --scope project --features skills,mcp
 `--scope user|project` and `--features skills,mcp`. MCP entries use stdio and
 default to `gomoufox mcp --toolset core`. Use `--toolset full` for the full MCP
 surface. Reserve repeated `--mcp-arg <arg>` for extra MCP server flags. Use
-`--force` only when you want to replace existing skill files or rewrite merged
-MCP config.
+`--force` when `needs_force` identifies a differing skill file that you intend
+to replace, or to rewrite an exact match with mode `0600`. MCP config is merged.
 
 | Target | User-scope MCP file | Project-scope MCP file | Skill root |
 |---|---|---|---|

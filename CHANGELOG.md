@@ -1,5 +1,18 @@
 # Changelog
 
+## v0.1.28
+
+- Let agent skills discover the live gomoufox contract through MCP when the
+  MCP server is registered but the CLI is absent from the agent shell.
+- Detect stale installed skill files: dry runs report `needs_force`, exact
+  matches stay unchanged, and apply runs fail before writing any files unless
+  `--force` permits the update.
+- Add capped `gomoufox eval --arg-file` input so JSON arguments can stay out of
+  process argument lists. Daemon requests receive the JSON value, not the
+  client file path.
+- Refresh the hash-locked Python dependencies used by the legacy sidecar
+  release gate.
+
 ## v0.1.27
 
 - Require exact 100% Go statement coverage in private and public fast and

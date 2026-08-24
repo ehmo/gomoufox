@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import argparse
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -108,8 +109,8 @@ def gomoufox_base(root: Path, raw: str | None) -> list[str]:
     return ["go", "run", "./cmd/gomoufox"]
 
 
-def run_json(root: Path, command: list[str], args: list[str]) -> object:
-    proc = subprocess.run(command + args, cwd=root, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
+def run_json(root: Path, command: list[str], args: list[str], env: dict[str, str] | None = None) -> object:
+    proc = subprocess.run(command + args, cwd=root, env=env, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
     if proc.returncode != 0:
         raise RuntimeError(f"{' '.join(command + args)} failed with {proc.returncode}\n{proc.stderr}{proc.stdout}")
     if proc.stderr.strip():
@@ -258,11 +259,19 @@ def check_mcp_skill_body(root: Path, gomoufox: str | None, live: dict[str, str])
 def check_agents_install_dry_run(root: Path, gomoufox: str | None) -> list[str]:
     command = gomoufox_base(root, gomoufox)
     failures: list[str] = []
-    data = run_json(
-        root,
-        command,
-        ["agents", "install", "--target", "all", "--scope", "user", "--features", "skills,mcp", "--toolset", "core", "--dry-run", "--json"],
-    )
+    with tempfile.TemporaryDirectory(prefix="gomoufox-agent-install-contract-") as tmp:
+        env = os.environ.copy()
+        for key in ("GOCACHE", "GOMODCACHE"):
+            if not env.get(key):
+                env[key] = subprocess.check_output(["go", "env", key], cwd=root, text=True).strip()
+        env["HOME"] = tmp
+        env["CODEX_HOME"] = str(Path(tmp) / ".codex")
+        data = run_json(
+            root,
+            command,
+            ["agents", "install", "--target", "all", "--scope", "user", "--features", "skills,mcp", "--toolset", "core", "--dry-run", "--json"],
+            env=env,
+        )
     if data.get("target") != "all" or data.get("scope") != "user" or data.get("toolset") != "core" or data.get("dry_run") is not True:
         failures.append(f"agents install dry-run metadata mismatch: {data}")
     actions = data.get("actions")

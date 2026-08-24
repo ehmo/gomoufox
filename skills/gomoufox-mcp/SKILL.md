@@ -9,21 +9,23 @@ Use gomoufox's MCP server for agent-driven browser tasks.
 
 ## Start
 
-Inspect the installed server contract:
+With the CLI, inspect the installed contract:
 
 ```bash
 gomoufox help mcp --json
 gomoufox mcp --help
 ```
 
-Run stdio transport for local agents:
+Without the CLI, call registered MCP `skills_list`, then `skills_get` with `name: "mcp"`; their schemas and body are the installed contract.
+
+Local stdio:
 
 ```bash
 gomoufox mcp
 gomoufox mcp --toolset core
 ```
 
-Run HTTP only with an auth token:
+Authenticated HTTP:
 
 ```bash
 gomoufox mcp --transport http --auth-token "$TOKEN"
@@ -31,7 +33,7 @@ gomoufox mcp --transport http --auth-token "$TOKEN"
 
 ## Workflow
 
-Use `browser_navigate`, then `browser_snapshot` with `interactive_only` for compact element refs. Use refs for `browser_click`, `browser_type`, `browser_press_key`, `browser_hover`, `browser_scroll`, `browser_select_option`, and `browser_set_checked`. Use `browser_form_batch` for multi-field forms when the page is stable. Use `browser_get_content` for Markdown extraction. Use `browser_fetch` for authenticated API calls only when the operator enabled it. Use `browser_fetch_form` for authenticated multipart uploads from files under `--session-dir` when the operator enabled both fetch gates.
+Navigate with `browser_navigate`, then take an `interactive_only` `browser_snapshot`. Act on its refs with `browser_click`, `browser_type`, `browser_press_key`, `browser_hover`, `browser_scroll`, `browser_select_option`, or `browser_set_checked`. Use `browser_form_batch` for stable multi-field forms and `browser_get_content` for Markdown. `browser_fetch` must be enabled; `browser_fetch_form` also needs both fetch gates and accepts only `--session-dir` files.
 
 For failures, use `browser_console_messages`, `browser_network_requests`, and `browser_performance_snapshot`; `browser_dialog` controls prompts and reads history. Diagnostics are capped and redact URLs, headers, console text, and errors; network summaries omit bodies.
 

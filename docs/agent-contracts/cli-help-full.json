@@ -123,7 +123,8 @@
         "--script-file",
         "--wait-selector",
         "--wait-load-state",
-        "--arg"
+        "--arg",
+        "--arg-file"
       ],
       "name": "eval",
       "summary": "run JavaScript only when explicitly enabled",

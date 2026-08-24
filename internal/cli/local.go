@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"os"
@@ -23,6 +24,8 @@ import (
 	"github.com/ehmo/gomoufox/internal/policy"
 	"github.com/ehmo/gomoufox/internal/safefile"
 )
+
+var localOpenFile = os.Open
 
 func defaultLocalCommand(ctx context.Context, req LocalCommandRequest) (LocalCommandResponse, error) {
 	switch req.Command {
@@ -933,11 +936,30 @@ func readCappedFile(path string, cap int) (string, error) {
 }
 
 func readCappedFileBytes(path string, cap int) ([]byte, error) {
-	data, err := os.ReadFile(path)
+	info, err := os.Stat(path)
 	if err != nil {
 		return nil, err
 	}
-	if cap > 0 && len(data) > cap {
+	if !info.Mode().IsRegular() {
+		return nil, fmt.Errorf("%s is not a regular file", path)
+	}
+	file, err := localOpenFile(path)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+	return readCappedReader(file, cap)
+}
+
+func readCappedReader(reader io.Reader, cap int) ([]byte, error) {
+	if cap <= 0 {
+		return io.ReadAll(reader)
+	}
+	data, err := io.ReadAll(io.LimitReader(reader, int64(cap)+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(data) > cap {
 		return nil, fmt.Errorf("file exceeds %d bytes", cap)
 	}
 	return data, nil

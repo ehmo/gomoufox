@@ -33,6 +33,21 @@ import (
 	skillreg "github.com/ehmo/gomoufox/internal/skills"
 )
 
+type countingReader struct {
+	reader io.Reader
+	read   int
+}
+
+func (r *countingReader) Read(p []byte) (int, error) {
+	n, err := r.reader.Read(p)
+	r.read += n
+	return n, err
+}
+
+type failingReader struct{}
+
+func (failingReader) Read([]byte) (int, error) { return 0, errors.New("injected read failure") }
+
 type cliTestResolver map[string][]string
 
 func (r cliTestResolver) LookupIPAddr(ctx context.Context, host string) ([]net.IPAddr, error) {
@@ -1102,7 +1117,7 @@ func TestSkillsCLI(t *testing.T) {
 	if code := (Runner{}).Run(context.Background(), []string{"skills", "list"}, Streams{Stdout: &stdout, Stderr: &stderr}); code != ExitOK {
 		t.Fatalf("skills list code=%d stderr=%q", code, stderr.String())
 	}
-	if got := stdout.String(); !strings.Contains(got, "core 0.1.0") || !strings.Contains(got, "mcp 0.1.0") || strings.Contains(got, "# gomoufox core") {
+	if got := stdout.String(); !strings.Contains(got, "core 0.1.1") || !strings.Contains(got, "mcp 0.1.1") || strings.Contains(got, "# gomoufox core") {
 		t.Fatalf("skills list = %q", got)
 	}
 
@@ -1133,7 +1148,7 @@ func TestSkillsCLI(t *testing.T) {
 
 	stdout.Reset()
 	stderr.Reset()
-	if code := (Runner{}).Run(context.Background(), []string{"skills", "show", "core", "--version", "0.1.0", "--json"}, Streams{Stdout: &stdout, Stderr: &stderr}); code != ExitOK {
+	if code := (Runner{}).Run(context.Background(), []string{"skills", "show", "core", "--version", "0.1.1", "--json"}, Streams{Stdout: &stdout, Stderr: &stderr}); code != ExitOK {
 		t.Fatalf("skills show json code=%d stderr=%q", code, stderr.String())
 	}
 	var skill struct {
@@ -1147,17 +1162,26 @@ func TestSkillsCLI(t *testing.T) {
 	if err := json.Unmarshal(stdout.Bytes(), &skill); err != nil {
 		t.Fatalf("skills show json = %q err=%v", stdout.String(), err)
 	}
-	if skill.Name != "core" || skill.Version != "0.1.0" || skill.MinGomoufox != "0.1.0" || skill.SHA256 == "" || skill.Bytes == 0 || !strings.Contains(skill.Body, "gomoufox core") {
+	if skill.Name != "core" || skill.Version != "0.1.1" || skill.MinGomoufox != "0.1.0" || skill.SHA256 == "" || skill.Bytes == 0 || !strings.Contains(skill.Body, "gomoufox core") {
 		t.Fatalf("skills show payload = %#v", skill)
 	}
 
 	stdout.Reset()
 	stderr.Reset()
-	if code := (Runner{}).Run(context.Background(), []string{"skills", "show", "core", "--version=0.1.0"}, Streams{Stdout: &stdout, Stderr: &stderr}); code != ExitOK {
+	if code := (Runner{}).Run(context.Background(), []string{"skills", "show", "core", "--version=0.1.1"}, Streams{Stdout: &stdout, Stderr: &stderr}); code != ExitOK {
 		t.Fatalf("skills show version= code=%d stderr=%q", code, stderr.String())
 	}
-	if !strings.Contains(stdout.String(), "version: 0.1.0") {
+	if !strings.Contains(stdout.String(), "version: 0.1.1") {
 		t.Fatalf("skills show version= stdout = %q", stdout.String())
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	if code := (Runner{}).Run(context.Background(), []string{"skills", "show", "core", "--version", "0.1.0"}, Streams{Stdout: &stdout, Stderr: &stderr}); code != ExitOK {
+		t.Fatalf("legacy skills show code=%d stderr=%q", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "version: 0.1.0") {
+		t.Fatalf("legacy skills show stdout = %q", stdout.String())
 	}
 
 	stdout.Reset()
@@ -2032,8 +2056,83 @@ func TestEvalEnabledHookAndParserEdges(t *testing.T) {
 	if _, err := parseEval([]string{"http://93.184.216.34", "--script", "1", "--wait-load-state", "idle"}); err == nil {
 		t.Fatal("bad load state eval succeeded")
 	}
+	if _, err := parseEval([]string{"http://93.184.216.34", "--script", "1", "--arg", `{}`, "--arg-file", "arg.json"}); err == nil {
+		t.Fatal("eval accepted both --arg and --arg-file")
+	}
+	for _, args := range [][]string{
+		{"http://93.184.216.34", "--script", "1", "--arg-file", ""},
+		{"http://93.184.216.34", "--script", "1", "--arg-file="},
+	} {
+		if _, err := parseEval(args); err == nil || !strings.Contains(err.Error(), "non-empty path") {
+			t.Fatalf("empty arg-file args=%#v err=%v", args, err)
+		}
+		if _, err := buildForwardRequest(globalFlags{}, "eval", append(args, "--enable-eval")); err == nil || !strings.Contains(err.Error(), "non-empty path") {
+			t.Fatalf("forwarded empty arg-file args=%#v err=%v", args, err)
+		}
+	}
 	if _, err := parseEval([]string{"http://93.184.216.34", "--script", strings.Repeat("x", 64*1024+1)}); err == nil {
 		t.Fatal("oversized eval script succeeded")
+	}
+	if _, err := parseEval([]string{"http://93.184.216.34", "--script", "1", "--arg", strings.Repeat("x", evalArgMaxBytes+1)}); err == nil {
+		t.Fatal("oversized inline eval argument succeeded")
+	}
+	if _, err := parseEval([]string{"http://93.184.216.34", "--script", "1", "--arg", "{"}); err == nil {
+		t.Fatal("invalid inline eval argument succeeded")
+	}
+}
+
+func TestEvalArgFileIsMaterializedBeforeExecution(t *testing.T) {
+	argPath := filepath.Join(t.TempDir(), "arg.json")
+	if err := os.WriteFile(argPath, []byte(`{"secret":"not-in-argv"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var got LocalCommandRequest
+	runner := Runner{Hooks: Hooks{LocalCommand: func(_ context.Context, req LocalCommandRequest) (LocalCommandResponse, error) {
+		got = req
+		return LocalCommandResponse{ExitCode: ExitOK}, nil
+	}}}
+	code := runner.Run(context.Background(), []string{
+		"eval", "http://93.184.216.34", "--enable-eval", "--script", "arg => arg.secret", "--arg-file", argPath,
+	}, Streams{})
+	if code != ExitOK {
+		t.Fatalf("eval code = %d", code)
+	}
+	if got.Flags["arg"] != `{"secret":"not-in-argv"}` {
+		t.Fatalf("materialized arg = %#v", got.Flags["arg"])
+	}
+	if _, ok := got.Flags["arg_file"]; ok {
+		t.Fatalf("arg file path reached local command: %#v", got.Flags)
+	}
+	badPath := filepath.Join(t.TempDir(), "bad.json")
+	if err := os.WriteFile(badPath, []byte(`{`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got = LocalCommandRequest{}
+	code = runner.Run(context.Background(), []string{
+		"eval", "http://93.184.216.34", "--enable-eval", "--script", "arg => arg", "--arg-file", badPath,
+	}, Streams{})
+	if code != ExitUsage || got.Command != "" {
+		t.Fatalf("malformed arg-file code=%d request=%#v", code, got)
+	}
+	largePath := filepath.Join(t.TempDir(), "large.json")
+	if err := os.WriteFile(largePath, []byte(`"`+strings.Repeat("x", evalArgMaxBytes)+`"`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	code = runner.Run(context.Background(), []string{
+		"eval", "http://93.184.216.34", "--enable-eval", "--script", "arg => arg", "--arg-file", largePath,
+	}, Streams{})
+	if code != ExitUsage {
+		t.Fatalf("oversized arg-file code=%d", code)
+	}
+	emptyPath := filepath.Join(t.TempDir(), "empty.json")
+	if err := os.WriteFile(emptyPath, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	code = runner.Run(context.Background(), []string{
+		"eval", "http://93.184.216.34", "--enable-eval", "--script", "arg => arg", "--arg-file", emptyPath,
+	}, Streams{})
+	if code != ExitUsage {
+		t.Fatalf("empty arg-file code=%d", code)
 	}
 }
 
@@ -3080,6 +3179,26 @@ func TestLocalFlagAndFileHelperEdges(t *testing.T) {
 	if _, err := readCappedFileBytes(path, 2); err == nil {
 		t.Fatal("capped read succeeded")
 	}
+	reader := &countingReader{reader: strings.NewReader("abcdef")}
+	if _, err := readCappedReader(reader, 2); err == nil || reader.read != 3 {
+		t.Fatalf("bounded read err=%v bytes=%d", err, reader.read)
+	}
+	if data, err := readCappedReader(strings.NewReader("abc"), 0); err != nil || string(data) != "abc" {
+		t.Fatalf("uncapped read data=%q err=%v", data, err)
+	}
+	if _, err := readCappedReader(failingReader{}, 2); err == nil {
+		t.Fatal("reader error was ignored")
+	}
+	if _, err := readCappedFileBytes(t.TempDir(), 2); err == nil || !strings.Contains(err.Error(), "regular file") {
+		t.Fatalf("directory read error = %v", err)
+	}
+	originalOpen := localOpenFile
+	t.Cleanup(func() { localOpenFile = originalOpen })
+	localOpenFile = func(string) (*os.File, error) { return nil, errors.New("injected open failure") }
+	if _, err := readCappedFileBytes(path, 2); err == nil || !strings.Contains(err.Error(), "injected") {
+		t.Fatalf("open error = %v", err)
+	}
+	localOpenFile = originalOpen
 	if _, err := bodyFromFlags(LocalCommandRequest{Flags: map[string]any{"data_file": filepath.Join(t.TempDir(), "missing.txt")}}); err == nil {
 		t.Fatal("missing data file succeeded")
 	}
@@ -3372,6 +3491,7 @@ func TestDaemonEnvelopeValidationEdges(t *testing.T) {
 		{"nonrepeat string list", "get", map[string]any{"max_bytes": []string{"1", "2"}}, "--max-bytes may only be provided once"},
 		{"nonrepeat any list", "get", map[string]any{"max_bytes": []any{"1"}}, "--max-bytes may only be provided once"},
 		{"repeat bad item", "fetch", map[string]any{"header": []any{"A: b", 1}}, "--header expects string values"},
+		{"daemon eval arg file", "eval", map[string]any{"arg_file": "private.json"}, "unknown flag"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			_, err := normalizeDaemonFlags(tc.command, tc.flags)
@@ -3420,6 +3540,7 @@ func TestDaemonEnvelopeValidationEdges(t *testing.T) {
 		{"bad screenshot syntax", LocalCommandRequest{Command: "screenshot"}, "usage: gomoufox screenshot"},
 		{"bad fetch syntax", LocalCommandRequest{Command: "fetch"}, "usage: gomoufox fetch"},
 		{"bad eval syntax", LocalCommandRequest{Command: "eval"}, "usage: gomoufox eval"},
+		{"bad eval argument", LocalCommandRequest{Command: "eval", Args: []string{"http://93.184.216.34"}, Flags: map[string]any{"script": "1", "arg": "{"}}, "valid JSON"},
 		{"bad session import syntax", LocalCommandRequest{Command: "session import"}, "usage: gomoufox session import"},
 		{"bad session export syntax", LocalCommandRequest{Command: "session export", Flags: map[string]any{"bogus": "x"}}, "unknown flag"},
 		{"unsupported syntax", LocalCommandRequest{Command: "open"}, "unsupported daemon command: open"},
@@ -4312,6 +4433,17 @@ func TestRunnerRuntimeParserAdditionalEdges(t *testing.T) {
 	}
 	if req, err := buildForwardRequest(globalFlags{}, "eval", []string{"http://93.184.216.34", "--enable-eval", "--script", "1"}); err != nil || req.Endpoint != "/v1/commands/eval" || req.Verb != "eval" {
 		t.Fatalf("forward eval req=%#v err=%v", req, err)
+	}
+	argPath := filepath.Join(t.TempDir(), "arg.json")
+	if err := os.WriteFile(argPath, []byte(`{"secret":"forwarded"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	req, err := buildForwardRequest(globalFlags{}, "eval", []string{"http://93.184.216.34", "--enable-eval", "--script", "arg => arg", "--arg-file", argPath})
+	if err != nil || req.Envelope.Flags["arg"] != `{"secret":"forwarded"}` {
+		t.Fatalf("forward eval arg-file req=%#v err=%v", req, err)
+	}
+	if _, ok := req.Envelope.Flags["arg_file"]; ok {
+		t.Fatalf("arg file path reached daemon envelope: %#v", req.Envelope.Flags)
 	}
 	if _, err := buildForwardRequest(globalFlags{}, "session", []string{"export"}); err == nil {
 		t.Fatal("forward session parse error succeeded")
