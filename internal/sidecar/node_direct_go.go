@@ -53,6 +53,11 @@ func buildNodeDirectSpecGo(cfg Config) (nodeDirectSpec, error) {
 		if err != nil {
 			return nodeDirectSpec{}, err
 		}
+		if cfg.Window == nil {
+			for _, key := range windowDimensionKeys {
+				delete(config, key)
+			}
+		}
 		if !cfg.BlockWebGL {
 			webgl, webgl2Enabled, err := sampleWebGLConfig(cfg, rng)
 			if err != nil {

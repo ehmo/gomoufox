@@ -39,7 +39,7 @@ func (l *locator) Click(ctx context.Context, opts ...LocatorClickOption) error {
 	for _, opt := range opts {
 		opt(&cfg)
 	}
-	return l.raw.Click(pwbridge.LocatorClickOptions{Timeout: cfg.timeout, Force: cfg.force, Button: cfg.button, ClickCount: cfg.clickCount})
+	return l.raw.Click(pwbridge.LocatorClickOptions{Timeout: boundTimeoutToContext(ctx, cfg.timeout), Force: cfg.force, Button: cfg.button, ClickCount: cfg.clickCount})
 }
 
 func (l *locator) Fill(ctx context.Context, value string, opts ...LocatorFillOption) error {
@@ -50,7 +50,7 @@ func (l *locator) Fill(ctx context.Context, value string, opts ...LocatorFillOpt
 	for _, opt := range opts {
 		opt(&cfg)
 	}
-	return l.raw.Fill(value, pwbridge.LocatorFillOptions{Timeout: cfg.timeout, Force: cfg.force})
+	return l.raw.Fill(value, pwbridge.LocatorFillOptions{Timeout: boundTimeoutToContext(ctx, cfg.timeout), Force: cfg.force})
 }
 
 func (l *locator) Type(ctx context.Context, value string, opts ...LocatorTypeOption) error {
@@ -61,7 +61,7 @@ func (l *locator) Type(ctx context.Context, value string, opts ...LocatorTypeOpt
 	for _, opt := range opts {
 		opt(&cfg)
 	}
-	return l.raw.Type(value, pwbridge.LocatorTypeOptions{Timeout: cfg.timeout, Delay: cfg.delay})
+	return l.raw.Type(value, pwbridge.LocatorTypeOptions{Timeout: boundTimeoutToContext(ctx, cfg.timeout), Delay: cfg.delay})
 }
 
 func (l *locator) Press(ctx context.Context, key string, opts ...LocatorPressOption) error {
@@ -72,7 +72,7 @@ func (l *locator) Press(ctx context.Context, key string, opts ...LocatorPressOpt
 	for _, opt := range opts {
 		opt(&cfg)
 	}
-	return l.raw.Press(key, pwbridge.LocatorPressOptions{Timeout: cfg.timeout})
+	return l.raw.Press(key, pwbridge.LocatorPressOptions{Timeout: boundTimeoutToContext(ctx, cfg.timeout)})
 }
 
 func (l *locator) Hover(ctx context.Context, opts ...LocatorHoverOption) error {
@@ -83,12 +83,12 @@ func (l *locator) Hover(ctx context.Context, opts ...LocatorHoverOption) error {
 	for _, opt := range opts {
 		opt(&cfg)
 	}
-	return l.raw.Hover(pwbridge.LocatorHoverOptions{Timeout: cfg.timeout, Force: cfg.force})
+	return l.raw.Hover(pwbridge.LocatorHoverOptions{Timeout: boundTimeoutToContext(ctx, cfg.timeout), Force: cfg.force})
 }
 
 func (l *locator) ScrollIntoViewIfNeeded(ctx context.Context, opts ...LocatorOption) error {
 	cfg := buildLocatorOption(ctx, opts...)
-	return l.raw.ScrollIntoViewIfNeeded(pwbridge.LocatorOptions{Timeout: cfg.timeout})
+	return l.raw.ScrollIntoViewIfNeeded(pwbridge.LocatorOptions{Timeout: boundTimeoutToContext(ctx, cfg.timeout)})
 }
 
 func (l *locator) SelectOption(ctx context.Context, opts ...LocatorSelectOption) ([]string, error) {
@@ -99,7 +99,7 @@ func (l *locator) SelectOption(ctx context.Context, opts ...LocatorSelectOption)
 	for _, opt := range opts {
 		opt(&cfg)
 	}
-	return l.raw.SelectOption(pwbridge.LocatorSelectOptions{Timeout: cfg.timeout, Force: cfg.force, Values: cfg.values, Labels: cfg.labels, Indexes: cfg.indexes})
+	return l.raw.SelectOption(pwbridge.LocatorSelectOptions{Timeout: boundTimeoutToContext(ctx, cfg.timeout), Force: cfg.force, Values: cfg.values, Labels: cfg.labels, Indexes: cfg.indexes})
 }
 
 func (l *locator) SetChecked(ctx context.Context, checked bool, opts ...LocatorSetCheckedOption) error {
@@ -110,7 +110,7 @@ func (l *locator) SetChecked(ctx context.Context, checked bool, opts ...LocatorS
 	for _, opt := range opts {
 		opt(&cfg)
 	}
-	return l.raw.SetChecked(checked, pwbridge.LocatorSetCheckedOptions{Timeout: cfg.timeout, Force: cfg.force})
+	return l.raw.SetChecked(checked, pwbridge.LocatorSetCheckedOptions{Timeout: boundTimeoutToContext(ctx, cfg.timeout), Force: cfg.force})
 }
 
 func (l *locator) SetInputFiles(ctx context.Context, files []string, opts ...LocatorSetInputFilesOption) error {
@@ -121,7 +121,7 @@ func (l *locator) SetInputFiles(ctx context.Context, files []string, opts ...Loc
 	for _, opt := range opts {
 		opt(&cfg)
 	}
-	return l.raw.SetInputFiles(files, pwbridge.LocatorSetInputFilesOptions{Timeout: cfg.timeout})
+	return l.raw.SetInputFiles(files, pwbridge.LocatorSetInputFilesOptions{Timeout: boundTimeoutToContext(ctx, cfg.timeout)})
 }
 
 func (l *locator) TextContent(ctx context.Context, opts ...LocatorTextContentOption) (string, error) {
@@ -132,22 +132,22 @@ func (l *locator) TextContent(ctx context.Context, opts ...LocatorTextContentOpt
 	for _, opt := range opts {
 		opt(&cfg)
 	}
-	return l.raw.TextContent(pwbridge.LocatorOptions{Timeout: cfg.timeout})
+	return l.raw.TextContent(pwbridge.LocatorOptions{Timeout: boundTimeoutToContext(ctx, cfg.timeout)})
 }
 
 func (l *locator) InnerHTML(ctx context.Context, opts ...LocatorOption) (string, error) {
 	cfg := buildLocatorOption(ctx, opts...)
-	return l.raw.InnerHTML(pwbridge.LocatorOptions{Timeout: cfg.timeout})
+	return l.raw.InnerHTML(pwbridge.LocatorOptions{Timeout: boundTimeoutToContext(ctx, cfg.timeout)})
 }
 
 func (l *locator) GetAttribute(ctx context.Context, name string, opts ...LocatorOption) (string, error) {
 	cfg := buildLocatorOption(ctx, opts...)
-	return l.raw.GetAttribute(name, pwbridge.LocatorOptions{Timeout: cfg.timeout})
+	return l.raw.GetAttribute(name, pwbridge.LocatorOptions{Timeout: boundTimeoutToContext(ctx, cfg.timeout)})
 }
 
 func (l *locator) IsVisible(ctx context.Context, opts ...LocatorOption) (bool, error) {
 	cfg := buildLocatorOption(ctx, opts...)
-	return l.raw.IsVisible(pwbridge.LocatorOptions{Timeout: cfg.timeout})
+	return l.raw.IsVisible(pwbridge.LocatorOptions{Timeout: boundTimeoutToContext(ctx, cfg.timeout)})
 }
 
 func (l *locator) Count(ctx context.Context) (int, error) {
@@ -171,7 +171,7 @@ func (l *locator) WaitFor(ctx context.Context, opts ...LocatorWaitForOption) err
 	for _, opt := range opts {
 		opt(&cfg)
 	}
-	return l.raw.WaitFor(pwbridge.LocatorWaitForOptions{Timeout: cfg.timeout, State: cfg.state})
+	return l.raw.WaitFor(pwbridge.LocatorWaitForOptions{Timeout: boundTimeoutToContext(ctx, cfg.timeout), State: cfg.state})
 }
 
 func (l *locator) Screenshot(ctx context.Context, opts ...ScreenshotOption) ([]byte, error) {
@@ -182,7 +182,9 @@ func (l *locator) Screenshot(ctx context.Context, opts ...ScreenshotOption) ([]b
 	for _, opt := range opts {
 		opt(&cfg)
 	}
-	return l.raw.Screenshot(cfg.toBridge())
+	options := cfg.toBridge()
+	options.Timeout = deadlineTimeout(ctx, 0)
+	return l.raw.Screenshot(options)
 }
 
 type LocatorClickOption func(*locatorClickConfig)

@@ -48,7 +48,7 @@ func TestExtractFormatsAndTruncates(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !got.Truncated || !strings.Contains(got.Content, "truncated") {
+	if !got.Truncated || len(got.Content) > 10 {
 		t.Fatalf("html truncated = %#v", got)
 	}
 	got, err = Extract(html, "Hello text", "https://example.com", FormatText, 0)

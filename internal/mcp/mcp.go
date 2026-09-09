@@ -166,6 +166,7 @@ const (
 )
 
 var coreToolNames = map[string]bool{
+	"browser_capabilities":  true,
 	"browser_navigate":      true,
 	"browser_get_content":   true,
 	"browser_screenshot":    true,
@@ -188,6 +189,15 @@ var coreToolNames = map[string]bool{
 }
 
 var toolRegistry = []toolDefinition{
+	{
+		Name:        "browser_capabilities",
+		Description: "Inspect this server's enabled gates, limits, network scope and diagnostic-tool availability without starting a browser.",
+		Schema:      emptySchema,
+		ReadOnly:    true,
+		Idempotent:  true,
+		RiskLevel:   toolRiskLow,
+		Handle:      (*Server).browserCapabilities,
+	},
 	{
 		Name:            "browser_navigate",
 		Description:     "Navigate to an HTTP(S) URL and return final page metadata with untrusted web provenance.",
@@ -438,7 +448,7 @@ var toolRegistry = []toolDefinition{
 	},
 	{
 		Name:        "session_create",
-		Description: "Create a named session with optional profile, proxy, locale, OS, or storage_state.",
+		Description: "Create a configurable named session.",
 		Schema:      sessionCreateSchema,
 		Destructive: true,
 		RiskLevel:   toolRiskHigh,
@@ -480,7 +490,7 @@ var toolRegistry = []toolDefinition{
 		Idempotent:  true,
 		RiskLevel:   toolRiskLow,
 		Handle: func(s *Server, _ context.Context, _ json.RawMessage) Response {
-			return ok(map[string]any{"sessions": s.sessions.list()})
+			return ok(map[string]any{"sessions": s.sessions.list(), "capacity": s.sessions.capacity()})
 		},
 	},
 	{
@@ -642,21 +652,26 @@ func (s *Server) Close() error {
 
 func (s *Server) Handle(ctx context.Context, name string, args json.RawMessage) Response {
 	if len(args) > s.cfg.MaxInputBytes {
-		return mcpError("input_too_large")
+		return inputSizeError("arguments", s.cfg.MaxInputBytes)
 	}
 	def, ok := s.toolByName(name)
 	if !ok {
 		return mcpError("unknown_tool")
 	}
-	return def.Handle(s, ctx, args)
+	response := def.Handle(s, ctx, args)
+	if response.IsError && response.Payload["error"] == "invalid_arguments" {
+		return s.explainArguments(def, args, response)
+	}
+	return response
 }
 
 func (s *Server) browserNavigate(ctx context.Context, args json.RawMessage) Response {
 	var in struct {
-		URL       string `json:"url"`
-		WaitUntil string `json:"wait_until"`
-		TimeoutMS int    `json:"timeout_ms"`
-		SessionID string `json:"session_id"`
+		RequireExisting bool   `json:"require_existing"`
+		URL             string `json:"url"`
+		WaitUntil       string `json:"wait_until"`
+		TimeoutMS       int    `json:"timeout_ms"`
+		SessionID       string `json:"session_id"`
 	}
 	if err := decode(args, &in); err != nil || in.URL == "" {
 		return mcpError("invalid_arguments")
@@ -679,17 +694,42 @@ func (s *Server) browserNavigate(ctx context.Context, args json.RawMessage) Resp
 		return mcpError("url_blocked")
 	}
 	sessionID := defaultSession(in.SessionID)
-	return s.withBrowserSession(ctx, sessionID, nil, func(session *sessionState, browser browserSession) Response {
+	navigate := func(session *sessionState, browser browserSession) Response {
 		result, err := browser.Navigate(ctx, in.URL, navigateOptions{WaitUntil: waitUntil, Timeout: timeout})
+		if result.URL != "" {
+			session.url = result.URL
+		}
 		if err != nil {
-			return mcpError("browser_error")
+			response := browserFailure("browser_error", err, "navigation")
+			response.Payload["session_id"] = sessionID
+			response.Payload["session_retained"] = true
+			if result.URL != "" {
+				response.Payload["current_url"], _ = sanitizeDiagnosticURL(result.URL, 2048)
+			}
+			if response.Payload["reason"] != "closed" && response.Payload["reason"] != "launch" && response.Payload["reason"] != "network_policy" {
+				response.Payload["next_tool"] = "browser_snapshot"
+				response.Payload["hint"] = "Inspect this session with browser_snapshot, then use browser_wait_for with a specific selector and a bounded timeout. The page may be usable even if the requested load state timed out."
+			}
+			return response
 		}
 		if result.URL == "" {
 			result.URL = in.URL
 		}
 		session.url = result.URL
-		return ok(withWebProvenance(map[string]any{"url": result.URL, "title": result.Title, "status": result.Status, "session_id": sessionID}, result.URL))
-	})
+		payload := map[string]any{"url": result.URL, "title": result.Title, "status": result.Status, "session_id": sessionID}
+		if recovery := policy.HTTPRecoveryForStatus(result.Status); recovery != nil {
+			payload["http_recovery"] = recovery
+		}
+		return ok(withWebProvenance(payload, result.URL))
+	}
+	if in.RequireExisting {
+		session, err := s.sessions.touchStateMode(sessionID, nil, false)
+		if err != nil {
+			return sessionError(err)
+		}
+		return s.withBrowserSessionState(ctx, session, navigate)
+	}
+	return s.withBrowserSession(ctx, sessionID, nil, navigate)
 }
 
 func (s *Server) browserGetContent(ctx context.Context, args json.RawMessage) Response {
@@ -718,7 +758,7 @@ func (s *Server) browserGetContent(ctx context.Context, args json.RawMessage) Re
 		includeHTML, includeText := pageContentArtifacts(content.Format(format))
 		page, err := browser.PageContent(ctx, pageContentOptions{Selector: in.Selector, MaxBytes: capBytes, IncludeHTML: includeHTML, IncludeText: includeText})
 		if err != nil {
-			return mcpError("browser_error")
+			return browserError(err)
 		}
 		extracted, err := contentExtract(page.HTML, page.Text, page.URL, content.Format(format), 0)
 		if err != nil {
@@ -734,17 +774,31 @@ func (s *Server) browserGetContent(ctx context.Context, args json.RawMessage) Re
 				header = ""
 			}
 		}
-		contentBytes, truncated := policy.Truncate([]byte(extracted.Content), contentCap)
-		body := header + string(contentBytes)
-		truncated = truncated || page.Truncated
+		contentText, outputTruncated := content.TruncateUTF8(extracted.Content, contentCap)
+		body := header + contentText
+		sources := make([]string, 0, 3)
+		if page.HTMLTruncated {
+			sources = append(sources, "html_acquisition")
+		}
+		if page.TextTruncated {
+			sources = append(sources, "text_acquisition")
+		}
+		if page.Truncated && len(sources) == 0 {
+			sources = append(sources, "acquisition")
+		}
+		if outputTruncated {
+			sources = append(sources, "output")
+		}
 		payload := map[string]any{
-			"url":        page.URL,
-			"title":      page.Title,
-			"format":     string(extracted.Format),
-			"content":    body,
-			"bytes":      len([]byte(body)),
-			"truncated":  truncated,
-			"session_id": sessionID,
+			"url":                page.URL,
+			"title":              page.Title,
+			"format":             string(extracted.Format),
+			"content":            body,
+			"bytes":              len([]byte(body)),
+			"truncated":          len(sources) > 0,
+			"truncation_sources": sources,
+			"extraction_method":  extracted.ExtractionMethod,
+			"session_id":         sessionID,
 		}
 		if extracted.MarkdownQuality != "" {
 			payload["markdown_quality"] = extracted.MarkdownQuality
@@ -763,12 +817,21 @@ func (s *Server) browserFetch(ctx context.Context, args json.RawMessage) Respons
 		Method        string            `json:"method"`
 		Headers       map[string]string `json:"headers"`
 		Body          string            `json:"body"`
+		BodyPath      *string           `json:"body_path"`
 		NavigateFirst string            `json:"navigate_first"`
 		MaxBytes      int               `json:"max_bytes"`
+		TimeoutMS     int               `json:"timeout_ms"`
 		SessionID     string            `json:"session_id"`
 	}
 	if err := decode(args, &in); err != nil || in.URL == "" {
 		return mcpError("invalid_arguments")
+	}
+	if in.BodyPath != nil {
+		var fields map[string]json.RawMessage
+		_ = json.Unmarshal(args, &fields)
+		if *in.BodyPath == "" || fields["body"] != nil {
+			return mcpError("invalid_arguments")
+		}
 	}
 	method := in.Method
 	if method == "" {
@@ -792,6 +855,9 @@ func (s *Server) browserFetch(ctx context.Context, args json.RawMessage) Respons
 	if !s.cfg.AllowBrowserFetch {
 		return mcpError("browser_fetch_disabled")
 	}
+	if in.BodyPath != nil && !s.cfg.AllowBrowserFileFetch {
+		return mcpError("browser_file_fetch_disabled")
+	}
 	if !policy.HasExplicitTargetScope(s.cfg) {
 		return mcpError("browser_fetch_scope_required")
 	}
@@ -803,18 +869,31 @@ func (s *Server) browserFetch(ctx context.Context, args json.RawMessage) Respons
 			return mcpError("url_blocked")
 		}
 	}
+	body := []byte(in.Body)
+	if in.BodyPath != nil {
+		var code string
+		body, code = s.readFetchBodyFile(*in.BodyPath)
+		if code != "" {
+			return mcpError(code)
+		}
+	}
+	timeout, timeoutOK := timeoutFromMS(in.TimeoutMS, 30*time.Second, 0, 120000)
+	if !timeoutOK {
+		return mcpError("invalid_arguments")
+	}
 	sessionID := defaultSession(in.SessionID)
 	return s.withBrowserSession(ctx, sessionID, nil, func(session *sessionState, browser browserSession) Response {
 		result, err := browser.Fetch(ctx, fetchOptions{
 			URL:           in.URL,
 			Method:        method,
 			Headers:       in.Headers,
-			Body:          []byte(in.Body),
+			Body:          body,
 			NavigateFirst: in.NavigateFirst,
 			MaxBytes:      capBytes,
+			Timeout:       timeout,
 		})
 		if err != nil {
-			return mcpError("browser_fetch_failed")
+			return browserFailure("browser_fetch_failed", err, "")
 		}
 		if in.NavigateFirst != "" {
 			session.url = in.NavigateFirst
@@ -920,7 +999,7 @@ func (s *Server) browserFetchForm(ctx context.Context, args json.RawMessage) Res
 			Timeout:       timeout,
 		})
 		if err != nil {
-			return mcpError("browser_fetch_failed")
+			return browserFailure("browser_fetch_failed", err, "")
 		}
 		if in.NavigateFirst != "" {
 			session.url = in.NavigateFirst
@@ -952,7 +1031,7 @@ func (s *Server) browserConsoleMessages(ctx context.Context, args json.RawMessag
 	return s.withBrowserSession(ctx, sessionID, nil, func(_ *sessionState, browser browserSession) Response {
 		result, err := browser.ConsoleMessages(ctx, observeOptions{MaxEvents: maxEvents, Clear: in.Clear})
 		if err != nil {
-			return mcpError("browser_error")
+			return browserError(err)
 		}
 		payload := withWebProvenance(map[string]any{
 			"messages":            sanitizeObservationEvents(result.Messages),
@@ -983,7 +1062,7 @@ func (s *Server) browserNetworkRequests(ctx context.Context, args json.RawMessag
 	return s.withBrowserSession(ctx, sessionID, nil, func(_ *sessionState, browser browserSession) Response {
 		result, err := browser.NetworkRequests(ctx, observeOptions{MaxEvents: maxEvents, Clear: in.Clear})
 		if err != nil {
-			return mcpError("browser_error")
+			return browserError(err)
 		}
 		payload := withWebProvenance(map[string]any{
 			"requests":   sanitizeObservationEvents(result.Requests),
@@ -1006,7 +1085,7 @@ func (s *Server) browserPerformanceSnapshot(ctx context.Context, args json.RawMe
 	return s.withBrowserSession(ctx, sessionID, nil, func(_ *sessionState, browser browserSession) Response {
 		snapshot, err := browser.PerformanceSnapshot(ctx)
 		if err != nil {
-			return mcpError("browser_error")
+			return browserError(err)
 		}
 		urlValue, _ := sanitizeDiagnosticURL(snapshot.URL, maxObservationURLBytes)
 		titleValue, _ := redactObservationString(snapshot.Title, maxObservationTextBytes)
@@ -1038,7 +1117,7 @@ func (s *Server) browserEvaluate(ctx context.Context, args json.RawMessage) Resp
 		return mcpError("invalid_arguments")
 	}
 	if len(in.Script) > 65536 {
-		return mcpError("input_too_large")
+		return inputSizeError("script", policy.ScriptInputBytes)
 	}
 	timeout := 5 * time.Second
 	if in.TimeoutMS != 0 {
@@ -1057,7 +1136,7 @@ func (s *Server) browserEvaluate(ctx context.Context, args json.RawMessage) Resp
 	return s.withBrowserSession(ctx, sessionID, nil, func(session *sessionState, browser browserSession) Response {
 		result, err := browser.Evaluate(ctx, in.Script, arg, evaluateOptions{Timeout: timeout})
 		if err != nil {
-			return mcpError("browser_error")
+			return browserFailure("browser_error", err, "evaluate")
 		}
 		return ok(withWebProvenance(map[string]any{"result": result, "type": jsonType(result), "session_id": sessionID}, session.url))
 	})
@@ -1117,7 +1196,7 @@ func (s *Server) clickOrType(ctx context.Context, args json.RawMessage, typing b
 				Delay:           time.Duration(in.DelayMS) * time.Millisecond,
 				Timeout:         timeout,
 			}); err != nil {
-				return mcpError("browser_error")
+				return browserError(err)
 			}
 			return ok(map[string]any{"typed": true, "text_bytes": len([]byte(in.Text)), "session_id": sessionID})
 		})
@@ -1148,7 +1227,7 @@ func (s *Server) clickOrType(ctx context.Context, args json.RawMessage, typing b
 	sessionID := defaultSession(in.SessionID)
 	return s.withBrowserSession(ctx, sessionID, nil, func(_ *sessionState, browser browserSession) Response {
 		if err := browser.Click(ctx, target, clickOptions{Button: button, ClickCount: clickCount, WaitForNavigation: in.WaitForNavigation, Timeout: timeout}); err != nil {
-			return mcpError("browser_error")
+			return browserError(err)
 		}
 		return ok(map[string]any{"clicked": true, "navigated": in.WaitForNavigation, "session_id": sessionID})
 	})
@@ -1297,7 +1376,7 @@ func (s *Server) browserPressKey(ctx context.Context, args json.RawMessage) Resp
 	sessionID := defaultSession(in.SessionID)
 	return s.withBrowserSession(ctx, sessionID, nil, func(_ *sessionState, browser browserSession) Response {
 		if err := browser.PressKey(ctx, target, in.Key, pressOptions{Timeout: timeout}); err != nil {
-			return mcpError("browser_error")
+			return browserError(err)
 		}
 		return ok(map[string]any{"pressed": true, "session_id": sessionID})
 	})
@@ -1328,7 +1407,7 @@ func (s *Server) browserHover(ctx context.Context, args json.RawMessage) Respons
 	sessionID := defaultSession(in.SessionID)
 	return s.withBrowserSession(ctx, sessionID, nil, func(_ *sessionState, browser browserSession) Response {
 		if err := browser.Hover(ctx, target, hoverOptions{Timeout: timeout, Force: in.Force}); err != nil {
-			return mcpError("browser_error")
+			return browserError(err)
 		}
 		return ok(map[string]any{"hovered": true, "session_id": sessionID})
 	})
@@ -1362,7 +1441,7 @@ func (s *Server) browserScroll(ctx context.Context, args json.RawMessage) Respon
 	sessionID := defaultSession(in.SessionID)
 	return s.withBrowserSession(ctx, sessionID, nil, func(_ *sessionState, browser browserSession) Response {
 		if err := browser.Scroll(ctx, scrollOptions{Target: elementTarget{Ref: in.Ref, Selector: in.Selector}, DeltaX: in.DeltaX, DeltaY: in.DeltaY, Timeout: timeout}); err != nil {
-			return mcpError("browser_error")
+			return browserError(err)
 		}
 		return ok(map[string]any{"scrolled": true, "session_id": sessionID})
 	})
@@ -1407,7 +1486,7 @@ func (s *Server) browserSelectOption(ctx context.Context, args json.RawMessage) 
 	return s.withBrowserSession(ctx, sessionID, nil, func(_ *sessionState, browser browserSession) Response {
 		selected, err := browser.SelectOption(ctx, target, selectOptionOptions{Values: in.Values, Labels: in.Labels, Indexes: in.Indexes, Force: in.Force, Timeout: timeout})
 		if err != nil {
-			return mcpError("browser_error")
+			return browserError(err)
 		}
 		return ok(map[string]any{"selected": selected, "selected_count": len(selected), "session_id": sessionID})
 	})
@@ -1440,7 +1519,7 @@ func (s *Server) browserSetChecked(ctx context.Context, args json.RawMessage) Re
 	sessionID := defaultSession(in.SessionID)
 	return s.withBrowserSession(ctx, sessionID, nil, func(_ *sessionState, browser browserSession) Response {
 		if err := browser.SetChecked(ctx, target, in.Checked, checkedOptions{Timeout: timeout, Force: in.Force}); err != nil {
-			return mcpError("browser_error")
+			return browserError(err)
 		}
 		return ok(map[string]any{"checked_set": true, "session_id": sessionID})
 	})
@@ -1483,7 +1562,7 @@ func (s *Server) browserUploadFile(ctx context.Context, args json.RawMessage) Re
 	sessionID := defaultSession(in.SessionID)
 	return s.withBrowserSession(ctx, sessionID, nil, func(_ *sessionState, browser browserSession) Response {
 		if err := browser.UploadFile(ctx, target, resolved, uploadOptions{Timeout: timeout}); err != nil {
-			return mcpError("browser_error")
+			return browserError(err)
 		}
 		return ok(map[string]any{"uploaded": true, "file_count": len(resolved), "session_id": sessionID})
 	})
@@ -1555,7 +1634,7 @@ func (s *Server) browserDownload(ctx context.Context, args json.RawMessage) Resp
 		result, err := browser.DownloadFile(ctx, target, downloadOptions{Path: tmpPath, Timeout: timeout})
 		if err != nil {
 			_ = fileRemove(tmpPath)
-			return mcpError("browser_error")
+			return browserError(err)
 		}
 		info, err := fileStat(tmpPath)
 		if err != nil || !info.Mode().IsRegular() {
@@ -1625,7 +1704,7 @@ func (s *Server) browserDialog(ctx context.Context, args json.RawMessage) Respon
 	return s.withBrowserSession(ctx, sessionID, nil, func(_ *sessionState, browser browserSession) Response {
 		result, err := browser.Dialog(ctx, dialogOptions{Action: in.Action, Policy: in.Policy, PromptText: in.PromptText, MaxEvents: in.MaxEvents, Clear: in.Clear})
 		if err != nil {
-			return mcpError("browser_error")
+			return browserError(err)
 		}
 		payload := map[string]any{"policy": result.Policy, "session_id": sessionID}
 		if in.Action == dialogActionHistory {
@@ -1667,16 +1746,21 @@ func (s *Server) browserFormBatch(ctx context.Context, args json.RawMessage) Res
 		return mcpError("invalid_arguments")
 	}
 	actions := make([]formBatchAction, 0, len(in.Actions))
-	for _, rawAction := range in.Actions {
+	for index, rawAction := range in.Actions {
 		action, actionOK := parseFormBatchAction(rawAction)
 		if !actionOK {
-			return mcpError("invalid_arguments")
+			response := mcpError("invalid_arguments")
+			response.Payload["phase"] = "validation"
+			response.Payload["failed_index"] = index
+			response.Payload["completed_actions"] = 0
+			response.Payload["total_actions"] = len(in.Actions)
+			return response
 		}
 		actions = append(actions, action)
 	}
 	sessionID := defaultSession(in.SessionID)
 	return s.withBrowserSession(ctx, sessionID, nil, func(_ *sessionState, browser browserSession) Response {
-		for _, action := range actions {
+		for index, action := range actions {
 			var err error
 			switch action.Kind {
 			case "type":
@@ -1689,10 +1773,18 @@ func (s *Server) browserFormBatch(ctx context.Context, args json.RawMessage) Res
 				err = browser.SetChecked(ctx, action.Target, action.Checked, checkedOptions{Force: action.Force, Timeout: action.Timeout})
 			}
 			if err != nil {
-				return mcpError("browser_error")
+				response := browserError(err)
+				response.Payload["phase"] = "execution"
+				response.Payload["failed_index"] = index
+				response.Payload["completed_actions"] = index
+				response.Payload["total_actions"] = len(actions)
+				response.Payload["failed_action_may_have_applied"] = true
+				response.Payload["session_id"] = sessionID
+				response.Payload["hint"] = "Inspect the page before resuming at failed_index (zero-based). Completed actions were not rolled back; the failing action may have changed the page."
+				return response
 			}
 		}
-		return ok(map[string]any{"batched": true, "actions": len(actions), "session_id": sessionID})
+		return ok(map[string]any{"batched": true, "actions": len(actions), "completed_actions": len(actions), "session_id": sessionID})
 	})
 }
 
@@ -1807,7 +1899,7 @@ func (s *Server) waitFor(ctx context.Context, args json.RawMessage) Response {
 	sessionID := defaultSession(in.SessionID)
 	return s.withBrowserSession(ctx, sessionID, nil, func(_ *sessionState, browser browserSession) Response {
 		if err := browser.WaitFor(ctx, condition); err != nil {
-			return mcpError("timeout")
+			return browserFailure("timeout", err, "")
 		}
 		return ok(map[string]any{"condition": condition.Kind, "value": condition.Value, "elapsed_ms": 0, "met": true, "session_id": sessionID})
 	})
@@ -1848,7 +1940,7 @@ func (s *Server) browserScreenshot(ctx context.Context, args json.RawMessage) Re
 			if errors.Is(err, errResponseTooLarge) {
 				return mcpError("response_too_large")
 			}
-			return mcpError("browser_error")
+			return browserError(err)
 		}
 		if len(result.Data) > capBytes {
 			return mcpError("response_too_large")
@@ -1859,6 +1951,17 @@ func (s *Server) browserScreenshot(ctx context.Context, args json.RawMessage) Re
 			"height":     result.Height,
 			"bytes":      len(result.Data),
 			"session_id": sessionID,
+		}
+		if result.Rendering != nil {
+			payload["rendering"] = result.Rendering
+		} else {
+			payload["rendering_status"] = "unavailable"
+		}
+		if result.RequestedViewport != nil {
+			payload["requested_viewport"] = result.RequestedViewport
+		}
+		if result.Width == 0 || result.Height == 0 {
+			payload["image_dimensions_status"] = "unavailable"
 		}
 		payload = withWebProvenance(payload, result.URL)
 		return Response{
@@ -1895,7 +1998,7 @@ func (s *Server) browserSnapshot(ctx context.Context, args json.RawMessage) Resp
 	return s.withBrowserSession(ctx, sessionID, nil, func(_ *sessionState, browser browserSession) Response {
 		result, err := browser.Snapshot(ctx, snapshotOptions{MaxElements: maxElements, InteractiveOnly: in.InteractiveOnly, IncludeValues: in.IncludeValues})
 		if err != nil {
-			return mcpError("browser_error")
+			return browserError(err)
 		}
 		elements := snapshotPayloadElements(result.Elements, in.IncludeValues)
 		return ok(withWebProvenance(map[string]any{"url": result.URL, "title": result.Title, "elements": elements, "session_id": sessionID}, result.URL))
@@ -1971,6 +2074,9 @@ func fetchResponsePayload(result fetchResult, capBytes int, sessionID string) ma
 		"bytes":             len(body),
 		"truncated":         truncated,
 		"session_id":        sessionID,
+	}
+	if recovery := policy.HTTPRecoveryForStatus(result.Status); recovery != nil {
+		payload["http_recovery"] = recovery
 	}
 	if fetchBodyIsText(headers, body) {
 		payload["body"] = string(body)
@@ -2140,7 +2246,7 @@ func (s *Server) browserCookies(ctx context.Context, args json.RawMessage) Respo
 			IncludeValues: in.IncludeValues,
 		})
 		if err != nil {
-			return mcpError("browser_error")
+			return browserError(err)
 		}
 		switch in.Action {
 		case "get":
@@ -2239,7 +2345,7 @@ func (s *Server) sessionSave(ctx context.Context, args json.RawMessage) Response
 		return s.withBrowserSession(ctx, sessionID, nil, func(_ *sessionState, browser browserSession) Response {
 			state, err := browser.SaveStorageState(ctx, "")
 			if err != nil {
-				return mcpError("browser_error")
+				return browserError(err)
 			}
 			data, err := json.Marshal(state)
 			if err != nil {
@@ -2260,7 +2366,7 @@ func (s *Server) sessionSave(ctx context.Context, args json.RawMessage) Response
 	return s.withBrowserSession(ctx, sessionID, nil, func(_ *sessionState, browser browserSession) Response {
 		state, err := browser.SaveStorageState(ctx, resolved)
 		if err != nil {
-			return mcpError("browser_error")
+			return browserError(err)
 		}
 		return ok(map[string]any{"saved": true, "path": responsePath, "cookies": len(state.Cookies), "origins": len(state.Origins), "session_id": sessionID})
 	})
@@ -2310,7 +2416,7 @@ func (s *Server) sessionLoad(ctx context.Context, args json.RawMessage) Response
 			if errors.Is(err, ErrInvalidCall) {
 				return mcpError("unsupported_storage_state")
 			}
-			return mcpError("browser_error")
+			return browserError(err)
 		}
 		return ok(map[string]any{
 			"loaded":     true,
@@ -2324,6 +2430,10 @@ func (s *Server) sessionLoad(ctx context.Context, args json.RawMessage) Response
 
 func (s *Server) sessionCreate(_ context.Context, args json.RawMessage) Response {
 	var in struct {
+		ReuseIfExists    bool   `json:"reuse_if_exists"`
+		Headful          bool   `json:"headful"`
+		Width            *int   `json:"width"`
+		Height           *int   `json:"height"`
 		SessionID        string `json:"session_id"`
 		Proxy            string `json:"proxy"`
 		Locale           string `json:"locale"`
@@ -2333,6 +2443,19 @@ func (s *Server) sessionCreate(_ context.Context, args json.RawMessage) Response
 	}
 	if err := decode(args, &in); err != nil || in.SessionID == "" {
 		return mcpError("invalid_arguments")
+	}
+	width, height := 0, 0
+	if in.Width != nil || in.Height != nil {
+		width, height = 1280, 800
+		if in.Width != nil {
+			width = *in.Width
+		}
+		if in.Height != nil {
+			height = *in.Height
+		}
+		if width < 1 || width > 10000 || height < 1 || height > 10000 {
+			return mcpError("invalid_arguments")
+		}
 	}
 	if in.ProfilePath != "" && in.StorageStatePath != "" {
 		return mcpError("unsupported_storage_state")
@@ -2364,17 +2487,26 @@ func (s *Server) sessionCreate(_ context.Context, args json.RawMessage) Response
 		}
 		storageStatePath = resolved
 	}
-	if _, err := s.sessions.create(sessionOptions{
+	session, created, err := s.sessions.createOrReuse(sessionOptions{
+		width:            width,
+		headful:          in.Headful,
+		height:           height,
 		id:               in.SessionID,
 		proxy:            in.Proxy,
 		locale:           in.Locale,
 		os:               in.OS,
 		profilePath:      profilePath,
 		storageStatePath: storageStatePath,
-	}); err != nil {
+	}, in.ReuseIfExists)
+	if err != nil {
 		return sessionError(err)
 	}
-	return ok(map[string]any{"created": true, "session_id": in.SessionID})
+	session.opMu.Lock()
+	defer session.opMu.Unlock()
+	if !session.active() {
+		return sessionError(errSessionClosing)
+	}
+	return ok(map[string]any{"created": created, "reused": !created, "session_id": session.id, "headful": session.headful, "browser_started": session.browser != nil, "state_source": session.stateSource()})
 }
 
 func (s *Server) browserHARStart(ctx context.Context, args json.RawMessage) Response {
@@ -2646,7 +2778,7 @@ func (s *Server) withBrowserSessionState(ctx context.Context, session *sessionSt
 		if errors.Is(err, errBrowserUnavailable) {
 			return mcpError("browser_unavailable")
 		}
-		return mcpError("browser_start_failed")
+		return browserFailure("browser_start_failed", err, "launch")
 	}
 	return fn(session, session.browser)
 }
@@ -2686,6 +2818,9 @@ func (s *Server) newBrowserSession(ctx context.Context, session *sessionState) (
 
 func (s *sessionState) toOptions() sessionOptions {
 	return sessionOptions{
+		width:            s.width,
+		headful:          s.headful,
+		height:           s.height,
 		id:               s.id,
 		proxy:            s.proxy,
 		locale:           s.locale,
@@ -2766,7 +2901,13 @@ func decode(args json.RawMessage, dst any) error {
 }
 
 func mcpError(code string) Response {
-	return Response{IsError: true, Payload: map[string]any{"error": code}}
+	payload := map[string]any{"error": code}
+	if code == "url_blocked" {
+		payload["reason"] = "network_policy"
+		payload["message"] = "The request was rejected by the network policy."
+		payload["hint"] = "Inspect browser_capabilities for this connection's effective policy. Configuration changes require restarting the MCP connection. " + policy.NetworkBlockHint
+	}
+	return Response{IsError: true, Payload: payload}
 }
 
 func ok(payload map[string]any) Response {
@@ -2857,10 +2998,11 @@ func schema(name string) map[string]any {
 
 func browserNavigateSchema() map[string]any {
 	return objectSchema([]string{"url"}, map[string]any{
-		"url":        urlProp("URL to navigate to. Must use http:// or https:// scheme."),
-		"wait_until": enumProp([]string{"domcontentloaded", "load", "networkidle"}, "domcontentloaded"),
-		"timeout_ms": intProp(1000, 120000, 30000),
-		"session_id": sessionIDProp(),
+		"require_existing": boolProp(false, "Fail if the named session is missing; never create implicitly."),
+		"url":              urlProp("URL to navigate to. Must use http:// or https:// scheme."),
+		"wait_until":       enumProp([]string{"domcontentloaded", "load", "networkidle"}, "domcontentloaded"),
+		"timeout_ms":       intProp(1000, 120000, 30000),
+		"session_id":       sessionIDProp(),
 	})
 }
 
@@ -3049,7 +3191,7 @@ func browserWaitForSchema() map[string]any {
 
 func browserEvaluateSchema() map[string]any {
 	return objectSchema([]string{"script"}, map[string]any{
-		"script":     stringMaxProp(policy.ScriptInputBytes, "JavaScript expression or IIFE."),
+		"script":     stringMaxProp(policy.ScriptInputBytes, "Expression or function; functions receive arg. Promises are awaited."),
 		"arg":        map[string]any{"type": []any{"string", "number", "boolean", "object", "array", "null"}},
 		"timeout_ms": intProp(0, 30000, 5000),
 		"session_id": sessionIDProp(),
@@ -3058,27 +3200,29 @@ func browserEvaluateSchema() map[string]any {
 
 func browserFetchSchema() map[string]any {
 	return objectSchema([]string{"url"}, map[string]any{
-		"url":            urlProp("URL to fetch. Must use http:// or https:// scheme. Requires --allow-browser-fetch plus --allowed-origins or --allowed-hosts."),
+		"url":            urlProp("HTTP(S); requires --allow-browser-fetch and --allowed-origins/--allowed-hosts."),
 		"method":         enumProp([]string{"GET", "POST", "PUT", "PATCH", "DELETE", "HEAD"}, "GET"),
 		"headers":        headerMapProp(),
 		"body":           stringMaxProp(policy.FetchBodyInputBytes, "Request body string."),
+		"body_path":      stringMaxProp(maxUploadPathBytes, "Binary body file under --session-dir; max 50 MiB. Requires --allow-browser-file-fetch; excludes body."),
 		"navigate_first": urlProp("Navigate to this URL before fetch."),
 		"max_bytes":      intProp(1, policy.HardMaxResponseBytes, policy.DefaultMaxResponseBytes),
+		"timeout_ms":     intProp(0, 120000, 30000),
 		"session_id":     sessionIDProp(),
 	})
 }
 
 func browserFetchFormSchema() map[string]any {
 	return withSchemaDescription(objectSchema([]string{"url", "files"}, map[string]any{
-		"url":     urlProp("URL to fetch. Must use http:// or https:// scheme. Requires --allow-browser-fetch, --allow-browser-file-fetch, and --allowed-origins or --allowed-hosts."),
+		"url":     urlProp("HTTP(S); requires --allow-browser-fetch, --allow-browser-file-fetch and --allowed-origins/--allowed-hosts."),
 		"method":  enumProp([]string{"POST", "PUT", "PATCH", "DELETE"}, "POST"),
-		"headers": withDescription(headerMapProp(), "Request headers. Do not include Content-Type; the browser generates the multipart/form-data boundary."),
+		"headers": withDescription(headerMapProp(), "Omit Content-Type; the browser supplies the multipart boundary."),
 		"fields": map[string]any{
 			"type":     "array",
 			"maxItems": maxFormFetchFields,
 			"items": objectSchema([]string{"name", "value"}, map[string]any{
 				"name":  stringMaxProp(maxFormFetchFieldNameBytes, "Multipart field name."),
-				"value": stringMaxProp(maxFormFetchFieldValueBytes, "Multipart text field value. Responses do not echo it unless the remote server returns it."),
+				"value": stringMaxProp(maxFormFetchFieldValueBytes, "Text value; remote responses may echo it."),
 			}),
 		},
 		"files": withDescription(map[string]any{
@@ -3087,14 +3231,14 @@ func browserFetchFormSchema() map[string]any {
 			"maxItems": maxUploadFiles,
 			"items": objectSchema([]string{"name", "path"}, map[string]any{
 				"name": stringMaxProp(maxFormFetchFieldNameBytes, "Multipart file field name."),
-				"path": stringMaxProp(maxUploadPathBytes, "File path under --session-dir. The response does not echo paths."),
+				"path": stringMaxProp(maxUploadPathBytes, "File path under --session-dir."),
 			}),
-		}, "Multipart files selected from paths under --session-dir. Responses do not echo file paths."),
+		}, "Files under --session-dir; paths are omitted from responses."),
 		"navigate_first": urlProp("Navigate to this URL before fetch."),
 		"max_bytes":      intProp(1, policy.HardMaxResponseBytes, policy.DefaultMaxResponseBytes),
 		"timeout_ms":     intProp(0, 120000, 10000),
 		"session_id":     sessionIDProp(),
-	}), "Sends multipart/form-data from browser context using transient file inputs. At least one file is required; file bytes are not accepted inline.")
+	}), "Browser multipart via transient file inputs. Requires file paths; inline bytes are unsupported.")
 }
 
 func browserConsoleMessagesSchema() map[string]any {
@@ -3149,12 +3293,16 @@ func sessionLoadSchema() map[string]any {
 
 func sessionCreateSchema() map[string]any {
 	return objectSchema([]string{"session_id"}, map[string]any{
-		"session_id":         stringProp("Unique session name."),
-		"proxy":              stringProp("Upstream proxy URL. Requires --allow-session-proxy; gomoufox network policy still runs first."),
+		"reuse_if_exists":    boolProp(false, "Acquire an existing session only with matching creation settings."),
+		"headful":            boolProp(false, "Visible login window; launched on first browser call."),
+		"width":              intProp(1, 10000, 1280),
+		"height":             intProp(1, 10000, 800),
+		"session_id":         stringProp("Unique name."),
+		"proxy":              stringProp("Proxy URL; requires --allow-session-proxy. Network policy applies."),
 		"locale":             stringProp("Browser locale."),
 		"os":                 enumProp([]string{"windows", "macos", "linux"}, ""),
 		"profile_path":       stringProp("Persistent profile directory under --session-dir/profiles."),
-		"storage_state_path": stringProp("Storage_state file under --session-dir. Requires --allow-session-import."),
+		"storage_state_path": stringProp("Storage_state under --session-dir; requires --allow-session-import."),
 	})
 }
 
@@ -3212,7 +3360,7 @@ func objectSchema(required []string, properties map[string]any) map[string]any {
 // combinators, so mutual-exclusion rules are documented in descriptions instead.
 // The handlers enforce the rules at tools/call time via exactlyOne().
 func targetRefProp() map[string]any {
-	return stringProp("Element ref from browser_snapshot. Provide exactly one of ref or selector.")
+	return stringProp("Snapshot ref. Provide exactly one of ref or selector.")
 }
 
 func targetSelectorProp() map[string]any {
@@ -3295,9 +3443,7 @@ func enumProp(values []string, def string) map[string]any {
 }
 
 func sessionIDProp() map[string]any {
-	out := stringProp("Session name.")
-	out["default"] = "default"
-	return out
+	return map[string]any{"type": "string", "default": "default"}
 }
 
 func arrayProp(items map[string]any) map[string]any {

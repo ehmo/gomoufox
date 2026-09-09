@@ -47,6 +47,7 @@
   "discovery": [
     "gomoufox help --json",
     "gomoufox help <command> --json",
+    "gomoufox help <command> --json --fields flag_schema",
     "gomoufox help --json --fields commands",
     "gomoufox skills list --json",
     "gomoufox skills show core --json",
@@ -67,6 +68,7 @@
     "--server-token <token>"
   ],
   "mcp_tools": [
+    "browser_capabilities",
     "browser_navigate",
     "browser_get_content",
     "browser_screenshot",

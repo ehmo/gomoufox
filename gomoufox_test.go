@@ -58,6 +58,31 @@ func TestNewWithFakesAndClose(t *testing.T) {
 	}
 }
 
+func TestNewDefaultsToHeadlessForBothRuntimes(t *testing.T) {
+	for _, runtime := range []SidecarRuntime{SidecarRuntimeNodeDirect, SidecarRuntimePython} {
+		t.Run(string(runtime), func(t *testing.T) {
+			seen := false
+			b, err := New(context.Background(), WithAutoInstall(false), WithSidecarRuntime(runtime),
+				withSidecarFactory(func(cfg launchConfig) (sidecarHandle, error) {
+					seen = true
+					if cfg.headless != camoufoxcfg.HeadlessTrue {
+						t.Fatalf("default headless = %v", cfg.headless)
+					}
+					return &fakeSidecar{endpoint: "ws://localhost:1234/token"}, nil
+				}), withConnector(&fakeConnector{session: &fakeSession{browser: &fakeBrowser{connected: true}}}))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !seen {
+				t.Fatal("sidecar was not started")
+			}
+			if err := b.Close(); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
 func TestNewHonorsCancelledContextBeforeSideEffects(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
@@ -533,11 +558,11 @@ func TestNavigationAndScreenshotOptions(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	gotoCfg := buildGotoConfig(WaitUntil("domcontentloaded"), WithReferer("https://ref.example"), WithTimeout(3*time.Second)).toBridge(ctx)
-	if gotoCfg.WaitUntil != "domcontentloaded" || gotoCfg.Referer != "https://ref.example" || gotoCfg.Timeout != 3*time.Second {
+	if gotoCfg.WaitUntil != "domcontentloaded" || gotoCfg.Referer != "https://ref.example" || gotoCfg.Timeout <= 0 || gotoCfg.Timeout > 2*time.Second {
 		t.Fatalf("goto cfg = %#v", gotoCfg)
 	}
 	navCfg := buildNavigateConfig(NavigateWaitUntil("networkidle"), NavigateTimeout(4*time.Second)).toBridge(ctx)
-	if navCfg.WaitUntil != "networkidle" || navCfg.Timeout != 4*time.Second {
+	if navCfg.WaitUntil != "networkidle" || navCfg.Timeout <= 0 || navCfg.Timeout > 2*time.Second {
 		t.Fatalf("nav cfg = %#v", navCfg)
 	}
 	shot := screenshotConfig{typ: "png"}
@@ -1058,13 +1083,7 @@ func TestStorageStateConversionsAndWriteErrors(t *testing.T) {
 func TestEnsureInstalledMapsOptionsAndErrors(t *testing.T) {
 	orig := sidecarEnsureInstalled
 	defer func() { sidecarEnsureInstalled = orig }()
-	origDriver := sidecarEnsureManagedPlaywrightDriver
-	defer func() { sidecarEnsureManagedPlaywrightDriver = origDriver }()
 	called := false
-	sidecarEnsureManagedPlaywrightDriver = func(context.Context, sidecarpkg.InstallOptions) error {
-		t.Fatalf("driver install should not run after sidecar error")
-		return nil
-	}
 	sidecarEnsureInstalled = func(ctx context.Context, opts sidecarpkg.InstallOptions) error {
 		called = true
 		if opts.PythonBin != "python3.12" || opts.VenvDir != "/venv" || opts.CamoufoxVersion != "0.4.11" ||
@@ -1093,15 +1112,9 @@ func TestEnsureInstalledMapsOptionsAndErrors(t *testing.T) {
 
 func TestEnsureInstalledDefaultsToNodeDirectRuntime(t *testing.T) {
 	orig := sidecarEnsureInstalled
-	origDriver := sidecarEnsureManagedPlaywrightDriver
 	defer func() {
 		sidecarEnsureInstalled = orig
-		sidecarEnsureManagedPlaywrightDriver = origDriver
 	}()
-	sidecarEnsureManagedPlaywrightDriver = func(context.Context, sidecarpkg.InstallOptions) error {
-		t.Fatalf("node-direct default install should not repeat driver install")
-		return nil
-	}
 	sidecarEnsureInstalled = func(_ context.Context, opts sidecarpkg.InstallOptions) error {
 		if opts.Runtime != "" {
 			t.Fatalf("default install should leave runtime empty for sidecar default, got %#v", opts)
@@ -1115,12 +1128,9 @@ func TestEnsureInstalledDefaultsToNodeDirectRuntime(t *testing.T) {
 
 func TestNewAutoInstallPassesConfiguredRuntime(t *testing.T) {
 	orig := sidecarEnsureInstalled
-	origDriver := sidecarEnsureManagedPlaywrightDriver
 	defer func() {
 		sidecarEnsureInstalled = orig
-		sidecarEnsureManagedPlaywrightDriver = origDriver
 	}()
-	sidecarEnsureManagedPlaywrightDriver = func(context.Context, sidecarpkg.InstallOptions) error { return nil }
 	sidecarEnsureInstalled = func(_ context.Context, opts sidecarpkg.InstallOptions) error {
 		if opts.Runtime != string(SidecarRuntimePython) {
 			t.Fatalf("auto-install runtime = %q", opts.Runtime)
@@ -1172,46 +1182,26 @@ func TestConfigureConnectorUsesManagedDriverForBothRuntimes(t *testing.T) {
 	configureConnectorForRuntime(&cfg)
 }
 
-func TestEnsureInstalledInstallsPlaywrightDriverForLegacyPython(t *testing.T) {
-	orig := sidecarEnsureInstalled
-	origDriver := sidecarEnsureManagedPlaywrightDriver
-	defer func() {
-		sidecarEnsureInstalled = orig
-		sidecarEnsureManagedPlaywrightDriver = origDriver
-	}()
-	sidecarCalled := false
-	driverCalled := false
-	sidecarEnsureInstalled = func(context.Context, sidecarpkg.InstallOptions) error {
-		sidecarCalled = true
-		return nil
-	}
-	sidecarEnsureManagedPlaywrightDriver = func(_ context.Context, opts sidecarpkg.InstallOptions) error {
-		driverCalled = true
-		if opts.VenvDir != "/venv" || opts.SkipBinaryFetch || opts.ForceReinstall {
-			t.Fatalf("driver install options = %#v", opts)
+func TestEnsureInstalledDelegatesOnePythonTransaction(t *testing.T) {
+	original := sidecarEnsureInstalled
+	t.Cleanup(func() { sidecarEnsureInstalled = original })
+	calls := 0
+	sidecarEnsureInstalled = func(_ context.Context, opts sidecarpkg.InstallOptions) error {
+		calls++
+		if opts.Runtime != string(SidecarRuntimePython) || opts.VenvDir != "/venv" || !opts.ForceReinstall {
+			t.Fatalf("transaction options = %#v", opts)
 		}
 		return nil
 	}
 	if err := EnsureInstalled(context.Background(), func(o *InstallOptions) {
 		o.Runtime = SidecarRuntimePython
 		o.VenvDir = "/venv"
+		o.ForceReinstall = true
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if !sidecarCalled || !driverCalled {
-		t.Fatalf("sidecarCalled=%v driverCalled=%v", sidecarCalled, driverCalled)
-	}
-
-	driverErr := errors.New("driver failed")
-	sidecarEnsureManagedPlaywrightDriver = func(context.Context, sidecarpkg.InstallOptions) error { return driverErr }
-	if err := EnsureInstalled(context.Background(), func(o *InstallOptions) { o.Runtime = SidecarRuntimePython }); !errors.Is(err, ErrNotInstalled) || !strings.Contains(err.Error(), "playwright driver install failed") {
-		t.Fatalf("driver install err = %v", err)
-	}
-	sidecarEnsureManagedPlaywrightDriver = func(context.Context, sidecarpkg.InstallOptions) error {
-		return sidecarpkg.ErrVersionMismatch
-	}
-	if err := EnsureInstalled(context.Background(), func(o *InstallOptions) { o.Runtime = SidecarRuntimePython }); !errors.Is(err, ErrVersionMismatch) {
-		t.Fatalf("driver version error = %v", err)
+	if calls != 1 {
+		t.Fatalf("transactions = %d", calls)
 	}
 }
 

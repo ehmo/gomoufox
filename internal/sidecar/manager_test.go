@@ -868,6 +868,16 @@ func TestProcessBoundaryNoProcessGuards(t *testing.T) {
 	if err := waitWithTimeout(live, 2*time.Second); errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("killed process did not exit: %v", err)
 	}
+	live = exec.Command("sleep", "60")
+	setProcessGroup(live)
+	if err := live.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer killProcessTree(live)
+	terminateProcessTree(live)
+	if err := waitWithTimeout(live, 2*time.Second); errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("terminated process did not exit: %v", err)
+	}
 }
 
 func TestManagerStartStopWithFakePython(t *testing.T) {

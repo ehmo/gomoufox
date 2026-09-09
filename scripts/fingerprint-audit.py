@@ -11,6 +11,11 @@ import threading
 import time
 from datetime import datetime, timezone
 
+try:
+    from managed_runtime import selected_python as managed_python
+except ModuleNotFoundError:
+    from scripts.managed_runtime import selected_python as managed_python
+
 
 TARGET_NAME = "fingerprint-local"
 TARGET_KIND = "local-fingerprint"
@@ -119,9 +124,11 @@ def main() -> int:
         )
 
     out_dir = pathlib.Path(args.out)
+    args.persona_bundle = out_dir / "persona.json"
+    persona_command = [args.python, "scripts/python-realpass.py", "--write-persona-bundle", str(args.persona_bundle)]
     go_bin, build_cmd = go_runner(args, out_dir)
     if args.dry_run:
-        commands = []
+        commands = [persona_command]
         if build_cmd:
             commands.append(build_cmd)
         commands.extend(run_commands(args, go_bin, DRY_RUN_TARGET_URL))
@@ -132,6 +139,7 @@ def main() -> int:
     out_dir.mkdir(parents=True, exist_ok=True)
     if build_cmd:
         run_command(build_cmd)
+    run_command(persona_command)
     server = LocalServer()
     try:
         server.start()
@@ -153,15 +161,7 @@ def go_runner(args, out_dir):
 
 
 def selected_python(override):
-    if override:
-        return override
-    for candidate in (
-        pathlib.Path.home() / "Library/Caches/gomoufox/venv/bin/python",
-        pathlib.Path.home() / ".cache/gomoufox/venv/bin/python",
-    ):
-        if candidate.exists() and os.access(candidate, os.X_OK):
-            return str(candidate)
-    return os.environ.get("PYTHON", sys.executable)
+    return managed_python(override, fallback=sys.executable)
 
 
 def runtime_commands(args, go_bin, target_url):
@@ -175,6 +175,8 @@ def runtime_commands(args, go_bin, target_url):
             [
                 args.python,
                 "scripts/python-realpass.py",
+                "--persona-bundle",
+                str(args.persona_bundle),
                 "--out",
                 str(python_out),
                 "--target",
@@ -233,7 +235,10 @@ def go_realpass_command(args, go_bin, out_dir, target, runtime):
         "--sample-interval",
         f"{args.sample_interval:g}s",
         "--report-style",
-        "compact",
+        "full",
+        "--generated-persona",
+        "--persona-bundle",
+        str(args.persona_bundle),
         "--sidecar-runtime",
         runtime,
         "--screenshots=false",
@@ -252,6 +257,16 @@ def write_audit_from_reports(args, target_url, reports):
     out_dir = pathlib.Path(args.out)
     out_dir.mkdir(parents=True, exist_ok=True)
     loaded = {name: summarize_report(path) for name, path in reports.items()}
+    probe_failures = []
+    for name, runtime in loaded.items():
+        if runtime["outcome"] != "passed":
+            probe_failures.append(f"{name}: outcome {runtime['outcome']!r}; {runtime['error']}")
+        detector = runtime["detector"]
+        for field in COMPARE_FIELDS:
+            if field.startswith("webgl.") and field != "webgl.supported" and nested_value(detector, "webgl.supported") is False:
+                continue
+            if not nested_field_present(detector, field):
+                probe_failures.append(f"{name}: missing {field}")
     allowed_fields = set(args.allow_drift_field)
     drifts = compare_go_runtime_detectors(
         loaded["gomoufox_python"]["detector"],
@@ -264,6 +279,7 @@ def write_audit_from_reports(args, target_url, reports):
         "compared_fields": COMPARE_FIELDS,
         "allowed_drift_fields": sorted(allowed_fields),
         "runtimes": loaded,
+        "probe_failures": probe_failures,
         "go_only_drift": drifts,
         "unallowed_go_only_drift": [drift for drift in drifts if not drift["allowed"]],
     }
@@ -274,6 +290,9 @@ def write_audit_from_reports(args, target_url, reports):
     print(f"audit: {md_path}")
     print(f"json: {json_path}")
     failures = audit["unallowed_go_only_drift"]
+    if probe_failures:
+        print("Fingerprint probe failed: " + "; ".join(probe_failures), file=sys.stderr)
+        return 1
     if failures:
         fields = ", ".join(drift["field"] for drift in failures)
         print(f"Go-only fingerprint drift: {fields}", file=sys.stderr)
@@ -293,6 +312,7 @@ def summarize_report(path):
     return {
         "report": str(path),
         "outcome": result.get("outcome", ""),
+        "error": result.get("error", ""),
         "status": int(result.get("status") or 0),
         "duration_ms": int(result.get("duration_ms") or 0),
         "peak_rss_mib": float(resources.get("peak_rss_mib") or summary.get("peak_rss_mib") or 0.0),
@@ -327,6 +347,15 @@ def nested_value(data, path):
     return current
 
 
+def nested_field_present(data, path):
+    current = data
+    for part in path.split("."):
+        if not isinstance(current, dict) or part not in current:
+            return False
+        current = current[part]
+    return True
+
+
 def canonical(value):
     return json.dumps(value, sort_keys=True, separators=(",", ":"))
 
@@ -353,6 +382,8 @@ def markdown_audit(audit):
                 cpu=runtime["peak_cpu_percent"],
             )
         )
+    lines.extend(["", "## Probe failures", ""])
+    lines.extend([f"- {failure}" for failure in audit["probe_failures"]] or ["None."])
     lines.extend(["", "## Go-Only Drift", ""])
     if not audit["go_only_drift"]:
         lines.append("None.")

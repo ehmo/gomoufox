@@ -109,6 +109,51 @@ func TestGomoufoxFactoryCreatesSharedAndDedicatedSessions(t *testing.T) {
 	}
 }
 
+func TestGomoufoxFactoryRetainsViewportWhenRemovingHAROptions(t *testing.T) {
+	for _, profile := range []bool{false, true} {
+		t.Run(fmt.Sprint(profile), func(t *testing.T) {
+			browser := &fakeMCPBrowser{context: &fakeMCPContext{page: &fakeMCPPage{}}}
+			factory := &gomoufoxFactory{launcher: &fakeGomoufoxLauncher{browsers: []mcpBrowser{browser}}}
+			opts := sessionOptions{width: 390, height: 844, har: &harSessionOptions{path: filepath.Join(t.TempDir(), "capture.har"), capture: "metadata", maxBytes: gomoufox.DefaultHARMaxBytes}}
+			if profile {
+				opts.profilePath = t.TempDir()
+			}
+			created, err := factory.NewBrowserSession(context.Background(), opts)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer created.Close()
+			session := created.(*gomoufoxSession)
+			if session.requestedViewport == nil || session.requestedViewport.Width != 390 || session.requestedViewport.Height != 844 || len(session.contextOptions) != 2 {
+				t.Fatalf("retained context = %#v, %d options", session.requestedViewport, len(session.contextOptions))
+			}
+		})
+	}
+}
+
+func TestGomoufoxSessionRejectsInvalidBinaryFetchAndViewportResults(t *testing.T) {
+	page := &fakeMCPPage{fetchPayload: map[string]any{"ok": true, "body_base64": "bad==="}}
+	session := &gomoufoxSession{page: page}
+	if _, err := session.Fetch(context.Background(), fetchOptions{URL: "https://example.com", Timeout: time.Second}); err == nil {
+		t.Fatal("malformed base64 accepted")
+	}
+	page.viewport = map[string]any{"width": 390, "height": 844}
+	if w, h := session.viewport(context.Background()); w != 390 || h != 844 {
+		t.Fatalf("viewport = %d/%d", w, h)
+	}
+	page.viewport = make(chan int)
+	if w, h := session.viewport(context.Background()); w != 0 || h != 0 {
+		t.Fatalf("invalid viewport = %d/%d", w, h)
+	}
+	page.internalEvalErr = errors.New("viewport unavailable")
+	if w, h := session.viewport(context.Background()); w != 0 || h != 0 {
+		t.Fatalf("failed viewport = %d/%d", w, h)
+	}
+	if err := session.Close(); err != nil || page.closeCalls != 1 {
+		t.Fatalf("page-only session close = %v, calls %d", err, page.closeCalls)
+	}
+}
+
 func TestGomoufoxSessionBrowserOperations(t *testing.T) {
 	page := &fakeMCPPage{
 		title:          "Example",
@@ -322,7 +367,7 @@ func TestGomoufoxSessionBrowserOperations(t *testing.T) {
 	}
 
 	shot, err := session.Screenshot(context.Background(), screenshotOptions{FullPage: true})
-	if err != nil || string(shot.Data) != "page-shot" || shot.Width != 1024 || shot.Height != 768 {
+	if err != nil || string(shot.Data) != "page-shot" || shot.Width != 0 || shot.Height != 0 {
 		t.Fatalf("page screenshot = %#v err=%v", shot, err)
 	}
 	shot, err = session.Screenshot(context.Background(), screenshotOptions{Selector: "main"})
@@ -452,13 +497,13 @@ func TestGomoufoxSessionBrowserOperations(t *testing.T) {
 	if session.context != replacementContext || session.page != replacementPage || replacementContext.newPageCalls != 1 {
 		t.Fatalf("load state did not swap to replacement context/page")
 	}
-	if page.closeCalls != 1 || browserContext.closeCalls != 1 {
+	if page.closeCalls != 0 || browserContext.closeCalls != 1 {
 		t.Fatalf("old session resources not closed page=%d context=%d", page.closeCalls, browserContext.closeCalls)
 	}
 	if len(browserContext.addedCookies) != 1 || browserContext.addedCookies[0].Name != "new" {
 		t.Fatalf("load state mutated old cookies: %#v", browserContext.addedCookies)
 	}
-	if err := session.Close(); err != nil || replacementPage.closeCalls != 1 || replacementContext.closeCalls != 1 || browser.closeCalls != 1 {
+	if err := session.Close(); err != nil || replacementPage.closeCalls != 0 || replacementContext.closeCalls != 1 || browser.closeCalls != 1 {
 		t.Fatalf("close err=%v page=%d context=%d browser=%d", err, replacementPage.closeCalls, replacementContext.closeCalls, browser.closeCalls)
 	}
 }
@@ -838,7 +883,7 @@ func TestMCPFetchExpressionUsesBoundedStreamReader(t *testing.T) {
 	if strings.Contains(mcpFetchExpression, "response.text()") {
 		t.Fatal("mcp fetch expression materializes full response text")
 	}
-	for _, token := range []string{"getReader", "cancel", "maxBytes", "TextDecoder"} {
+	for _, token := range []string{"getReader", "cancel", "maxBytes", "body_base64"} {
 		if !strings.Contains(mcpFetchExpression, token) {
 			t.Fatalf("mcp fetch expression missing %q", token)
 		}
@@ -982,7 +1027,7 @@ mcpFetchExpression({url: "https://api.example.com/data", method: "GET", headers:
 	if err := json.Unmarshal(output, &got); err != nil {
 		t.Fatalf("decode node output %q: %v", output, err)
 	}
-	if got.Result["body"] != "native" || got.Result["status"] != float64(203) || got.Result["headers"].(map[string]any)["x-source"] != "direct" {
+	if got.Result["body_base64"] != "bmF0aXZl" || got.Result["status"] != float64(203) || got.Result["headers"].(map[string]any)["x-source"] != "direct" {
 		t.Fatalf("fetch streamed wrong response: %#v", got)
 	}
 }
@@ -1017,7 +1062,7 @@ mcpFetchExpression({url: "https://api.example.com/exact", method: "GET", headers
 	if err := json.Unmarshal(output, &got); err != nil {
 		t.Fatalf("decode node output %q: %v", output, err)
 	}
-	if got.Result["body"] != "abcde" || got.Result["truncated"] != true || got.CancelCalls != 1 || got.ReadCalls != 1 {
+	if got.Result["body_base64"] != "YWJjZGU=" || got.Result["truncated"] != true || got.CancelCalls != 1 || got.ReadCalls != 1 {
 		t.Fatalf("exact-cap mcp result = %#v", got)
 	}
 }
@@ -1066,7 +1111,7 @@ func TestMCPContentExpressionUsesBoundedDOMWalk(t *testing.T) {
 			t.Fatalf("bounded content expression uses full DOM materialization token %q", forbidden)
 		}
 	}
-	for _, token := range []string{"TreeWalker", "TextEncoder", "maxBytes", "nodeValue"} {
+	for _, token := range []string{"walkText", "TextEncoder", "maxBytes", "nodeValue"} {
 		if !strings.Contains(boundedContentExpression, token) {
 			t.Fatalf("bounded content expression missing %q", token)
 		}
@@ -1120,8 +1165,8 @@ const htmlRoot = {nodeType: 1, tagName: "MAIN", attributes: [], firstChild: text
 const textRoot = {
   nodeType: 1,
   tagName: "MAIN",
-  attributes: [],
-  get firstChild() { throw new Error("html walk used during text-only extraction"); }
+  firstChild: text("text only"),
+  get attributes() { throw new Error("html walk used during text-only extraction"); }
 };
 let root = textRoot;
 globalThis.Node = {TEXT_NODE: 3, ELEMENT_NODE: 1};
@@ -1143,7 +1188,7 @@ globalThis.document = {
 };
 const textOnly = boundedContentExpression({selector: "main", maxBytes: 64, includeHTML: false, includeText: true});
 root = htmlRoot;
-globalThis.document.createTreeWalker = () => { throw new Error("text walk used during html-only extraction"); };
+globalThis.document.body = {get nodeType() { throw new Error("text walk used during html-only extraction"); }};
 const htmlOnly = boundedContentExpression({selector: "main", maxBytes: 64, includeHTML: true, includeText: false});
 console.log(JSON.stringify({textOnly, htmlOnly}));
 `)
@@ -1761,13 +1806,13 @@ func TestRealAdaptersWrapRootObjectsWithBridgeFakes(t *testing.T) {
 	if err := adaptedSession.Click(ctx, elementTarget{Selector: "button"}, clickOptions{Button: "right", ClickCount: 2, Timeout: time.Second}); err != nil {
 		t.Fatalf("adapted session click options: %v", err)
 	}
-	if pwPage.locator.clickOptions.Button != "right" || pwPage.locator.clickOptions.ClickCount != 2 || pwPage.locator.clickOptions.Timeout != time.Second {
+	if pwPage.locator.clickOptions.Button != "right" || pwPage.locator.clickOptions.ClickCount != 2 || (pwPage.locator.clickOptions.Timeout <= 0 || pwPage.locator.clickOptions.Timeout > time.Second) {
 		t.Fatalf("adapted click options = %#v", pwPage.locator.clickOptions)
 	}
 	if err := adaptedSession.Click(ctx, elementTarget{Selector: "button"}, clickOptions{Button: "middle", ClickCount: 3, WaitForNavigation: true, Timeout: 2 * time.Second}); err != nil {
 		t.Fatalf("adapted session click wait navigation: %v", err)
 	}
-	if pwPage.waitNavigationCalls != 1 || pwPage.waitNavigationOptions.Timeout != 2*time.Second || pwPage.waitNavigationOptions.WaitUntil != "domcontentloaded" || pwPage.locator.clickOptions.Button != "middle" || pwPage.locator.clickOptions.ClickCount != 3 {
+	if pwPage.waitNavigationCalls != 1 || (pwPage.waitNavigationOptions.Timeout <= 0 || pwPage.waitNavigationOptions.Timeout > 2*time.Second) || pwPage.waitNavigationOptions.WaitUntil != "domcontentloaded" || pwPage.locator.clickOptions.Button != "middle" || pwPage.locator.clickOptions.ClickCount != 3 {
 		t.Fatalf("adapted navigation click calls=%d nav=%#v click=%#v", pwPage.waitNavigationCalls, pwPage.waitNavigationOptions, pwPage.locator.clickOptions)
 	}
 	pwDownload := &fakePWDownload{url: "https://download.example/receipt", suggestedFilename: "receipt.pdf"}
@@ -1776,7 +1821,7 @@ func TestRealAdaptersWrapRootObjectsWithBridgeFakes(t *testing.T) {
 	if err != nil || downloaded.URL != "https://download.example/receipt" || downloaded.SuggestedFilename != "receipt.pdf" {
 		t.Fatalf("adapted download = %#v err=%v", downloaded, err)
 	}
-	if pwPage.waitDownloadCalls != 1 || pwPage.waitDownloadOptions.Timeout != 3*time.Second || pwDownload.savePath == "" || pwPage.locator.selector != "a.receipt" {
+	if pwPage.waitDownloadCalls != 1 || (pwPage.waitDownloadOptions.Timeout <= 0 || pwPage.waitDownloadOptions.Timeout > 3*time.Second) || pwDownload.savePath == "" || pwPage.locator.selector != "a.receipt" {
 		t.Fatalf("adapted download calls=%d opts=%#v save=%q selector=%q", pwPage.waitDownloadCalls, pwPage.waitDownloadOptions, pwDownload.savePath, pwPage.locator.selector)
 	}
 	if status, body, err := adaptedPage.FetchBytes(ctx, "https://api.example.com", "GET", nil, nil); err != nil || status != 200 || string(body) != "ok" {
@@ -1830,7 +1875,7 @@ func TestGomoufoxSessionErrorBranches(t *testing.T) {
 	profileProbeErrPage := &fakeMCPPage{probePayload: map[string]any{"ok": false, "hostFlag": true}}
 	profileProbeErrContext := &fakeMCPContext{page: profileProbeErrPage}
 	profileProbeErrBrowser := &fakeMCPBrowser{context: profileProbeErrContext}
-	if _, err := (&gomoufoxFactory{launcher: &fakeGomoufoxLauncher{browsers: []mcpBrowser{profileProbeErrBrowser}}}).NewBrowserSession(context.Background(), sessionOptions{profilePath: t.TempDir()}); !errors.Is(err, errInternalEvaluationUnavailable) || profileProbeErrPage.closeCalls != 1 || profileProbeErrContext.closeCalls != 1 || profileProbeErrBrowser.closeCalls != 1 {
+	if _, err := (&gomoufoxFactory{launcher: &fakeGomoufoxLauncher{browsers: []mcpBrowser{profileProbeErrBrowser}}}).NewBrowserSession(context.Background(), sessionOptions{profilePath: t.TempDir()}); !errors.Is(err, errInternalEvaluationUnavailable) || profileProbeErrPage.closeCalls != 0 || profileProbeErrContext.closeCalls != 1 || profileProbeErrBrowser.closeCalls != 1 {
 		t.Fatalf("profile probe err=%v pageClose=%d contextClose=%d browserClose=%d", err, profileProbeErrPage.closeCalls, profileProbeErrContext.closeCalls, profileProbeErrBrowser.closeCalls)
 	}
 	closeOnOptionErr := &fakeMCPBrowser{}
@@ -1849,7 +1894,7 @@ func TestGomoufoxSessionErrorBranches(t *testing.T) {
 	closeProbeErrPage := &fakeMCPPage{probePayload: map[string]any{"ok": false, "queryPatched": true}}
 	closeProbeErrContext := &fakeMCPContext{page: closeProbeErrPage}
 	closeOnProbeErr := &fakeMCPBrowser{context: closeProbeErrContext}
-	if _, err := (&gomoufoxFactory{launcher: &fakeGomoufoxLauncher{browsers: []mcpBrowser{closeOnProbeErr}}}).NewBrowserSession(context.Background(), sessionOptions{os: "linux"}); !errors.Is(err, errInternalEvaluationUnavailable) || closeProbeErrPage.closeCalls != 1 || closeProbeErrContext.closeCalls != 1 || closeOnProbeErr.closeCalls != 1 {
+	if _, err := (&gomoufoxFactory{launcher: &fakeGomoufoxLauncher{browsers: []mcpBrowser{closeOnProbeErr}}}).NewBrowserSession(context.Background(), sessionOptions{os: "linux"}); !errors.Is(err, errInternalEvaluationUnavailable) || closeProbeErrPage.closeCalls != 0 || closeProbeErrContext.closeCalls != 1 || closeOnProbeErr.closeCalls != 1 {
 		t.Fatalf("dedicated probe err=%v pageClose=%d contextClose=%d browserClose=%d", err, closeProbeErrPage.closeCalls, closeProbeErrContext.closeCalls, closeOnProbeErr.closeCalls)
 	}
 	if _, err := contextOptions(sessionOptions{storageStatePath: filepath.Join(t.TempDir(), "missing.json")}, false); err == nil {
@@ -1897,7 +1942,7 @@ func TestGomoufoxSessionErrorBranches(t *testing.T) {
 	probeErrOldContext := &fakeMCPContext{page: probeErrOldPage}
 	probeErrNewPage := &fakeMCPPage{probePayload: map[string]any{"ok": false, "cssPatched": true}}
 	probeErrNewContext := &fakeMCPContext{page: probeErrNewPage}
-	if err := (&gomoufoxSession{browser: &fakeMCPBrowser{context: probeErrNewContext}, context: probeErrOldContext, page: probeErrOldPage, refs: a11y.NewStore()}).LoadStorageState(context.Background(), &gomoufox.StorageState{}); !errors.Is(err, errInternalEvaluationUnavailable) || probeErrNewPage.closeCalls != 1 || probeErrNewContext.closeCalls != 1 || probeErrOldPage.closeCalls != 0 || probeErrOldContext.closeCalls != 0 {
+	if err := (&gomoufoxSession{browser: &fakeMCPBrowser{context: probeErrNewContext}, context: probeErrOldContext, page: probeErrOldPage, refs: a11y.NewStore()}).LoadStorageState(context.Background(), &gomoufox.StorageState{}); !errors.Is(err, errInternalEvaluationUnavailable) || probeErrNewPage.closeCalls != 0 || probeErrNewContext.closeCalls != 1 || probeErrOldPage.closeCalls != 0 || probeErrOldContext.closeCalls != 0 {
 		t.Fatalf("load state probe err=%v newPageClose=%d newContextClose=%d oldPageClose=%d oldContextClose=%d", err, probeErrNewPage.closeCalls, probeErrNewContext.closeCalls, probeErrOldPage.closeCalls, probeErrOldContext.closeCalls)
 	}
 	if err := (&gomoufoxSession{browser: &fakeMCPBrowser{contextErr: gomoufox.ErrPersistentContextLimit}, context: oldContext, page: oldPage, refs: a11y.NewStore()}).LoadStorageState(context.Background(), &gomoufox.StorageState{}); !errors.Is(err, ErrInvalidCall) {
@@ -2059,7 +2104,7 @@ func TestGomoufoxFactoryAbortsHARContextOnStartupFailure(t *testing.T) {
 			if abortCalls != 1 || closeCalls != 0 {
 				t.Fatalf("context cleanup abort=%d close=%d", abortCalls, closeCalls)
 			}
-			if tc.page != nil && tc.page.closeCalls != 1 {
+			if tc.page != nil && tc.page.closeCalls != 0 {
 				t.Fatalf("probe failure page close calls = %d", tc.page.closeCalls)
 			}
 		})

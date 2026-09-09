@@ -19,7 +19,6 @@ var (
 	findPythonForInstall          = FindPython
 	ensureVenvForInstall          = EnsureVenv
 	ensureCamoufoxForInstall      = EnsureCamoufox
-	ensureBinaryForInstall        = EnsureBinary
 	checkCompatibilityForInstall  = CheckCompatibility
 	ensureRuntimeAssetsForInstall = EnsureRuntimeAssets
 )
@@ -30,39 +29,25 @@ func EnsureInstalled(ctx context.Context, opts InstallOptions) error {
 		venvDir = DefaultCacheDir()
 	}
 	opts.VenvDir = venvDir
+	if opts.Runtime == "" {
+		opts.Runtime = RuntimeNodeDirect
+	}
+	if opts.Runtime != RuntimeNodeDirect && opts.Runtime != RuntimePython {
+		return fmt.Errorf("%w: unsupported runtime %q", ErrNotInstalled, opts.Runtime)
+	}
+	if opts.CamoufoxVersion != "" && opts.CamoufoxVersion != RequiredCamoufox {
+		return fmt.Errorf("%w: unsupported camoufox pin %s, required %s", ErrVersionMismatch, opts.CamoufoxVersion, RequiredCamoufox)
+	}
 	lock, err := acquireInstallLock(ctx, venvDir)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = lock.Release() }()
-
-	runtimeName := opts.Runtime
-	if runtimeName == "" {
-		runtimeName = RuntimeNodeDirect
-	}
-	if runtimeName == RuntimeNodeDirect {
+	if opts.Runtime == RuntimeNodeDirect {
 		_, err := ensureRuntimeAssetsForInstall(ctx, opts)
 		return err
 	}
-
-	python, err := findPythonForInstall(opts.PythonBin)
-	if err != nil {
-		return err
-	}
-	if err := ensureVenvForInstall(ctx, python, venvDir); err != nil {
-		return err
-	}
-	if err := ensureCamoufoxForInstall(ctx, venvDir, opts); err != nil {
-		return err
-	}
-	venvPython, err := venvPythonAfterInstall(venvDir)
-	if err != nil {
-		return err
-	}
-	if err := ensureBinaryForInstall(ctx, venvPython, opts); err != nil {
-		return err
-	}
-	return checkCompatibilityForInstall(ctx, venvPython)
+	return ensurePythonInstalled(ctx, opts)
 }
 
 func EnsureCamoufox(ctx context.Context, venvDir string, opts InstallOptions) error {

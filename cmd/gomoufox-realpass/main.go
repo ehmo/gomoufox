@@ -48,6 +48,8 @@ type reportOptions struct {
 	LoadStateTimeout string `json:"load_state_timeout"`
 	ContentMaxBytes  int    `json:"content_max_bytes,omitempty"`
 	SampleInterval   string `json:"sample_interval"`
+	ResourceScope    string `json:"resource_scope,omitempty"`
+	ResourceSampling string `json:"resource_sampling,omitempty"`
 	ReportStyle      string `json:"report_style"`
 	DebugReport      bool   `json:"debug_report,omitempty"`
 	Headful          bool   `json:"headful"`
@@ -506,6 +508,8 @@ func run(ctx context.Context, args []string, stdout, stderr *os.File) (code int)
 			LoadStateTimeout: loadStateTimeout.String(),
 			ContentMaxBytes:  contentMaxBytes,
 			SampleInterval:   sampleInterval.String(),
+			ResourceScope:    "harness_process_tree",
+			ResourceSampling: "fixed_period",
 			ReportStyle:      string(reportStyleValue),
 			DebugReport:      debugReport,
 			Headful:          headful,
@@ -718,7 +722,7 @@ func loadPersonaBundle(path string) (*personaBundle, string, error) {
 
 func runTargetWithBrowserContext(targetCtx context.Context, browser realpassBrowser, res targetResult, start time.Time, timeout time.Duration, waitUntil string, settle, loadStateTimeout time.Duration, contentMaxBytes int, sampleInterval time.Duration, generatedPersona, screenshots bool, shotDir string) (out targetResult) {
 	out = res
-	monitor := newProcessMonitor(browser.Sidecar().PID, sampleInterval)
+	monitor := newProcessMonitor(os.Getpid(), sampleInterval)
 	monitor.start(targetCtx)
 	defer func() {
 		monitor.stopAndWait()
@@ -1434,6 +1438,8 @@ func reportOptionDiffs(goOptions, pythonOptions reportOptions) []string {
 		failures = append(failures, fmt.Sprintf("runtime option mismatch content_max_bytes: go=%d python=%d", goOptions.ContentMaxBytes, pythonOptions.ContentMaxBytes))
 	}
 	addDurationDiff("sample_interval", goOptions.SampleInterval, pythonOptions.SampleInterval)
+	addStringDiff("resource_scope", goOptions.ResourceScope, pythonOptions.ResourceScope)
+	addStringDiff("resource_sampling", goOptions.ResourceSampling, pythonOptions.ResourceSampling)
 	addBoolDiff("headful", goOptions.Headful, pythonOptions.Headful)
 	addBoolDiff("screenshots", goOptions.Screenshots, pythonOptions.Screenshots)
 	addBoolDiff("reuse_browser", goOptions.ReuseBrowser, pythonOptions.ReuseBrowser)
@@ -1846,7 +1852,7 @@ func newProcessMonitor(rootPID int, interval time.Duration) *processMonitor {
 		interval: interval,
 		stop:     make(chan struct{}),
 		done:     make(chan struct{}),
-		summary:  resourceSummary{Scope: "gomoufox_sidecar_process_tree", RootPID: rootPID},
+		summary:  resourceSummary{Scope: "gomoufox_harness_process_tree", RootPID: rootPID},
 	}
 }
 

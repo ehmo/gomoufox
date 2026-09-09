@@ -441,7 +441,7 @@ func TestSkillsToolsListAndGet(t *testing.T) {
 	}
 
 	resp = server.Handle(context.Background(), "skills_get", raw(`{"name":"core"}`))
-	if resp.IsError || resp.Payload["name"] != "core" || resp.Payload["version"] != "0.1.1" || !strings.Contains(resp.Payload["body"].(string), "gomoufox core") || resp.Payload["truncated"] != false {
+	if resp.IsError || resp.Payload["name"] != "core" || resp.Payload["version"] != "0.1.2" || !strings.Contains(resp.Payload["body"].(string), "gomoufox core") || resp.Payload["truncated"] != false {
 		t.Fatalf("skills_get latest payload = %#v", resp)
 	}
 	if resp.Payload["bytes"] != resp.Payload["total_bytes"] {

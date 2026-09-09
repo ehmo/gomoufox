@@ -59,6 +59,8 @@ func releaseProcessBoundary(cmd *exec.Cmd) {
 	}
 }
 
+func requestProcessStop(cmd *exec.Cmd) { terminateProcessTree(cmd) }
+
 func terminateProcessTree(cmd *exec.Cmd) {
 	job := takeWindowsJob(cmd)
 	if job != 0 {

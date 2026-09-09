@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/ehmo/gomoufox"
+	"github.com/ehmo/gomoufox/internal/renderinfo"
 )
 
 type BrowserFactory interface {
@@ -53,11 +54,13 @@ type navigateResult struct {
 }
 
 type pageContent struct {
-	URL       string
-	Title     string
-	HTML      string
-	Text      string
-	Truncated bool
+	URL           string
+	Title         string
+	HTML          string
+	Text          string
+	Truncated     bool
+	HTMLTruncated bool
+	TextTruncated bool
 }
 
 type pageContentOptions struct {
@@ -160,10 +163,12 @@ type screenshotOptions struct {
 }
 
 type screenshotResult struct {
-	URL    string
-	Width  int
-	Height int
-	Data   []byte
+	Rendering         *renderinfo.Metrics
+	RequestedViewport *renderinfo.Size
+	URL               string
+	Width             int
+	Height            int
+	Data              []byte
 }
 
 type snapshotOptions struct {
@@ -194,6 +199,7 @@ type fetchOptions struct {
 	Body          []byte
 	NavigateFirst string
 	MaxBytes      int
+	Timeout       time.Duration
 }
 
 type fetchResult struct {

@@ -4,11 +4,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"runtime"
 	"sync"
 
 	"github.com/ehmo/gomoufox/internal/harcapture"
 	"github.com/ehmo/gomoufox/internal/pwbridge"
 )
+
+var gracefulSidecarStopSupported = runtime.GOOS != "windows"
 
 type Browser struct {
 	cfg     launchConfig
@@ -38,10 +41,13 @@ func (b *Browser) Close() error {
 		for _, browserContext := range harContexts {
 			b.closeErr = errors.Join(b.closeErr, browserContext.Close())
 		}
+		if b.sidecar != nil && gracefulSidecarStopSupported {
+			b.sidecar.Stop(context.Background())
+		}
 		if b.session != nil {
 			b.closeErr = errors.Join(b.closeErr, b.session.Stop())
 		}
-		if b.sidecar != nil {
+		if b.sidecar != nil && !gracefulSidecarStopSupported {
 			b.sidecar.Stop(context.Background())
 		}
 		close(b.done)
@@ -58,6 +64,9 @@ func (b *Browser) newContext(ctx context.Context, provisionalHAR bool, opts ...C
 		return nil, err
 	}
 	cfg := buildContextConfig(opts...)
+	if cfg.Viewport != nil && (cfg.Viewport.Width <= 0 || cfg.Viewport.Height <= 0) {
+		return nil, fmt.Errorf("viewport width and height must be positive")
+	}
 	b.mu.Lock()
 	if b.closed {
 		b.mu.Unlock()
@@ -79,7 +88,7 @@ func (b *Browser) newContext(ctx context.Context, provisionalHAR bool, opts ...C
 		}
 		b.persistentReturned = true
 		b.mu.Unlock()
-		return &Context{browser: b, raw: rawContexts[0]}, nil
+		return &Context{browser: b, raw: rawContexts[0], viewport: toPWBridgeContextOptions(cfg).Viewport}, nil
 	}
 	b.mu.Unlock()
 
@@ -151,7 +160,8 @@ func (b *Browser) NewPage(ctx context.Context, opts ...ContextOption) (*Page, er
 			if len(rawContexts) == 0 {
 				return nil, err
 			}
-			c = &Context{browser: b, raw: rawContexts[0]}
+			cfg := buildContextConfig(opts...)
+			c = &Context{browser: b, raw: rawContexts[0], viewport: toPWBridgeContextOptions(cfg).Viewport}
 		}
 		return c.NewPage(ctx)
 	}

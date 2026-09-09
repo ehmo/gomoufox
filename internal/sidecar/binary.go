@@ -252,12 +252,11 @@ func camoufoxBrowserManifestSHA256(root string) (string, error) {
 		if !info.Mode().IsRegular() {
 			return nil
 		}
-		data, err := os.ReadFile(path)
+		sum, err := fileSHA256(path)
 		if err != nil {
 			return err
 		}
-		sum := sha256.Sum256(data)
-		records = append(records, fmt.Sprintf("%04o %d %x %s", info.Mode().Perm(), info.Size(), sum, rel))
+		records = append(records, fmt.Sprintf("%04o %d %s %s", info.Mode().Perm(), info.Size(), sum, rel))
 		return nil
 	})
 	if err != nil {

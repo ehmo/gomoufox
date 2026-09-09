@@ -15,6 +15,7 @@ var (
 	ErrNavigationTimeout      = errors.New("gomoufox: navigation timed out")
 	ErrElementNotFound        = errors.New("gomoufox: element not found")
 	ErrSessionClosed          = errors.New("gomoufox: session closed")
+	ErrEvaluationInterrupted  = errors.New("gomoufox: evaluation interrupted; page closed to stop pending work")
 	ErrURLBlocked             = errors.New("gomoufox: url blocked by guardrail")
 	ErrBrowserFetch           = errors.New("gomoufox: browser fetch failed")
 	ErrPersistentContextLimit = errors.New("gomoufox: persistent context limit reached")

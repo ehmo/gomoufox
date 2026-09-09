@@ -219,8 +219,6 @@ func TestBuildNodeDirectSpecGoGeneratedFingerprintDoesNotNeedPython(t *testing.T
 		"navigator.hardwareConcurrency",
 		"screen.width",
 		"screen.height",
-		"window.outerWidth",
-		"window.outerHeight",
 		"window.history.length",
 		"fonts",
 		"fonts:spacing_seed",
@@ -229,6 +227,11 @@ func TestBuildNodeDirectSpecGoGeneratedFingerprintDoesNotNeedPython(t *testing.T
 	} {
 		if _, ok := camouConfig[key]; !ok {
 			t.Fatalf("generated config missing %s: %#v", key, camouConfig)
+		}
+	}
+	for _, key := range windowDimensionKeys {
+		if _, ok := camouConfig[key]; ok {
+			t.Fatalf("generated config overrides native window dimension %s", key)
 		}
 	}
 	if _, ok := camouConfig["addons"]; ok {

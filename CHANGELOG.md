@@ -1,5 +1,36 @@
 # Changelog
 
+## v0.1.29
+
+- Keep explicit viewport sizes when applying generated fingerprints and report
+  the dimensions and rendering assumptions used for captures.
+- Report structured browser errors, form-batch progress, navigation state and
+  recovery steps. Bound readiness, capture and evaluation by the remaining
+  operation deadline.
+- Support complete bounded binary downloads, file-backed request bodies and
+  multipart uploads. Confine daemon fetch input and output files to the session
+  directory, including symlink checks and explicit overwrite handling.
+- Bind main-world evaluation arguments and await asynchronous results.
+- Preserve visible login sessions, profile ownership and storage flushing
+  through export and cleanup. Report session capacity and acquire only matching
+  sessions.
+- Improve reader extraction and block boundaries, report extraction sources
+  and keep capped text valid UTF-8.
+- Publish typed CLI flag discovery, effective MCP capabilities and validated
+  setup recipes. Check generated flag references and skill recipes against the
+  live command contract.
+- Inspect runtime caches without provisioning, report executable identity and
+  provide scoped repair commands. Stage and verify replacement runtimes and
+  Python environments before replacing the active installation.
+- Stream browser manifest hashing to reduce peak memory during cache repair.
+  Measure complete benchmark process trees at a fixed sampling period and
+  refresh the full and alternating 100-site benchmark evidence. The separate
+  0.95 RSS and CPU promotion thresholds remain unmet.
+- Refresh the hash-locked Python dependencies and retain the CLI binary-size
+  budget.
+- Align the release shared-block baseline with repeated Fastly and Uniqlo
+  Go/Python results.
+
 ## v0.1.28
 
 - Let agent skills discover the live gomoufox contract through MCP when the

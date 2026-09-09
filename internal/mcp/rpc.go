@@ -77,7 +77,7 @@ func toolsListResult(server *Server) map[string]any {
 			"gomoufox/toolset":      server.toolset,
 			"gomoufox/tool_count":   len(tools),
 			"gomoufox/core_command": "gomoufox mcp --toolset core",
-			"gomoufox/agent_hint":   "use core for lower-token browser control; use full for diagnostics or gated tools",
+			"gomoufox/agent_hint":   "call browser_capabilities to inspect running gates, limits and diagnostic availability",
 		},
 	}
 }

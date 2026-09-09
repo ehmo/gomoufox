@@ -1,0 +1,488 @@
+{
+  "generated_at": "2026-09-09T04:40:37.183400+00:00",
+  "mode": "full",
+  "target_count": 8,
+  "target_tier_counts": {
+    "extended": 100,
+    "full": 8,
+    "smoke": 2
+  },
+  "target_catalog": "scripts/realpass-targets.json",
+  "target_names": [
+    "nowsecure-cloudflare",
+    "cloudflare-home",
+    "sannysoft",
+    "pixelscan",
+    "creepjs",
+    "incolumitas",
+    "datadome",
+    "g2"
+  ],
+  "target_tags": [
+    "auth-entry",
+    "bot-detection",
+    "cdn-security",
+    "cloudflare",
+    "spa",
+    "static"
+  ],
+  "loops": 1,
+  "options": {
+    "timeout_seconds": 60.0,
+    "wait_until": "commit",
+    "settle_seconds": 3.0,
+    "load_state_timeout_seconds": 0.0,
+    "content_max_bytes": 250000,
+    "sample_interval_seconds": 0.5,
+    "run_order": "alternate",
+    "go_runner": "prebuilt_binary",
+    "go_sidecar_runtime": "node-direct",
+    "go_custom_venv": true,
+    "screenshots": false,
+    "max_targets": 0,
+    "reuse_browser": true,
+    "go_report_style": "compact",
+    "resource_scope": "harness_process_tree",
+    "resource_sampling": "fixed_period",
+    "persona_os": "linux",
+    "persona_bundle_sha256": "d787a57c6677d1f793bff5c25a2b624b77c9d808ff011a62b129fbd46166c360"
+  },
+  "runs": [
+    {
+      "loop": 1,
+      "run_order": [
+        "go",
+        "python"
+      ],
+      "go_report": "dist/benchmarks/2026-09-08-full-streamed/full-loop-1/go/report.json",
+      "python_report": "dist/benchmarks/2026-09-08-full-streamed/full-loop-1/python/report.json",
+      "options": {
+        "resource_scope": "harness_process_tree",
+        "resource_sampling": "fixed_period",
+        "timeout_seconds": 60.0,
+        "settle_seconds": 3.0,
+        "load_state_timeout_seconds": 0.0,
+        "sample_interval_seconds": 0.5,
+        "screenshots": false,
+        "wait_until": "commit",
+        "reuse_browser": true,
+        "persona_os": "linux",
+        "persona_bundle_sha256": "d787a57c6677d1f793bff5c25a2b624b77c9d808ff011a62b129fbd46166c360",
+        "content_max_bytes": 250000,
+        "go_report_style": "compact",
+        "go_sidecar_runtime": "node-direct",
+        "go_custom_venv": true
+      },
+      "go": {
+        "total": 8,
+        "passed": 6,
+        "blocked": 2,
+        "failed": 0,
+        "wall_ms": 31830,
+        "target_duration_ms": 29418,
+        "avg_target_ms": 3677,
+        "peak_rss_mib": 1491.1875,
+        "peak_cpu_percent": 202.89999999999998,
+        "report_json_bytes": 4875,
+        "report_markdown_bytes": 1369,
+        "report_json_estimated_tokens": 1219,
+        "report_markdown_estimated_tokens": 343,
+        "report_total_estimated_tokens": 1562
+      },
+      "python": {
+        "total": 8,
+        "passed": 6,
+        "blocked": 2,
+        "failed": 0,
+        "wall_ms": 31222,
+        "target_duration_ms": 28619,
+        "avg_target_ms": 3577,
+        "peak_rss_mib": 1574.734375,
+        "peak_cpu_percent": 203.40000000000003,
+        "report_json_bytes": 27498,
+        "report_markdown_bytes": 1367,
+        "report_json_estimated_tokens": 6875,
+        "report_markdown_estimated_tokens": 342,
+        "report_total_estimated_tokens": 7217
+      },
+      "ratios": {
+        "wall_time": 1.0194734482095957,
+        "target_duration": 1.027918515671407,
+        "peak_rss": 0.9469454173818997,
+        "peak_cpu": 0.9975417895771875,
+        "report_tokens": 0.2164334210890952
+      },
+      "target_outcomes": [
+        {
+          "target": "cloudflare-home",
+          "kind": "cloudflare-edge",
+          "tags": [
+            "cloudflare",
+            "cdn-security",
+            "spa"
+          ],
+          "go_outcome": "passed",
+          "python_outcome": "passed",
+          "go_duration_ms": 3407,
+          "python_duration_ms": 3341,
+          "go_signals": [
+            "cloudflare_turnstile",
+            "captcha",
+            "robot_detection"
+          ],
+          "python_signals": [
+            "cloudflare_turnstile",
+            "captcha",
+            "robot_detection"
+          ]
+        },
+        {
+          "target": "creepjs",
+          "kind": "fingerprint-test",
+          "tags": [
+            "bot-detection",
+            "static"
+          ],
+          "go_outcome": "passed",
+          "python_outcome": "passed",
+          "go_duration_ms": 3200,
+          "python_duration_ms": 3217,
+          "go_signals": [
+            "robot_detection"
+          ],
+          "python_signals": [
+            "robot_detection"
+          ]
+        },
+        {
+          "target": "datadome",
+          "kind": "bot-defense-vendor",
+          "tags": [
+            "bot-detection",
+            "cdn-security"
+          ],
+          "go_outcome": "passed",
+          "python_outcome": "passed",
+          "go_duration_ms": 3309,
+          "python_duration_ms": 3261,
+          "go_signals": [
+            "captcha",
+            "robot_detection",
+            "datadome"
+          ],
+          "python_signals": [
+            "captcha",
+            "robot_detection",
+            "datadome"
+          ]
+        },
+        {
+          "target": "g2",
+          "kind": "real-site-anti-bot",
+          "tags": [
+            "bot-detection",
+            "auth-entry",
+            "spa"
+          ],
+          "go_outcome": "blocked",
+          "python_outcome": "blocked",
+          "go_duration_ms": 3306,
+          "python_duration_ms": 3262,
+          "go_signals": [
+            "http_403",
+            "cloudflare_challenge",
+            "captcha",
+            "datadome"
+          ],
+          "python_signals": [
+            "http_403",
+            "cloudflare_challenge",
+            "captcha",
+            "datadome"
+          ]
+        },
+        {
+          "target": "incolumitas",
+          "kind": "bot-fingerprint-test",
+          "tags": [
+            "bot-detection"
+          ],
+          "go_outcome": "passed",
+          "python_outcome": "passed",
+          "go_duration_ms": 3956,
+          "python_duration_ms": 3874,
+          "go_signals": [
+            "captcha",
+            "robot_detection",
+            "bot_detection",
+            "datadome",
+            "akamai",
+            "perimeterx",
+            "imperva_incapsula",
+            "distil"
+          ],
+          "python_signals": [
+            "captcha",
+            "robot_detection",
+            "bot_detection",
+            "datadome",
+            "akamai",
+            "perimeterx",
+            "imperva_incapsula",
+            "distil"
+          ]
+        },
+        {
+          "target": "nowsecure-cloudflare",
+          "kind": "cloudflare-challenge-test",
+          "tags": [
+            "cloudflare",
+            "bot-detection"
+          ],
+          "go_outcome": "blocked",
+          "python_outcome": "blocked",
+          "go_duration_ms": 4301,
+          "python_duration_ms": 4062,
+          "go_signals": [
+            "cloudflare_challenge",
+            "cloudflare_turnstile"
+          ],
+          "python_signals": [
+            "cloudflare_challenge",
+            "cloudflare_turnstile"
+          ]
+        },
+        {
+          "target": "pixelscan",
+          "kind": "bot-fingerprint-test",
+          "tags": [
+            "bot-detection"
+          ],
+          "go_outcome": "passed",
+          "python_outcome": "passed",
+          "go_duration_ms": 4509,
+          "python_duration_ms": 4304,
+          "go_signals": [
+            "captcha",
+            "robot_detection",
+            "bot_detection"
+          ],
+          "python_signals": [
+            "captcha",
+            "robot_detection",
+            "bot_detection"
+          ]
+        },
+        {
+          "target": "sannysoft",
+          "kind": "bot-fingerprint-test",
+          "tags": [
+            "bot-detection"
+          ],
+          "go_outcome": "passed",
+          "python_outcome": "passed",
+          "go_duration_ms": 3430,
+          "python_duration_ms": 3298,
+          "go_signals": [],
+          "python_signals": []
+        }
+      ],
+      "outcome_groups": {
+        "shared_blocked_targets": [
+          "g2",
+          "nowsecure-cloudflare"
+        ],
+        "shared_failed_targets": [],
+        "go_only_regressions": [],
+        "python_only_differences": []
+      },
+      "outcome_mismatches": []
+    }
+  ],
+  "summary": {
+    "go": {
+      "total": 8,
+      "passed": 6,
+      "blocked": 2,
+      "failed": 0,
+      "wall_ms": 31830,
+      "target_duration_ms": 29418,
+      "avg_target_ms": 3677,
+      "peak_rss_mib": 1491.1875,
+      "peak_cpu_percent": 202.89999999999998,
+      "report_json_bytes": 4875,
+      "report_markdown_bytes": 1369,
+      "report_json_estimated_tokens": 1219,
+      "report_markdown_estimated_tokens": 343,
+      "report_total_estimated_tokens": 1562
+    },
+    "python": {
+      "total": 8,
+      "passed": 6,
+      "blocked": 2,
+      "failed": 0,
+      "wall_ms": 31222,
+      "target_duration_ms": 28619,
+      "avg_target_ms": 3577,
+      "peak_rss_mib": 1574.734375,
+      "peak_cpu_percent": 203.40000000000003,
+      "report_json_bytes": 27498,
+      "report_markdown_bytes": 1367,
+      "report_json_estimated_tokens": 6875,
+      "report_markdown_estimated_tokens": 342,
+      "report_total_estimated_tokens": 7217
+    },
+    "ratios": {
+      "wall_time": 1.0194734482095957,
+      "target_duration": 1.027918515671407,
+      "peak_rss": 0.9469454173818997,
+      "peak_cpu": 0.9975417895771875,
+      "report_tokens": 0.2164334210890952
+    },
+    "outcome_mismatch_count": 0,
+    "go_only_regression_count": 0
+  },
+  "persona_bundle": {
+    "artifact": "docs/personas/2026-09-08-node-direct-readiness.json",
+    "sha256": "d787a57c6677d1f793bff5c25a2b624b77c9d808ff011a62b129fbd46166c360",
+    "persona_os": "linux",
+    "camoufox_version": "v135.0.1-beta.24",
+    "hardware_concurrency": 12,
+    "screen_width": 1707,
+    "screen_height": 960
+  },
+  "go_python_benchmark_readiness": {
+    "status": "blocked",
+    "candidate": false,
+    "criteria": [
+      {
+        "name": "complete_harness_resource_scope",
+        "passed": true,
+        "detail": "resource_scope=harness_process_tree"
+      },
+      {
+        "name": "fixed_period_resource_sampling",
+        "passed": true,
+        "detail": "resource_sampling=fixed_period"
+      },
+      {
+        "name": "go_sidecar_runtime_is_node_direct",
+        "passed": true,
+        "detail": "go_sidecar_runtime=node-direct"
+      },
+      {
+        "name": "shared_linux_persona_bundle",
+        "passed": true,
+        "detail": "persona_os=linux persona_bundle_sha256=d787a57c6677d1f793bff5c25a2b624b77c9d808ff011a62b129fbd46166c360"
+      },
+      {
+        "name": "extended_target_matrix",
+        "passed": false,
+        "detail": "mode=full targets=8"
+      },
+      {
+        "name": "no_go_only_outcome_regressions",
+        "passed": true,
+        "detail": "go_only_regression_count=0 outcome_mismatch_count=0"
+      },
+      {
+        "name": "no_runtime_failures",
+        "passed": true,
+        "detail": "go_failed=0 python_failed=0"
+      },
+      {
+        "name": "wall_time_not_slower_than_python",
+        "passed": true,
+        "detail": "wall_time=1.0194734482095957 max=1.05"
+      },
+      {
+        "name": "target_duration_not_slower_than_python",
+        "passed": true,
+        "detail": "target_duration=1.027918515671407 max=1.05"
+      },
+      {
+        "name": "peak_rss_beats_python",
+        "passed": true,
+        "detail": "peak_rss=0.9469454173818997 max=0.95"
+      },
+      {
+        "name": "peak_cpu_beats_python",
+        "passed": false,
+        "detail": "peak_cpu=0.9975417895771875 max=0.95"
+      },
+      {
+        "name": "report_tokens_beats_python",
+        "passed": true,
+        "detail": "report_tokens=0.2164334210890952 max=0.5"
+      }
+    ],
+    "note": "Go/Python benchmark candidate means node-direct passed the extended comparison gate. Consumer no-Python readiness is recorded separately by scripts/no-python-consumer-canary.sh."
+  },
+  "python_removal_readiness": {
+    "status": "blocked",
+    "candidate": false,
+    "criteria": [
+      {
+        "name": "complete_harness_resource_scope",
+        "passed": true,
+        "detail": "resource_scope=harness_process_tree"
+      },
+      {
+        "name": "fixed_period_resource_sampling",
+        "passed": true,
+        "detail": "resource_sampling=fixed_period"
+      },
+      {
+        "name": "go_sidecar_runtime_is_node_direct",
+        "passed": true,
+        "detail": "go_sidecar_runtime=node-direct"
+      },
+      {
+        "name": "shared_linux_persona_bundle",
+        "passed": true,
+        "detail": "persona_os=linux persona_bundle_sha256=d787a57c6677d1f793bff5c25a2b624b77c9d808ff011a62b129fbd46166c360"
+      },
+      {
+        "name": "extended_target_matrix",
+        "passed": false,
+        "detail": "mode=full targets=8"
+      },
+      {
+        "name": "no_go_only_outcome_regressions",
+        "passed": true,
+        "detail": "go_only_regression_count=0 outcome_mismatch_count=0"
+      },
+      {
+        "name": "no_runtime_failures",
+        "passed": true,
+        "detail": "go_failed=0 python_failed=0"
+      },
+      {
+        "name": "wall_time_not_slower_than_python",
+        "passed": true,
+        "detail": "wall_time=1.0194734482095957 max=1.05"
+      },
+      {
+        "name": "target_duration_not_slower_than_python",
+        "passed": true,
+        "detail": "target_duration=1.027918515671407 max=1.05"
+      },
+      {
+        "name": "peak_rss_beats_python",
+        "passed": true,
+        "detail": "peak_rss=0.9469454173818997 max=0.95"
+      },
+      {
+        "name": "peak_cpu_beats_python",
+        "passed": false,
+        "detail": "peak_cpu=0.9975417895771875 max=0.95"
+      },
+      {
+        "name": "report_tokens_beats_python",
+        "passed": true,
+        "detail": "report_tokens=0.2164334210890952 max=0.5"
+      }
+    ],
+    "note": "Go/Python benchmark candidate means node-direct passed the extended comparison gate. Consumer no-Python readiness is recorded separately by scripts/no-python-consumer-canary.sh."
+  }
+}

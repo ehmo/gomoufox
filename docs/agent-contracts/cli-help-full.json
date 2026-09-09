@@ -7,12 +7,13 @@
     {
       "examples": [
         "gomoufox setup --dry-run",
-        "gomoufox setup --target all --features skills,mcp --yes"
+        "gomoufox setup --recipe local-development --dry-run"
       ],
       "flags": [
         "--target",
         "--scope",
         "--features",
+        "--recipe",
         "--toolset",
         "--mcp-arg",
         "--force",
@@ -22,6 +23,9 @@
         "--skip-doctor"
       ],
       "name": "setup",
+      "notes": [
+        "--recipe research (default): core; local-development: full and --allow-localhost. Explicit --toolset overrides the recipe."
+      ],
       "summary": "guided runtime, doctor, and agent setup",
       "usage": "gomoufox setup [--target all] [--scope user|project] [--features skills,mcp] [--yes] [--dry-run]"
     },
@@ -29,9 +33,16 @@
       "examples": [
         "gomoufox --json doctor"
       ],
+      "flags": [
+        "--dir",
+        "--runtime"
+      ],
       "name": "doctor",
+      "notes": [
+        "Read-only inspection; does not install, repair, download or check for newer releases. Reports the running executable, build, expected pins and observed cache state."
+      ],
       "summary": "check local node-direct runtime assets, Playwright, Camoufox binary, and display readiness",
-      "usage": "gomoufox doctor [--json]"
+      "usage": "gomoufox doctor [--dir path] [--runtime node-direct|python] [--json]"
     },
     {
       "flags": [
@@ -85,6 +96,8 @@
         "--html",
         "--text",
         "--markdown",
+        "--width",
+        "--height",
         "--wait-selector",
         "--wait-load-state",
         "--max-bytes",
@@ -115,10 +128,12 @@
     },
     {
       "examples": [
-        "gomoufox --json eval https://example.com --enable-eval --script 'document.title'"
+        "gomoufox --json eval https://example.com --enable-eval --script 'arg => arg.selector' --arg '{\"selector\":\"h1\"}'"
       ],
       "flags": [
         "--enable-eval",
+        "--width",
+        "--height",
         "--script",
         "--script-file",
         "--wait-selector",
@@ -127,25 +142,37 @@
         "--arg-file"
       ],
       "name": "eval",
+      "notes": [
+        "--arg passes JSON to a function parameter; it creates no global variable. --arg-file reads the same JSON from a file."
+      ],
       "summary": "run JavaScript only when explicitly enabled",
       "usage": "gomoufox eval <url> --enable-eval (--script <js>|--script-file <path>)"
     },
     {
       "examples": [
-        "gomoufox --json fetch https://api.example.com/me --profile profiles/site"
+        "gomoufox --json fetch https://api.example.com/me --profile /absolute/path/profiles/site",
+        "gomoufox fetch https://example.com/data --raw"
       ],
       "flags": [
         "--method",
         "--data",
         "--data-file",
+        "--form",
+        "--form-file",
         "--header",
         "--content-type",
         "--cookies-file",
         "--navigate-first",
         "--max-bytes",
-        "--raw"
+        "--raw",
+        "--out",
+        "--overwrite",
+        "--max-file-bytes"
       ],
       "name": "fetch",
+      "notes": [
+        "--json --raw retains the JSON envelope and makes body a string. Omit --json for body bytes. Profile paths resolve from the working directory; use an absolute path across projects. Each CLI call starts a new page."
+      ],
       "summary": "execute an HTTP request from inside the browser context",
       "usage": "gomoufox fetch <url> [--method GET] [--data <text>] [--navigate-first <url>]"
     },
@@ -279,6 +306,7 @@
   "discovery": [
     "gomoufox help --json",
     "gomoufox help <command> --json",
+    "gomoufox help <command> --json --fields flag_schema",
     "gomoufox help --json --fields commands",
     "gomoufox skills list --json",
     "gomoufox skills show core --json",

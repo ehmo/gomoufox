@@ -160,6 +160,10 @@ func RuntimeAssetCacheRoot(cacheDir, goos, goarch string) RuntimeRoot {
 		goarch = runtime.GOARCH
 	}
 	root := filepath.Join(cacheDir, "runtime", "v1", CamoufoxBinaryVersion, goos+"-"+goarch)
+	return runtimeRootAtPath(root, goos)
+}
+
+func runtimeRootAtPath(root, goos string) RuntimeRoot {
 	node := "node"
 	if goos == "windows" {
 		node = "node.exe"
@@ -265,13 +269,25 @@ func ValidateRuntimeAssetManifest(m RuntimeAssetManifest, goos, goarch string) e
 		RuntimeAssetPlaywrightPackage: false,
 		RuntimeAssetCamoufoxBrowser:   false,
 	}
+	expectedRoot := runtimeRootAtPath("", goos)
+	expectedPaths := map[RuntimeAssetKind]string{
+		RuntimeAssetNodeJS:            filepath.ToSlash(expectedRoot.NodeJS),
+		RuntimeAssetLaunchServerJS:    filepath.ToSlash(expectedRoot.LaunchServerJS),
+		RuntimeAssetPlaywrightPackage: filepath.ToSlash(expectedRoot.PlaywrightPackageDir),
+		RuntimeAssetCamoufoxBrowser:   filepath.ToSlash(expectedRoot.BrowserResourcesDir),
+	}
 	for _, a := range m.Assets {
 		if a.GOOS != goos || a.GOARCH != goarch {
 			continue
 		}
-		if _, ok := required[a.Kind]; ok {
-			required[a.Kind] = true
+		seen, known := required[a.Kind]
+		if !known || seen {
+			return fmt.Errorf("%w: duplicate or unknown runtime asset kind %s", ErrVersionMismatch, a.Kind)
 		}
+		if a.Path != expectedPaths[a.Kind] {
+			return fmt.Errorf("%w: unsafe runtime asset path %q for %s", ErrVersionMismatch, a.Path, a.Kind)
+		}
+		required[a.Kind] = true
 	}
 	for kind, ok := range required {
 		if !ok {
@@ -342,37 +358,32 @@ func VerifyRuntimeAssets(root RuntimeRoot, m RuntimeAssetManifest, goos, goarch 
 		if a.GOOS != goos || a.GOARCH != goarch {
 			continue
 		}
-		if strings.TrimSpace(a.Path) == "" || filepath.IsAbs(a.Path) || strings.Contains(a.Path, "..") {
-			return fmt.Errorf("%w: unsafe runtime asset path %q", ErrVersionMismatch, a.Path)
+		if err := verifyRuntimeAssetRecord(root, a); err != nil {
+			return err
 		}
-		path := filepath.Join(root.Root, a.Path)
-		st, err := runtimeAssetFiles.stat(path)
-		if err != nil {
-			return fmt.Errorf("%w: missing runtime asset %s at %s", ErrNotInstalled, a.Kind, path)
-		}
-		if a.Kind == RuntimeAssetPlaywrightPackage || a.Kind == RuntimeAssetCamoufoxBrowser {
-			if !st.IsDir() {
-				return fmt.Errorf("%w: runtime asset %s is not a directory", ErrVersionMismatch, a.Kind)
-			}
-			if a.SHA256 != "" {
-				got, err := treeSHA256(path)
-				if err != nil {
-					return err
-				}
-				if !strings.EqualFold(got, a.SHA256) {
-					return fmt.Errorf("%w: runtime asset %s checksum mismatch", ErrVersionMismatch, a.Kind)
-				}
-			}
-			continue
-		}
-		if st.IsDir() {
-			return fmt.Errorf("%w: runtime asset %s is a directory", ErrVersionMismatch, a.Kind)
-		}
-		if a.Size > 0 && st.Size() != a.Size {
-			return fmt.Errorf("%w: runtime asset %s size %d != %d", ErrVersionMismatch, a.Kind, st.Size(), a.Size)
+	}
+	return nil
+}
+
+func verifyRuntimeAssetRecord(root RuntimeRoot, a RuntimeAssetRecord) error {
+	digest, err := hex.DecodeString(a.SHA256)
+	if err != nil || len(digest) != sha256.Size {
+		return fmt.Errorf("%w: runtime asset %s has a missing or invalid checksum", ErrVersionMismatch, a.Kind)
+	}
+	if strings.TrimSpace(a.Path) == "" || filepath.IsAbs(a.Path) || strings.Contains(a.Path, "..") {
+		return fmt.Errorf("%w: unsafe runtime asset path %q", ErrVersionMismatch, a.Path)
+	}
+	path := filepath.Join(root.Root, a.Path)
+	st, err := runtimeAssetFiles.stat(path)
+	if err != nil {
+		return fmt.Errorf("%w: missing runtime asset %s at %s", ErrNotInstalled, a.Kind, path)
+	}
+	if a.Kind == RuntimeAssetPlaywrightPackage || a.Kind == RuntimeAssetCamoufoxBrowser {
+		if !st.IsDir() {
+			return fmt.Errorf("%w: runtime asset %s is not a directory", ErrVersionMismatch, a.Kind)
 		}
 		if a.SHA256 != "" {
-			got, err := fileSHA256(path)
+			got, err := treeSHA256(path)
 			if err != nil {
 				return err
 			}
@@ -380,68 +391,43 @@ func VerifyRuntimeAssets(root RuntimeRoot, m RuntimeAssetManifest, goos, goarch 
 				return fmt.Errorf("%w: runtime asset %s checksum mismatch", ErrVersionMismatch, a.Kind)
 			}
 		}
-		if a.Kind == RuntimeAssetNodeJS && st.Mode().Perm()&0o111 == 0 {
-			return fmt.Errorf("%w: runtime asset node is not executable", ErrVersionMismatch)
+		return nil
+	}
+	if st.IsDir() {
+		return fmt.Errorf("%w: runtime asset %s is a directory", ErrVersionMismatch, a.Kind)
+	}
+	if a.Size > 0 && st.Size() != a.Size {
+		return fmt.Errorf("%w: runtime asset %s size %d != %d", ErrVersionMismatch, a.Kind, st.Size(), a.Size)
+	}
+	if a.SHA256 != "" {
+		got, err := fileSHA256(path)
+		if err != nil {
+			return err
 		}
+		if !strings.EqualFold(got, a.SHA256) {
+			return fmt.Errorf("%w: runtime asset %s checksum mismatch", ErrVersionMismatch, a.Kind)
+		}
+	}
+	if a.Kind == RuntimeAssetNodeJS && st.Mode().Perm()&0o111 == 0 {
+		return fmt.Errorf("%w: runtime asset node is not executable", ErrVersionMismatch)
 	}
 	return nil
 }
 
 func EnsureRuntimeAssets(ctx context.Context, opts InstallOptions) (RuntimeRoot, error) {
-	select {
-	case <-ctx.Done():
-		return RuntimeRoot{}, ctx.Err()
-	default:
-	}
-	if !runtimeAssetPlatformSupported(sidecarGOOS, sidecarGOARCH) {
-		return RuntimeRoot{}, fmt.Errorf("%w: runtime assets unsupported for %s/%s", ErrNotInstalled, sidecarGOOS, sidecarGOARCH)
-	}
-	if !opts.ForceReinstall {
-		if root, _, err := ResolveRuntimeAssets(opts.VenvDir); err == nil {
-			return root, nil
-		}
-	}
-	root := RuntimeAssetCacheRoot(opts.VenvDir, sidecarGOOS, sidecarGOARCH)
-	for _, dir := range []string{
-		root.Root,
-		filepath.Dir(root.NodeJS),
-		filepath.Dir(root.LaunchServerJS),
-		root.PlaywrightPackageDir,
-		root.BrowserResourcesDir,
-	} {
-		if err := runtimeAssetFiles.mkdirAll(dir, 0o700); err != nil {
-			return RuntimeRoot{}, err
-		}
-	}
-	if err := installPlaywrightDriverForRuntime(ctx, root, opts); err != nil {
+	prepared, err := prepareRuntimeAssets(ctx, opts)
+	if err != nil {
 		return RuntimeRoot{}, err
 	}
-	if err := writeRuntimeLaunchServer(root); err != nil {
+	defer prepared.cleanup()
+	if err := ctx.Err(); err != nil {
 		return RuntimeRoot{}, err
 	}
-	if err := ensureRuntimePlaywrightCoreModule(root, sidecarGOOS); err != nil {
+	if err := prepared.publish(); err != nil {
 		return RuntimeRoot{}, err
 	}
-	if err := installCamoufoxBrowserForRuntime(ctx, root, opts); err != nil {
-		return RuntimeRoot{}, err
-	}
-	m := NewRuntimeAssetManifest(root, sidecarGOOS, sidecarGOARCH)
-	if err := PopulateRuntimeAssetManifest(root, &m); err != nil {
-		return RuntimeRoot{}, err
-	}
-	if err := WriteRuntimeAssetManifest(root.ManifestPath, m); err != nil {
-		return RuntimeRoot{}, err
-	}
-	if err := VerifyRuntimeAssets(root, m, sidecarGOOS, sidecarGOARCH); err != nil {
-		return RuntimeRoot{}, err
-	}
-	if err := verifyRuntimePlaywrightCoreModule(root, sidecarGOOS); err != nil {
-		return RuntimeRoot{}, err
-	}
-	if err := runtimeAssetFiles.writeFile(root.ReadyMarkerPath, []byte("manifest-ready\n"), 0o600); err != nil {
-		return RuntimeRoot{}, err
-	}
-	return root, nil
+	prepared.commit()
+	return prepared.root, nil
 }
 
 func ensureRuntimePlaywrightCoreModule(root RuntimeRoot, goos string) error {
@@ -776,36 +762,11 @@ func verifyPinnedPlaywrightDriver(ctx context.Context, driverDir string) error {
 }
 
 func replaceRuntimeAsset(source, target string) error {
-	parent := filepath.Dir(target)
-	backup := ""
-	if _, err := runtimeAssetFiles.lstat(target); err == nil {
-		placeholder, err := runtimeAssetFiles.mkdirTemp(parent, ".runtime-asset-backup-")
-		if err != nil {
-			return err
-		}
-		if err := runtimeAssetFiles.remove(placeholder); err != nil {
-			return err
-		}
-		backup = placeholder
-		if err := runtimeAssetFiles.rename(target, backup); err != nil {
-			return err
-		}
-	} else if !os.IsNotExist(err) {
+	replacement := assetReplacement{source: source, target: target}
+	if err := replacement.publish(); err != nil {
 		return err
 	}
-	if err := runtimeAssetFiles.rename(source, target); err != nil {
-		if backup != "" {
-			if restoreErr := runtimeAssetFiles.rename(backup, target); restoreErr != nil {
-				return fmt.Errorf("replace runtime asset %s: %v; restore previous asset: %w", target, err, restoreErr)
-			}
-		}
-		return fmt.Errorf("replace runtime asset %s: %w", target, err)
-	}
-	if backup != "" {
-		if err := runtimeAssetFiles.removeAll(backup); err != nil {
-			return err
-		}
-	}
+	replacement.commit()
 	return nil
 }
 
@@ -853,10 +814,27 @@ func copyRuntimeCamoufoxBrowser(source string, root RuntimeRoot) error {
 	if sameFileTree(source, root.BrowserResourcesDir) {
 		return nil
 	}
-	if err := runtimeAssetFiles.removeAll(root.BrowserResourcesDir); err != nil {
+	parent := filepath.Dir(root.BrowserResourcesDir)
+	if err := runtimeAssetFiles.mkdirAll(parent, 0700); err != nil {
 		return err
 	}
-	return copyTree(source, root.BrowserResourcesDir)
+	staging, err := runtimeAssetFiles.mkdirTemp(parent, ".camoufox-browser-")
+	if err != nil {
+		return err
+	}
+	defer func() { _ = runtimeAssetFiles.removeAll(staging) }()
+	if err := copyTree(source, staging); err != nil {
+		return err
+	}
+	if err := validateCamoufoxBrowserDir(staging); err != nil {
+		return err
+	}
+	if !trustUnverifiedCamoufoxPath() {
+		if err := verifyCamoufoxManifest(staging); err != nil {
+			return err
+		}
+	}
+	return replaceRuntimeAsset(staging, root.BrowserResourcesDir)
 }
 
 func writeRuntimeLaunchServer(root RuntimeRoot) error {
@@ -881,15 +859,7 @@ async function main() {
   payload.host = "127.0.0.1";
   const browser = await new BrowserServerLauncherImpl("firefox").launchServer(payload);
   console.log(browser.wsEndpoint());
-  const close = async () => {
-    try {
-      await browser.close();
-    } finally {
-      process.exit(0);
-    }
-  };
-  process.on("SIGTERM", close);
-  process.on("SIGINT", close);
+
 }
 
 main().catch((err) => {

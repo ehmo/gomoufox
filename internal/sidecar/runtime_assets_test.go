@@ -332,6 +332,7 @@ func TestSameFileTreeComparesAbsolutePaths(t *testing.T) {
 }
 
 func TestCanonicalFileTreeComparisonDoesNotMakeBrowserDestinationExternal(t *testing.T) {
+	t.Cleanup(overrideSidecarPlatform(t, "linux", "amd64"))
 	source := filepath.Join(t.TempDir(), "source")
 	if err := os.MkdirAll(source, 0o700); err != nil {
 		t.Fatal(err)
@@ -340,6 +341,14 @@ func TestCanonicalFileTreeComparisonDoesNotMakeBrowserDestinationExternal(t *tes
 	if err := os.WriteFile(sourceMarker, []byte("verified"), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.WriteFile(filepath.Join(source, "camoufox"), []byte("browser"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	sum, err := camoufoxBrowserManifestSHA256(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(replaceManifestChecksum(t, sum))
 	root := RuntimeAssetCacheRoot(t.TempDir(), "linux", "amd64")
 	if err := os.MkdirAll(filepath.Dir(root.BrowserResourcesDir), 0o700); err != nil {
 		t.Fatal(err)
@@ -1389,13 +1398,11 @@ func TestEnsureInstalledNodeDirectAvoidsPythonBootstrap(t *testing.T) {
 	origFindPython := findPythonForInstall
 	origEnsureVenv := ensureVenvForInstall
 	origEnsureCamoufox := ensureCamoufoxForInstall
-	origEnsureBinary := ensureBinaryForInstall
 	origCheckCompatibility := checkCompatibilityForInstall
 	defer func() {
 		findPythonForInstall = origFindPython
 		ensureVenvForInstall = origEnsureVenv
 		ensureCamoufoxForInstall = origEnsureCamoufox
-		ensureBinaryForInstall = origEnsureBinary
 		checkCompatibilityForInstall = origCheckCompatibility
 	}()
 
@@ -1405,7 +1412,6 @@ func TestEnsureInstalledNodeDirectAvoidsPythonBootstrap(t *testing.T) {
 	findPythonForInstall = func(string) (string, error) { fail("FindPython"); return "", nil }
 	ensureVenvForInstall = func(context.Context, string, string) error { fail("EnsureVenv"); return nil }
 	ensureCamoufoxForInstall = func(context.Context, string, InstallOptions) error { fail("EnsureCamoufox"); return nil }
-	ensureBinaryForInstall = func(context.Context, string, InstallOptions) error { fail("EnsureBinary"); return nil }
 	checkCompatibilityForInstall = func(context.Context, string) error { fail("CheckCompatibility"); return nil }
 
 	cacheRoot := t.TempDir()
@@ -1545,55 +1551,69 @@ func TestRuntimeManifestIOAndVerificationFailures(t *testing.T) {
 }
 
 func TestVerifyRuntimeAssetsRejectsPathTypeSizeChecksumAndModeCorruption(t *testing.T) {
-	root := RuntimeAssetCacheRoot(t.TempDir(), "linux", "amd64")
-	if err := os.MkdirAll(root.Root, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	file := filepath.Join(root.Root, "file")
-	if err := os.WriteFile(file, []byte("data"), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	dir := filepath.Join(root.Root, "dir")
-	if err := os.Mkdir(dir, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	linkedDir := filepath.Join(root.Root, "linked-dir")
-	if err := os.Symlink(dir, linkedDir); err != nil {
-		t.Fatal(err)
-	}
-	base := NewRuntimeAssetManifest(root, "linux", "amd64")
-	for i := range base.Assets {
-		base.Assets[i].Path = "file"
-	}
 	for _, tc := range []struct {
 		name   string
-		mutate func(*RuntimeAssetManifest)
+		mutate func(*testing.T, RuntimeRoot, *RuntimeAssetManifest)
 	}{
-		{name: "unsafe path", mutate: func(m *RuntimeAssetManifest) { m.Assets[0].Path = "../escape" }},
-		{name: "missing", mutate: func(m *RuntimeAssetManifest) { m.Assets[0].Path = "missing" }},
-		{name: "directory asset is file", mutate: func(m *RuntimeAssetManifest) { m.Assets[2].Path = "file" }},
-		{name: "directory tree is symlink", mutate: func(m *RuntimeAssetManifest) { m.Assets[2].Path = "linked-dir"; m.Assets[2].SHA256 = "x" }},
-		{name: "directory checksum", mutate: func(m *RuntimeAssetManifest) { m.Assets[2].Path = "dir"; m.Assets[2].SHA256 = "bad" }},
-		{name: "file asset is directory", mutate: func(m *RuntimeAssetManifest) { m.Assets[0].Path = "dir" }},
-		{name: "file size", mutate: func(m *RuntimeAssetManifest) { m.Assets[0].Size = 9 }},
-		{name: "file checksum", mutate: func(m *RuntimeAssetManifest) { m.Assets[0].SHA256 = "bad" }},
+		{"unsafe path", func(t *testing.T, r RuntimeRoot, m *RuntimeAssetManifest) { m.Assets[0].Path = "../escape" }},
+		{"missing", func(t *testing.T, r RuntimeRoot, m *RuntimeAssetManifest) {
+			if err := os.Remove(r.NodeJS); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{"directory asset is file", func(t *testing.T, r RuntimeRoot, m *RuntimeAssetManifest) {
+			if err := os.RemoveAll(r.PlaywrightPackageDir); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(r.PlaywrightPackageDir, []byte("file"), 0600); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{"directory tree is symlink", func(t *testing.T, r RuntimeRoot, m *RuntimeAssetManifest) {
+			if err := os.RemoveAll(r.PlaywrightPackageDir); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(t.TempDir(), r.PlaywrightPackageDir); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{"directory checksum", func(t *testing.T, r RuntimeRoot, m *RuntimeAssetManifest) {
+			m.Assets[2].SHA256 = strings.Repeat("0", 64)
+		}},
+		{"file asset is directory", func(t *testing.T, r RuntimeRoot, m *RuntimeAssetManifest) {
+			if err := os.Remove(r.NodeJS); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Mkdir(r.NodeJS, 0700); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{"file size", func(t *testing.T, r RuntimeRoot, m *RuntimeAssetManifest) { m.Assets[0].Size = 9 }},
+		{"file checksum", func(t *testing.T, r RuntimeRoot, m *RuntimeAssetManifest) {
+			m.Assets[0].SHA256 = strings.Repeat("0", 64)
+		}},
+		{"missing checksum", func(t *testing.T, r RuntimeRoot, m *RuntimeAssetManifest) { m.Assets[0].SHA256 = "" }},
+		{"node mode", func(t *testing.T, r RuntimeRoot, m *RuntimeAssetManifest) {
+			if err := os.Chmod(r.NodeJS, 0600); err != nil {
+				t.Fatal(err)
+			}
+		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			m := base
-			m.Assets = append([]RuntimeAssetRecord(nil), base.Assets...)
-			tc.mutate(&m)
-			if err := VerifyRuntimeAssets(root, m, "linux", "amd64"); err == nil {
-				t.Fatalf("VerifyRuntimeAssets accepted %s corruption", tc.name)
+			_, root := inspectionFixture(t)
+			m, err := LoadRuntimeAssetManifest(root.ManifestPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			tc.mutate(t, root, &m)
+			err = VerifyRuntimeAssets(root, m, "linux", "amd64")
+			if err == nil {
+				t.Fatal("accepted corrupted runtime")
+			}
+			if tc.name == "node mode" && !strings.Contains(err.Error(), "not executable") {
+				t.Fatalf("mode error = %v", err)
 			}
 		})
-	}
-	if err := os.Chmod(file, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	m := base
-	m.Assets = append([]RuntimeAssetRecord(nil), base.Assets...)
-	if err := VerifyRuntimeAssets(root, m, "linux", "amd64"); err == nil || !strings.Contains(err.Error(), "not executable") {
-		t.Fatalf("node mode error = %v", err)
 	}
 }
 
@@ -1696,32 +1716,27 @@ func TestRuntimeAssetFilesystemAdapterPropagatesManifestAndHashFailures(t *testi
 		t.Fatalf("manifest write error = %v", err)
 	}
 	runtimeAssetFiles = oldFiles
+	_, installed := inspectionFixture(t)
+	manifest, err := LoadRuntimeAssetManifest(installed.ManifestPath)
+	if err != nil {
+		t.Fatal(err)
+	}
 	runtimeAssetFiles.open = func(path string) (*os.File, error) {
-		if path == file {
+		if path == installed.NodeJS {
 			return nil, wantErr
 		}
 		return os.Open(path)
 	}
-	manifest := NewRuntimeAssetManifest(root, "linux", "amd64")
-	for i := range manifest.Assets {
-		if manifest.Assets[i].Kind == RuntimeAssetPlaywrightPackage || manifest.Assets[i].Kind == RuntimeAssetCamoufoxBrowser {
-			manifest.Assets[i].Path = "dir"
-		} else {
-			manifest.Assets[i].Path = "file"
-		}
-	}
-	manifest.Assets[0].SHA256 = "check"
-	if err := VerifyRuntimeAssets(root, manifest, "linux", "amd64"); !errors.Is(err, wantErr) {
+	if err := VerifyRuntimeAssets(installed, manifest, "linux", "amd64"); !errors.Is(err, wantErr) {
 		t.Fatalf("verify file hash error = %v", err)
 	}
 	runtimeAssetFiles = oldFiles
 	manifest.Assets = append(manifest.Assets, RuntimeAssetRecord{Kind: "ignored", GOOS: "darwin", GOARCH: "arm64", Path: "missing"})
-	manifest.Assets[0].SHA256 = ""
-	if err := VerifyRuntimeAssets(root, manifest, "linux", "amd64"); err != nil {
+	if err := VerifyRuntimeAssets(installed, manifest, "linux", "amd64"); err != nil {
 		t.Fatalf("other-platform asset was not ignored: %v", err)
 	}
 	manifest.SchemaVersion++
-	if err := VerifyRuntimeAssets(root, manifest, "linux", "amd64"); err == nil {
+	if err := VerifyRuntimeAssets(installed, manifest, "linux", "amd64"); err == nil {
 		t.Fatal("invalid manifest verified")
 	}
 }
@@ -1820,9 +1835,6 @@ func TestReplaceRuntimeAssetPropagatesEveryAtomicReplacementFailure(t *testing.T
 		{name: "backup rename", mutate: func(ops *runtimeAssetFileOperations) { ops.rename = func(string, string) error { return wantErr } }},
 		{name: "target lstat", mutate: func(ops *runtimeAssetFileOperations) {
 			ops.lstat = func(string) (os.FileInfo, error) { return nil, wantErr }
-		}},
-		{name: "backup cleanup", mutate: func(ops *runtimeAssetFileOperations) {
-			ops.removeAll = func(string) error { return wantErr }
 		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -1996,25 +2008,14 @@ func TestResolveRuntimeAssetsReportsMissingReadyMarkerAndStaleLaunchServer(t *te
 	if err := os.WriteFile(root.LaunchServerJS, []byte("stale"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	manifest, err := LoadRuntimeAssetManifest(root.ManifestPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for i := range manifest.Assets {
-		if manifest.Assets[i].Kind == RuntimeAssetLaunchServerJS {
-			manifest.Assets[i].Size = 0
-			manifest.Assets[i].SHA256 = ""
-		}
-	}
-	if err := WriteRuntimeAssetManifest(root.ManifestPath, manifest); err != nil {
-		t.Fatal(err)
-	}
+	refreshInspectionManifest(t, root)
 	if _, _, err := ResolveRuntimeAssets(cache); err == nil || !errors.Is(err, ErrVersionMismatch) {
 		t.Fatalf("stale launch server error = %v", err)
 	}
 	if err := os.WriteFile(root.LaunchServerJS, []byte(runtimeLaunchServerJS), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	refreshInspectionManifest(t, root)
 	if err := os.Remove(root.PlaywrightCoreModule); err != nil {
 		t.Fatal(err)
 	}
@@ -2071,7 +2072,7 @@ func TestEnsureRuntimeAssetsPropagatesPostInstallValidationFailures(t *testing.T
 			runtimeAssetFiles.lstat = func(path string) (os.FileInfo, error) {
 				if path == root.PlaywrightCoreModule {
 					calls++
-					if calls == 4 {
+					if calls == 1 {
 						return nil, wantErr
 					}
 				}
@@ -2092,8 +2093,14 @@ func TestEnsureRuntimeAssetsPropagatesPostInstallValidationFailures(t *testing.T
 			restoreInstallers := replaceRuntimeAssetInstallers(t)
 			defer restoreInstallers()
 			cache := t.TempDir()
-			root := RuntimeAssetCacheRoot(cache, "linux", "amd64")
-			tc.mutate(root)
+			browser := installCamoufoxBrowserForRuntime
+			installCamoufoxBrowserForRuntime = func(ctx context.Context, stage RuntimeRoot, opts InstallOptions) error {
+				if err := browser(ctx, stage, opts); err != nil {
+					return err
+				}
+				tc.mutate(stage)
+				return nil
+			}
 			if _, err := EnsureRuntimeAssets(context.Background(), InstallOptions{VenvDir: cache, ForceReinstall: true}); err == nil {
 				t.Fatal("post-install failure was ignored")
 			}

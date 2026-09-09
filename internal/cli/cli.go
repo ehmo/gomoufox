@@ -75,6 +75,7 @@ type InstallRequest struct {
 }
 
 type SetupRequest struct {
+	Recipe      string `json:"recipe"`
 	Target      string `json:"target"`
 	Scope       string `json:"scope"`
 	Features    string `json:"features"`
@@ -87,6 +88,8 @@ type SetupRequest struct {
 }
 
 type SetupResponse struct {
+	MCPCommand   []string     `json:"mcp_command,omitempty"`
+	NextStep     string       `json:"next_step,omitempty"`
 	Request      SetupRequest `json:"request"`
 	Runtime      string       `json:"runtime,omitempty"`
 	Doctor       DoctorReport `json:"doctor,omitempty"`
@@ -98,7 +101,9 @@ type SetupResponse struct {
 }
 
 type DoctorRequest struct {
-	JSON bool
+	JSON    bool
+	Dir     string
+	Runtime string
 }
 
 type ServeRequest struct {
@@ -154,26 +159,22 @@ type LocalCommandResponse struct {
 }
 
 type DoctorReport struct {
-	RuntimeAssets Check `json:"runtime_assets"`
-	Python        Check `json:"python,omitempty"`
-	Venv          Check `json:"venv,omitempty"`
-	CamoufoxPkg   Check `json:"camoufox_pkg"`
-	Playwright    Check `json:"playwright"`
-	CamoufoxBin   Check `json:"camoufox_bin"`
-	Display       Check `json:"display"`
+	Executable    ExecutableCheck   `json:"executable"`
+	Runtime       string            `json:"runtime"`
+	CacheDir      string            `json:"cache_dir"`
+	Node          Check             `json:"node"`
+	FetchDisabled bool              `json:"fetch_disabled"`
+	Recovery      []RuntimeRecovery `json:"recovery,omitempty"`
+	RuntimeAssets Check             `json:"runtime_assets"`
+	Python        Check             `json:"python,omitempty"`
+	Venv          Check             `json:"venv,omitempty"`
+	CamoufoxPkg   Check             `json:"camoufox_pkg"`
+	Playwright    Check             `json:"playwright"`
+	CamoufoxBin   Check             `json:"camoufox_bin"`
+	Display       Check             `json:"display"`
 }
 
-type Check struct {
-	OK            bool   `json:"ok"`
-	Version       string `json:"version,omitempty"`
-	PkgVersion    string `json:"pkg_version,omitempty"`
-	DriverVersion string `json:"driver_version,omitempty"`
-	Match         *bool  `json:"match,omitempty"`
-	Path          string `json:"path,omitempty"`
-	Platform      string `json:"platform,omitempty"`
-	Warning       string `json:"warning,omitempty"`
-	Error         string `json:"error,omitempty"`
-}
+type Check sidecar.InstallationCheck
 
 var (
 	errDaemonUsage           = errors.New("invalid forwarded command")
@@ -272,7 +273,7 @@ func (r Runner) Run(ctx context.Context, args []string, streams Streams) int {
 	case "doctor":
 		return r.runDoctor(ctx, global, rest, streams)
 	case "install":
-		return r.runInstall(ctx, rest, streams)
+		return r.runInstall(ctx, global, rest, streams)
 	case "eval":
 		return r.runEval(ctx, global, rest, streams)
 	case "serve":
@@ -329,12 +330,13 @@ type commandHelp struct {
 }
 
 type helpCatalog struct {
-	Usage                 string        `json:"usage,omitempty"`
-	Global                []string      `json:"global,omitempty"`
-	CLIGuardrailOverrides []string      `json:"cli_guardrail_overrides,omitempty"`
-	Commands              []commandHelp `json:"commands,omitempty"`
-	Discovery             []string      `json:"discovery,omitempty"`
-	MCPTools              []string      `json:"mcp_tools,omitempty"`
+	Usage                 string         `json:"usage,omitempty"`
+	Global                []string       `json:"global,omitempty"`
+	CLIGuardrailOverrides []string       `json:"cli_guardrail_overrides,omitempty"`
+	Commands              []commandHelp  `json:"commands,omitempty"`
+	Discovery             []string       `json:"discovery,omitempty"`
+	MCPTools              []string       `json:"mcp_tools,omitempty"`
+	FlagSchema            *cliFlagSchema `json:"flag_schema,omitempty"`
 }
 
 func runHelp(global globalFlags, args []string, streams Streams) int {
@@ -394,7 +396,7 @@ func helpFields(raw string) (map[string]bool, error) {
 	out := map[string]bool{}
 	for _, field := range splitCSV(raw) {
 		switch field {
-		case "usage", "global", "cli_guardrail_overrides", "commands", "discovery", "mcp_tools":
+		case "usage", "global", "cli_guardrail_overrides", "commands", "discovery", "mcp_tools", "flag_schema":
 			out[field] = true
 		default:
 			return nil, fmt.Errorf("unknown help field: %s", field)
@@ -437,6 +439,7 @@ func buildHelpCatalog(opts helpOptions) helpCatalog {
 		Discovery: []string{
 			"gomoufox help --json",
 			"gomoufox help <command> --json",
+			"gomoufox help <command> --json --fields flag_schema",
 			"gomoufox help --json --fields commands",
 			"gomoufox skills list --json",
 			"gomoufox skills show core --json",
@@ -462,6 +465,9 @@ func buildHelpCatalog(opts helpOptions) helpCatalog {
 		return all
 	}
 	catalog := helpCatalog{}
+	if opts.Fields["flag_schema"] {
+		catalog.FlagSchema = buildCLIFlagSchema(opts.Command)
+	}
 	if opts.Fields["usage"] {
 		catalog.Usage = all.Usage
 	}
@@ -686,12 +692,15 @@ func commandHelps() []commandHelp {
 			Name:     "setup",
 			Usage:    "gomoufox setup [--target all] [--scope user|project] [--features skills,mcp] [--yes] [--dry-run]",
 			Summary:  "guided runtime, doctor, and agent setup",
-			Flags:    []string{"--target", "--scope", "--features", "--toolset", "--mcp-arg", "--force", "--yes", "--dry-run", "--skip-install", "--skip-doctor"},
-			Examples: []string{"gomoufox setup --dry-run", "gomoufox setup --target all --features skills,mcp --yes"},
+			Flags:    []string{"--target", "--scope", "--features", "--recipe", "--toolset", "--mcp-arg", "--force", "--yes", "--dry-run", "--skip-install", "--skip-doctor"},
+			Notes:    []string{"--recipe research (default): core; local-development: full and --allow-localhost. Explicit --toolset overrides the recipe."},
+			Examples: []string{"gomoufox setup --dry-run", "gomoufox setup --recipe local-development --dry-run"},
 		},
 		{
 			Name:     "doctor",
-			Usage:    "gomoufox doctor [--json]",
+			Usage:    "gomoufox doctor [--dir path] [--runtime node-direct|python] [--json]",
+			Flags:    []string{"--dir", "--runtime"},
+			Notes:    []string{"Read-only inspection; does not install, repair, download or check for newer releases. Reports the running executable, build, expected pins and observed cache state."},
 			Summary:  "check local node-direct runtime assets, Playwright, Camoufox binary, and display readiness",
 			Examples: []string{"gomoufox --json doctor"},
 		},
@@ -722,7 +731,7 @@ func commandHelps() []commandHelp {
 			Name:     "get",
 			Usage:    "gomoufox get <url> [--html|--text|--markdown] [--wait-selector <css>]",
 			Summary:  "navigate and print page content with guardrails and response caps",
-			Flags:    []string{"--html", "--text", "--markdown", "--wait-selector", "--wait-load-state", "--max-bytes", "--cookies-file"},
+			Flags:    []string{"--html", "--text", "--markdown", "--width", "--height", "--wait-selector", "--wait-load-state", "--max-bytes", "--cookies-file"},
 			Examples: []string{"gomoufox --json get https://example.com --text"},
 		},
 		{
@@ -736,15 +745,17 @@ func commandHelps() []commandHelp {
 			Name:     "eval",
 			Usage:    "gomoufox eval <url> --enable-eval (--script <js>|--script-file <path>)",
 			Summary:  "run JavaScript only when explicitly enabled",
-			Flags:    []string{"--enable-eval", "--script", "--script-file", "--wait-selector", "--wait-load-state", "--arg", "--arg-file"},
-			Examples: []string{"gomoufox --json eval https://example.com --enable-eval --script 'document.title'"},
+			Flags:    []string{"--enable-eval", "--width", "--height", "--script", "--script-file", "--wait-selector", "--wait-load-state", "--arg", "--arg-file"},
+			Notes:    []string{"--arg passes JSON to a function parameter; it creates no global variable. --arg-file reads the same JSON from a file."},
+			Examples: []string{"gomoufox --json eval https://example.com --enable-eval --script 'arg => arg.selector' --arg '{\"selector\":\"h1\"}'"},
 		},
 		{
 			Name:     "fetch",
 			Usage:    "gomoufox fetch <url> [--method GET] [--data <text>] [--navigate-first <url>]",
 			Summary:  "execute an HTTP request from inside the browser context",
-			Flags:    []string{"--method", "--data", "--data-file", "--header", "--content-type", "--cookies-file", "--navigate-first", "--max-bytes", "--raw"},
-			Examples: []string{"gomoufox --json fetch https://api.example.com/me --profile profiles/site"},
+			Flags:    []string{"--method", "--data", "--data-file", "--form", "--form-file", "--header", "--content-type", "--cookies-file", "--navigate-first", "--max-bytes", "--raw", "--out", "--overwrite", "--max-file-bytes"},
+			Notes:    []string{"--json --raw retains the JSON envelope and makes body a string. Omit --json for body bytes. Profile paths resolve from the working directory; use an absolute path across projects. Each CLI call starts a new page."},
+			Examples: []string{"gomoufox --json fetch https://api.example.com/me --profile /absolute/path/profiles/site", "gomoufox fetch https://example.com/data --raw"},
 		},
 		{
 			Name:     "session",
@@ -879,6 +890,7 @@ func (r Runner) runSetup(ctx context.Context, global globalFlags, args []string,
 		return ExitUsage
 	}
 	request := SetupRequest{
+		Recipe:      command.Recipe,
 		Target:      command.Target,
 		Scope:       command.Scope,
 		Features:    strings.Join(command.Features, ","),
@@ -896,7 +908,7 @@ func (r Runner) runSetup(ctx context.Context, global globalFlags, args []string,
 		_, _ = fmt.Fprintln(streams.Stdout, "gomoufox setup")
 		_, _ = fmt.Fprintln(streams.Stdout)
 		_, _ = fmt.Fprintln(streams.Stdout, "This will install runtime assets, check the local browser stack, and install agent skills plus MCP config.")
-		_, _ = fmt.Fprintf(streams.Stdout, "Agent target: %s\nScope: %s\nFeatures: %s\nToolset: %s\n\n", request.Target, request.Scope, request.Features, request.Toolset)
+		_, _ = fmt.Fprintf(streams.Stdout, "Agent target: %s\nScope: %s\nFeatures: %s\nRecipe: %s\nToolset: %s\n\n", request.Target, request.Scope, request.Features, request.Recipe, request.Toolset)
 	}
 	home, err := userHomeDir()
 	if err != nil {
@@ -929,8 +941,18 @@ func (r Runner) runSetup(ctx context.Context, global globalFlags, args []string,
 		AgentPlan:    plan,
 		AgentPlanRan: true,
 	}
+	for _, feature := range plan.Features {
+		if feature == agents.FeatureMCP {
+			response.MCPCommand = setupMCPCommand(command)
+			response.NextStep = "After applying, restart the agent's MCP connection and call browser_capabilities to verify the running settings. Existing connections keep their old settings."
+		}
+	}
 	if command.DryRun {
 		return writeSetupResponse(streams, global.JSON, response)
+	}
+	if !global.JSON {
+		printAgentPlan(streams.Stdout, response.AgentPlan)
+		printSetupMCP(streams.Stdout, response)
 	}
 	if !command.Yes && !confirmSetup(streams, "Apply these changes?") {
 		_, _ = fmt.Fprintln(streams.Stderr, "setup cancelled; pass --yes to run non-interactively")
@@ -998,18 +1020,23 @@ func parseSetup(args []string) (setupCommand, error) {
 		return setupCommand{}, errors.New("usage: gomoufox setup [--target codex|claude|cursor|gemini|all] [--scope user|project] [--features skills,mcp] [--toolset core|full] [--yes] [--dry-run]")
 	}
 	features := splitCSV(parsed.value("features"))
-	return setupCommand{
+	command := setupCommand{
+		Recipe:      parsed.valueDefault("recipe", "research"),
 		Target:      parsed.valueDefault("target", agents.TargetAll),
 		Scope:       parsed.valueDefault("scope", agents.ScopeUser),
 		Features:    features,
-		Toolset:     parsed.valueDefault("toolset", agents.DefaultToolset),
+		Toolset:     parsed.value("toolset"),
 		MCPArgs:     parsed.values["mcp-arg"],
 		Force:       parsed.bool("force"),
 		DryRun:      parsed.bool("dry-run"),
 		Yes:         parsed.bool("yes"),
 		SkipInstall: parsed.bool("skip-install"),
 		SkipDoctor:  parsed.bool("skip-doctor"),
-	}, nil
+	}
+	if err := applySetupRecipe(&command); err != nil {
+		return setupCommand{}, err
+	}
+	return command, nil
 }
 
 func confirmSetup(streams Streams, prompt string) bool {
@@ -1040,6 +1067,7 @@ func writeSetupResponse(streams Streams, asJSON bool, response SetupResponse) in
 		_, _ = fmt.Fprintln(streams.Stdout, "Agent files")
 		printAgentPlan(streams.Stdout, response.AgentPlan)
 	}
+	printSetupMCP(streams.Stdout, response)
 	if response.Applied {
 		_, _ = fmt.Fprintln(streams.Stdout, "setup complete")
 	} else {
@@ -1130,7 +1158,11 @@ func localRequestFromDaemonEnvelope(verb string, env daemon.Envelope) (LocalComm
 }
 
 func jailDaemonSessionPaths(serve ServeRequest, req *LocalCommandRequest) error {
-	if req.Command != "session import" && req.Command != "session export" {
+	if req.Command == "fetch" {
+		if flagString(*req, "out", "") == "" && flagString(*req, "data_file", "") == "" && flagString(*req, "cookies_file", "") == "" && len(flagStringList(*req, "form_file")) == 0 {
+			return nil
+		}
+	} else if req.Command != "session import" && req.Command != "session export" {
 		return nil
 	}
 	root := serve.SessionDir
@@ -1142,6 +1174,40 @@ func jailDaemonSessionPaths(serve ServeRequest, req *LocalCommandRequest) error 
 		return err
 	}
 	switch req.Command {
+	case "fetch":
+		for _, flag := range []string{"data_file", "cookies_file"} {
+			if path := flagString(*req, flag, ""); path != "" {
+				resolved, err := jail.ResolveRead(path)
+				if err != nil {
+					return err
+				}
+				req.Flags[flag] = resolved
+			}
+		}
+		files := flagStringList(*req, "form_file")
+		for i, raw := range files {
+			name, path, err := splitFormPair(raw)
+			if err != nil {
+				return err
+			}
+			resolved, err := jail.ResolveRead(path)
+			if err != nil {
+				return err
+			}
+			files[i] = name + "=" + resolved
+		}
+		if len(files) > 0 {
+			req.Flags["form_file"] = files
+		}
+		if path := flagString(*req, "out", ""); path != "" {
+			dst, err := jail.ResolveWrite(path, localBool(*req, "overwrite"))
+			if err != nil {
+				return err
+			}
+			displayOut, _ := jail.ConfinedPath(dst)
+			req.Flags["out"] = dst
+			req.DisplayOut = displayOut
+		}
 	case "session import":
 		src, err := jail.ResolveRead(flagString(*req, "file", ""))
 		if err != nil {
@@ -1246,6 +1312,8 @@ func daemonFlagSpecs(command string) (map[string]flagSpec, bool) {
 			"markdown":        {Kind: flagBool},
 			"html":            {Kind: flagBool},
 			"text":            {Kind: flagBool},
+			"width":           {Kind: flagValue},
+			"height":          {Kind: flagValue},
 			"wait-selector":   {Kind: flagValue},
 			"wait-load-state": {Kind: flagValue},
 			"max-bytes":       {Kind: flagValue},
@@ -1272,12 +1340,17 @@ func daemonFlagSpecs(command string) (map[string]flagSpec, bool) {
 			"method":         {Kind: flagValue},
 			"data":           {Kind: flagValue},
 			"data-file":      {Kind: flagValue},
+			"form":           {Kind: flagValue, Repeat: true},
+			"form-file":      {Kind: flagValue, Repeat: true},
 			"header":         {Kind: flagValue, Repeat: true},
 			"content-type":   {Kind: flagValue},
 			"cookies-file":   {Kind: flagValue},
 			"navigate-first": {Kind: flagValue},
 			"max-bytes":      {Kind: flagValue},
 			"raw":            {Kind: flagBool},
+			"out":            {Kind: flagValue},
+			"overwrite":      {Kind: flagBool},
+			"max-file-bytes": {Kind: flagValue},
 		} {
 			add(name, spec)
 		}
@@ -1285,6 +1358,8 @@ func daemonFlagSpecs(command string) (map[string]flagSpec, bool) {
 		for name, spec := range map[string]flagSpec{
 			"script":          {Kind: flagValue},
 			"script-file":     {Kind: flagValue},
+			"width":           {Kind: flagValue},
+			"height":          {Kind: flagValue},
 			"wait-selector":   {Kind: flagValue},
 			"wait-load-state": {Kind: flagValue},
 			"arg":             {Kind: flagValue},
@@ -1510,7 +1585,7 @@ func (r Runner) runMCP(ctx context.Context, global globalFlags, args []string, s
 			return ExitUsage
 		}
 		if _, err := policy.ClampInputCap(n); err != nil {
-			writeDiagnosticLine(streams.Stderr, err)
+			writeDiagnosticLine(streams.Stderr, fmt.Errorf("%w; send uploads through browser_fetch.body_path or browser_fetch_form file paths with --allow-browser-file-fetch; file bytes use a separate 50 MiB limit", err))
 			return ExitUsage
 		}
 		cfg.MaxInputBytes = n
@@ -1603,7 +1678,7 @@ func defaultServeSessionDir() string {
 	return defaultMCPSessionDir()
 }
 
-func (r Runner) runInstall(ctx context.Context, args []string, streams Streams) int {
+func (r Runner) runInstall(ctx context.Context, global globalFlags, args []string, streams Streams) int {
 	parsed, err := parseFlags(args, installFlagSpecs())
 	if err != nil {
 		writeDiagnosticLine(streams.Stderr, err)
@@ -1626,11 +1701,28 @@ func (r Runner) runInstall(ctx context.Context, args []string, streams Streams) 
 	if install == nil {
 		install = defaultInstallEnsureInstalled
 	}
-	if err := install(ctx, req); err != nil {
+	err = install(ctx, req)
+	result := installResult(req, err)
+	if global.JSON {
+		if encodeErr := json.NewEncoder(streams.Stdout).Encode(result); encodeErr != nil {
+			writeDiagnosticLine(streams.Stderr, encodeErr)
+			return ExitRuntime
+		}
+	}
+	if err != nil {
 		writeDiagnosticLine(streams.Stderr, err)
+		if !global.JSON {
+			_, _ = fmt.Fprintln(streams.Stderr, "reason: "+result.Recovery.Reason+"; "+result.Recovery.Hint)
+			_, _ = fmt.Fprintln(streams.Stderr, "inspect: "+displayCommand(result.DoctorCommand))
+			if len(result.Recovery.Command) != 0 {
+				_, _ = fmt.Fprintln(streams.Stderr, "retry after resolving the cause: "+displayCommand(result.Recovery.Command))
+			}
+		}
 		return mapError(err)
 	}
-	_, _ = fmt.Fprintln(streams.Stdout, ">> gomoufox install complete")
+	if !global.JSON {
+		_, _ = fmt.Fprintln(streams.Stdout, ">> gomoufox install complete")
+	}
 	return ExitOK
 }
 
@@ -1644,15 +1736,25 @@ var defaultInstallEnsureInstalled = func(ctx context.Context, req InstallRequest
 }
 
 func (r Runner) runDoctor(ctx context.Context, global globalFlags, args []string, streams Streams) int {
-	if len(args) != 0 {
-		_, _ = fmt.Fprintln(streams.Stderr, "usage: gomoufox doctor")
+	parsed, err := parseFlags(args, doctorFlagSpecs())
+	if err != nil {
+		writeDiagnosticLine(streams.Stderr, err)
+		return ExitUsage
+	}
+	if len(parsed.Positionals) != 0 {
+		_, _ = fmt.Fprintln(streams.Stderr, "usage: gomoufox doctor [--dir path] [--runtime node-direct|python]")
+		return ExitUsage
+	}
+	runtimeName := parsed.valueDefault("runtime", sidecar.RuntimeNodeDirect)
+	if runtimeName != sidecar.RuntimeNodeDirect && runtimeName != sidecar.RuntimePython {
+		writeDiagnosticLine(streams.Stderr, errors.New("--runtime must be node-direct or python"))
 		return ExitUsage
 	}
 	doctor := r.Hooks.Doctor
 	if doctor == nil {
 		doctor = defaultDoctor
 	}
-	report, err := doctor(ctx, DoctorRequest{JSON: global.JSON})
+	report, err := doctor(ctx, DoctorRequest{JSON: global.JSON, Dir: parsed.value("dir"), Runtime: runtimeName})
 	report = redactDoctorReport(report)
 	if global.JSON {
 		_ = json.NewEncoder(streams.Stdout).Encode(report)
@@ -1669,43 +1771,34 @@ func (r Runner) runDoctor(ctx context.Context, global globalFlags, args []string
 	return ExitOK
 }
 
-var defaultDoctorEnsureInstalled = func(ctx context.Context) error {
-	return ensureInstalledForCLI(ctx, func(o *gomoufox.InstallOptions) {
-		o.SkipBinaryFetch = true
-	})
-}
-
 var ensureInstalledForCLI = gomoufox.EnsureInstalled
 var doctorGOOS = runtime.GOOS
 var doctorLookupEnv = os.LookupEnv
 var doctorLookPath = exec.LookPath
+var doctorInspectInstallation = sidecar.InspectInstallation
 
 func defaultDoctor(ctx context.Context, req DoctorRequest) (DoctorReport, error) {
-	match := true
+	inspected := doctorInspectInstallation(ctx, req.Dir, req.Runtime)
 	report := DoctorReport{
-		RuntimeAssets: Check{OK: true, Version: sidecar.CamoufoxBinaryVersion, Platform: doctorGOOS},
-		Display:       doctorDisplayCheck(),
+		Executable: doctorExecutableCheck(), Runtime: inspected.Runtime, CacheDir: inspected.CacheDir,
+		RuntimeAssets: Check(inspected.RuntimeAssets), Node: Check(inspected.Node),
+		Python: Check(inspected.Python), Venv: Check(inspected.Venv),
+		CamoufoxPkg: Check(inspected.CamoufoxPkg), Playwright: Check(inspected.Playwright),
+		CamoufoxBin: Check(inspected.CamoufoxBin), Display: doctorDisplayCheck(),
 	}
-	err := defaultDoctorEnsureInstalled(ctx)
-	if err != nil {
-		report.RuntimeAssets = Check{OK: false, Error: policy.Redact(err.Error())}
-		return report, err
+	if source, ok := doctorLookupEnv(sidecar.EnvCamoufoxPath); ok && strings.TrimSpace(source) != "" {
+		report.CamoufoxBin.Warning = "GOMOUFOX_CAMOUFOX_PATH selects an installation source; this report inspects the managed cache"
 	}
-	report.CamoufoxPkg = Check{OK: true, Version: sidecar.RequiredCamoufox}
-	report.Playwright = Check{OK: true, PkgVersion: sidecar.RequiredPlaywright, DriverVersion: sidecar.RequiredPlaywright, Match: &match}
-	report.CamoufoxBin = doctorCamoufoxBinCheck()
+	if trust, ok := doctorLookupEnv(sidecar.EnvTrustUnverifiedCamoufoxPath); ok && trust == "1" {
+		report.CamoufoxBin.Warning = "runtime integrity bypass is enabled by " + sidecar.EnvTrustUnverifiedCamoufoxPath + "=1; doctor still checks cached integrity"
+	}
+	report.FetchDisabled = os.Getenv("GOMOUFOX_SKIP_FETCH") != ""
+	report.Recovery = doctorRecovery(report)
 	return report, nil
 }
 
-func doctorCamoufoxBinCheck() Check {
-	check := Check{OK: true}
-	if path, ok := doctorLookupEnv(sidecar.EnvCamoufoxPath); ok && strings.TrimSpace(path) != "" {
-		check.Path = path
-	}
-	if trust, ok := doctorLookupEnv(sidecar.EnvTrustUnverifiedCamoufoxPath); ok && trust == "1" && check.Path != "" {
-		check.Warning = "using unverified offline Camoufox path; manifest verification is disabled by " + sidecar.EnvTrustUnverifiedCamoufoxPath + "=1"
-	}
-	return check
+func doctorFlagSpecs() map[string]flagSpec {
+	return map[string]flagSpec{"dir": {Kind: flagValue}, "runtime": {Kind: flagValue}}
 }
 
 func doctorDisplayCheck() Check {
@@ -1725,6 +1818,18 @@ func doctorDisplayCheck() Check {
 }
 
 func printDoctor(w io.Writer, report DoctorReport) {
+	if report.Executable.Path != "" {
+		_, _ = fmt.Fprintf(w, "[INFO] executable    %s (%s; %s; %s)\n", report.Executable.Path, report.Executable.Version, report.Executable.Revision, report.Executable.Platform)
+	}
+	if report.Executable.Warning != "" {
+		_, _ = fmt.Fprintln(w, "[WARN] executable   "+report.Executable.Warning)
+	}
+	if report.CacheDir != "" {
+		_, _ = fmt.Fprintf(w, "[INFO] cache         %s (%s)\n", report.CacheDir, report.Runtime)
+	}
+	if checkSet(report.Node) {
+		printCheck(w, "node", report.Node)
+	}
 	printCheck(w, "runtime-assets", report.RuntimeAssets)
 	if checkSet(report.Python) {
 		printCheck(w, "python3", report.Python)
@@ -1736,22 +1841,35 @@ func printDoctor(w io.Writer, report DoctorReport) {
 	printCheck(w, "playwright", report.Playwright)
 	printCheck(w, "camoufox-bin", report.CamoufoxBin)
 	printCheck(w, "display", report.Display)
+	for _, recovery := range report.Recovery {
+		_, _ = fmt.Fprintln(w, "[NEXT] "+recovery.Reason+": "+recovery.Hint)
+		if len(recovery.Command) != 0 {
+			_, _ = fmt.Fprintln(w, "       "+displayCommand(recovery.Command))
+		}
+	}
 }
 
 func printCheck(w io.Writer, name string, check Check) {
 	tag := "OK"
 	message := check.message()
-	if check.Warning != "" {
+	if check.Warning != "" && check.Error == "" {
 		tag = "WARN"
 		message = check.Warning
 	} else if !check.OK {
 		tag = "FAIL"
 		message = check.Error
 	}
+	if check.ExpectedVersion != "" {
+		message += " (expected " + check.ExpectedVersion + ")"
+	}
+	if check.Path != "" && !strings.Contains(message, check.Path) {
+		message += " " + check.Path
+	}
 	_, _ = fmt.Fprintf(w, "[%s]  %-13s %s\n", tag, name, policy.Redact(message))
 }
 
 func redactDoctorReport(report DoctorReport) DoctorReport {
+	report.Node = redactCheck(report.Node)
 	report.RuntimeAssets = redactCheck(report.RuntimeAssets)
 	report.Python = redactCheck(report.Python)
 	report.Venv = redactCheck(report.Venv)
@@ -1794,16 +1912,16 @@ func (c Check) message() string {
 	case c.Error != "":
 		return c.Error
 	default:
-		return ""
+		return c.Status
 	}
 }
 
 func (r DoctorReport) hasFailure() bool {
-	for _, check := range []Check{r.RuntimeAssets, r.Python, r.Venv, r.CamoufoxPkg, r.Playwright, r.CamoufoxBin, r.Display} {
+	for _, check := range []Check{r.RuntimeAssets, r.Node, r.Python, r.Venv, r.CamoufoxPkg, r.Playwright, r.CamoufoxBin, r.Display} {
 		if !checkSet(check) {
 			continue
 		}
-		if check.Warning != "" {
+		if check.Warning != "" && check.Error == "" {
 			continue
 		}
 		if !check.OK {
@@ -1814,7 +1932,7 @@ func (r DoctorReport) hasFailure() bool {
 }
 
 func checkSet(check Check) bool {
-	return check.OK ||
+	return check.OK || check.Status != "" || check.ExpectedVersion != "" ||
 		check.Version != "" ||
 		check.PkgVersion != "" ||
 		check.DriverVersion != "" ||
@@ -1854,6 +1972,7 @@ func installFlagSpecs() map[string]flagSpec {
 
 func setupFlagSpecs() map[string]flagSpec {
 	return map[string]flagSpec{
+		"recipe":       {Kind: flagValue},
 		"target":       {Kind: flagValue},
 		"scope":        {Kind: flagValue},
 		"features":     {Kind: flagValue},
@@ -1937,6 +2056,8 @@ func getFlagSpecs() map[string]flagSpec {
 		"markdown":        {Kind: flagBool},
 		"html":            {Kind: flagBool},
 		"text":            {Kind: flagBool},
+		"width":           {Kind: flagValue},
+		"height":          {Kind: flagValue},
 		"wait-selector":   {Kind: flagValue},
 		"wait-load-state": {Kind: flagValue},
 		"max-bytes":       {Kind: flagValue},
@@ -1962,6 +2083,8 @@ func evalFlagSpecs() map[string]flagSpec {
 	return map[string]flagSpec{
 		"script":          {Kind: flagValue},
 		"script-file":     {Kind: flagValue},
+		"width":           {Kind: flagValue},
+		"height":          {Kind: flagValue},
 		"wait-selector":   {Kind: flagValue},
 		"wait-load-state": {Kind: flagValue},
 		"arg":             {Kind: flagValue},
@@ -1975,12 +2098,17 @@ func fetchFlagSpecs() map[string]flagSpec {
 		"method":         {Kind: flagValue},
 		"data":           {Kind: flagValue},
 		"data-file":      {Kind: flagValue},
+		"form":           {Kind: flagValue, Repeat: true},
+		"form-file":      {Kind: flagValue, Repeat: true},
 		"header":         {Kind: flagValue, Repeat: true},
 		"content-type":   {Kind: flagValue},
 		"cookies-file":   {Kind: flagValue},
 		"navigate-first": {Kind: flagValue},
 		"max-bytes":      {Kind: flagValue},
 		"raw":            {Kind: flagBool},
+		"out":            {Kind: flagValue},
+		"overwrite":      {Kind: flagBool},
+		"max-file-bytes": {Kind: flagValue},
 	}
 }
 
@@ -2060,6 +2188,7 @@ type agentsCommand struct {
 }
 
 type setupCommand struct {
+	Recipe      string
 	Target      string
 	Scope       string
 	Features    []string
@@ -2453,7 +2582,9 @@ func (r Runner) validateBrowserInputs(ctx context.Context, global globalFlags, p
 			continue
 		}
 		if _, err := validator.Validate(ctx, raw); err != nil {
-			writeDiagnosticLine(streams.Stderr, err)
+			response := localGuardrailBlockedResponse(LocalCommandRequest{JSON: global.JSON}, err.Error())
+			_, _ = streams.Stdout.Write(response.Stdout)
+			writeDiagnosticLine(streams.Stderr, errors.New(response.Stderr))
 			return ExitURLBlocked
 		}
 	}
@@ -2645,7 +2776,7 @@ func parseGet(args []string) (parsedFlags, error) {
 	if err := validateMaxBytes(parsed.value("max-bytes"), policy.HardMaxResponseBytes, "--max-bytes"); err != nil {
 		return parsed, err
 	}
-	return parsed, nil
+	return parsed, validateViewportFlags(parsed)
 }
 
 func parseScreenshot(args []string) (parsedFlags, error) {
@@ -2704,8 +2835,12 @@ func parseEvalFlags(args []string) (parsedFlags, error) {
 }
 
 const evalArgMaxBytes = 240 * 1024
+const scriptSizeHint = "script exceeds 65536 bytes; keep code small and pass JSON with --arg-file (245760-byte limit); upload binary data with fetch --data-file or --form-file (50 MiB limit)"
 
 func validateEval(parsed parsedFlags) error {
+	if err := validateViewportFlags(parsed); err != nil {
+		return err
+	}
 	if len(parsed.Positionals) != 1 {
 		return errors.New("usage: gomoufox eval <URL> --script <js>")
 	}
@@ -2713,7 +2848,7 @@ func validateEval(parsed parsedFlags) error {
 		return errors.New("exactly one of --script or --script-file is required")
 	}
 	if len(parsed.value("script")) > 64*1024 {
-		return errors.New("--script exceeds 65536 bytes")
+		return errors.New(scriptSizeHint)
 	}
 	if parsed.has("arg") && parsed.has("arg-file") {
 		return errors.New("--arg and --arg-file are mutually exclusive")
@@ -2767,8 +2902,30 @@ func parseFetch(args []string) (parsedFlags, error) {
 	if parsed.has("data") && parsed.has("data-file") {
 		return parsed, errors.New("--data and --data-file are mutually exclusive")
 	}
+	if len(parsed.valueList("form"))+len(parsed.valueList("form-file")) > 0 {
+		if parsed.has("data") || parsed.has("data-file") || parsed.has("content-type") {
+			return parsed, errors.New("--form and --form-file cannot be combined with --data, --data-file or --content-type")
+		}
+		if parsed.has("method") && (method == "GET" || method == "HEAD") {
+			return parsed, errors.New("multipart requires POST, PUT, PATCH or DELETE")
+		}
+		if len(parsed.valueList("form")) > 128 || len(parsed.valueList("form-file")) > 32 {
+			return parsed, errors.New("multipart accepts at most 128 fields and 32 files")
+		}
+		for _, field := range append(parsed.valueList("form"), parsed.valueList("form-file")...) {
+			if _, _, err := splitFormPair(field); err != nil {
+				return parsed, err
+			}
+		}
+		for _, header := range parsed.valueList("header") {
+			name, _, _ := strings.Cut(header, ":")
+			if strings.EqualFold(strings.TrimSpace(name), "content-type") {
+				return parsed, errors.New("multipart generates its own Content-Type boundary; remove the Content-Type header")
+			}
+		}
+	}
 	if len(parsed.value("data")) > policy.HardMaxInputBytes {
-		return parsed, fmt.Errorf("--data exceeds %d bytes", policy.HardMaxInputBytes)
+		return parsed, fmt.Errorf("--data exceeds %d bytes; use --data-file for a binary body or --form-file for multipart (50 MiB limit)", policy.HardMaxInputBytes)
 	}
 	for _, header := range parsed.valueList("header") {
 		if !strings.Contains(header, ":") {
@@ -2776,6 +2933,15 @@ func parseFetch(args []string) (parsedFlags, error) {
 		}
 	}
 	if err := validateMaxBytes(parsed.value("max-bytes"), policy.HardMaxResponseBytes, "--max-bytes"); err != nil {
+		return parsed, err
+	}
+	if parsed.has("out") && (parsed.value("out") == "" || parsed.has("max-bytes") || parsed.has("raw")) {
+		return parsed, errors.New("--out requires a path and cannot be combined with --max-bytes or --raw; use --max-file-bytes for the artifact limit")
+	}
+	if (parsed.has("max-file-bytes") || parsed.has("overwrite")) && !parsed.has("out") {
+		return parsed, errors.New("--max-file-bytes and --overwrite require --out")
+	}
+	if err := validateMaxBytes(parsed.value("max-file-bytes"), gomoufox.MaxTransferFileBytes, "--max-file-bytes"); err != nil {
 		return parsed, err
 	}
 	return parsed, nil
@@ -3082,7 +3248,7 @@ func parseGlobal(args []string) (globalFlags, string, []string, error) {
 			continue
 		}
 		if commandIndex < 0 || i < commandIndex {
-			return global, "", nil, fmt.Errorf("unknown global flag: --%s", name)
+			return global, "", nil, unknownFlagError(name, globalFlagSpecs(), true)
 		}
 		rest = append(rest, arg)
 	}
@@ -3114,21 +3280,13 @@ func findCommandIndex(args []string) int {
 }
 
 func isGlobalBool(name string) bool {
-	switch name {
-	case "headless", "headful", "allow-localhost", "json", "verbose", "version", "help":
-		return true
-	default:
-		return false
-	}
+	spec, ok := globalFlagSpecs()[name]
+	return ok && spec.Kind == flagBool
 }
 
 func isGlobalValue(name string) bool {
-	switch name {
-	case "profile", "proxy", "timeout", "locale", "os", "server", "server-token", "allow-schemes":
-		return true
-	default:
-		return false
-	}
+	spec, ok := globalFlagSpecs()[name]
+	return ok && spec.Kind == flagValue
 }
 
 func applyGlobalBool(global *globalFlags, name string, value bool) {
@@ -3160,7 +3318,7 @@ func applyGlobalValue(global *globalFlags, name, value string) error {
 	case "timeout":
 		timeout, err := ParseDuration(value, 30*time.Second)
 		if err != nil {
-			return err
+			return fmt.Errorf("--timeout: %w", err)
 		}
 		global.TimeoutRaw = value
 		global.Timeout = timeout
@@ -3256,7 +3414,7 @@ func parseFlags(args []string, specs map[string]flagSpec) (parsedFlags, error) {
 		name, value, hasValue := splitLongFlag(arg)
 		spec, ok := specs[name]
 		if !ok {
-			return parsed, fmt.Errorf("unknown flag: --%s", name)
+			return parsed, unknownFlagError(name, specs, false)
 		}
 		switch spec.Kind {
 		case flagBool:
@@ -3410,10 +3568,22 @@ func ParseDuration(value string, fallback time.Duration) (time.Duration, error) 
 	}
 	duration, err := time.ParseDuration(value)
 	if err != nil {
-		return 0, err
+		return 0, errors.New("invalid duration; include a unit, for example 500ms, 25s or 2m")
 	}
 	if duration <= 0 {
 		return 0, errors.New("duration must be greater than zero")
 	}
 	return duration, nil
+}
+
+func validateViewportFlags(parsed parsedFlags) error {
+	for _, name := range []string{"width", "height"} {
+		if raw := parsed.value(name); raw != "" {
+			n, err := parseIntFlag(raw, "--"+name)
+			if err != nil || n < 1 || n > 100000 {
+				return fmt.Errorf("--%s must be between 1 and 100000", name)
+			}
+		}
+	}
+	return nil
 }

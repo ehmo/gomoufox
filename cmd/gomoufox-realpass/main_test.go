@@ -146,6 +146,28 @@ bad row
 	}
 }
 
+func TestTargetResourcesIncludeHarnessAndAllDriverChildren(t *testing.T) {
+	page := &fakeRealpassPage{
+		url: "https://example.com/", title: "ok", content: "<main>ok</main>",
+		evaluate: map[string]any{}, response: fakeRealpassResponse{status: 200, statusText: "OK"},
+	}
+	// The sidecar is only one child of the harness; using its PID excludes
+	// the Go runner and the sibling Playwright client driver.
+	browser := &fakeRealpassBrowser{pid: -1, page: page}
+	result := runTargetWithBrowserContext(context.Background(), browser,
+		targetResult{Name: "one", URL: "https://example.com/"}, time.Now(),
+		time.Second, "commit", 0, 0, 250000, time.Hour, true, false, "")
+	if result.Outcome != "passed" {
+		t.Fatalf("target failed: %#v", result)
+	}
+	if result.Resources.RootPID != os.Getpid() || result.Resources.Scope != "gomoufox_harness_process_tree" {
+		t.Fatalf("resource scope excludes the harness: %#v", result.Resources)
+	}
+	if result.Resources.Samples == 0 || result.Resources.PeakRSSMiB <= 0 || len(result.Resources.SampleErrors) != 0 {
+		t.Fatalf("harness resource sampling failed: %#v", result.Resources)
+	}
+}
+
 func TestSummarize(t *testing.T) {
 	summary := summarize([]targetResult{
 		{Outcome: "passed", Resources: resourceSummary{PeakRSSMiB: 10, MaxCPUPercent: 1}},
@@ -1054,6 +1076,8 @@ func TestReportOptionDiffsCoverBenchmarkOptions(t *testing.T) {
 		LoadStateTimeout: "0s",
 		ContentMaxBytes:  250000,
 		SampleInterval:   "500ms",
+		ResourceScope:    "harness_process_tree",
+		ResourceSampling: "fixed_period",
 		ReuseBrowser:     true,
 		UnsafeDirect:     true,
 		GeneratedPersona: true,
@@ -1076,6 +1100,8 @@ func TestReportOptionDiffsCoverBenchmarkOptions(t *testing.T) {
 		"runtime option mismatch load_state_timeout: go=0s python=1s",
 		"runtime option mismatch content_max_bytes: go=250000 python=0",
 		"runtime option mismatch sample_interval: go=500ms python=bad",
+		"runtime option mismatch resource_scope: go=harness_process_tree python=<unset>",
+		"runtime option mismatch resource_sampling: go=fixed_period python=<unset>",
 		"runtime option mismatch headful: go=false python=true",
 		"runtime option mismatch screenshots: go=false python=true",
 		"runtime option mismatch reuse_browser: go=true python=false",

@@ -19,10 +19,7 @@ type InstallOptions struct {
 	ForceReinstall  bool
 }
 
-var (
-	sidecarEnsureInstalled               = sidecar.EnsureInstalled
-	sidecarEnsureManagedPlaywrightDriver = sidecar.EnsureManagedPlaywrightDriver
-)
+var sidecarEnsureInstalled = sidecar.EnsureInstalled
 
 func EnsureInstalled(ctx context.Context, opts ...func(*InstallOptions)) error {
 	var cfg InstallOptions
@@ -41,29 +38,7 @@ func EnsureInstalled(ctx context.Context, opts ...func(*InstallOptions)) error {
 	}); err != nil {
 		return mapSidecarError(err)
 	}
-	if installRuntime(cfg.Runtime) == SidecarRuntimeNodeDirect {
-		return nil
-	}
-	if err := sidecarEnsureManagedPlaywrightDriver(ctx, sidecar.InstallOptions{
-		VenvDir:         cfg.VenvDir,
-		SkipBinaryFetch: cfg.SkipBinaryFetch,
-		Verbose:         cfg.Verbose,
-		ForceReinstall:  cfg.ForceReinstall,
-	}); err != nil {
-		mapped := mapSidecarError(err)
-		if errors.Is(mapped, ErrNotInstalled) || errors.Is(mapped, ErrVersionMismatch) {
-			return fmt.Errorf("playwright driver install failed: %w", mapped)
-		}
-		return fmt.Errorf("%w: playwright driver install failed: %v", ErrNotInstalled, err)
-	}
 	return nil
-}
-
-func installRuntime(runtime SidecarRuntime) SidecarRuntime {
-	if runtime == "" {
-		return SidecarRuntimeNodeDirect
-	}
-	return runtime
 }
 
 func managedPlaywrightDriverDir(venvDir string) string {

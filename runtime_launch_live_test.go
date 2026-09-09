@@ -9,14 +9,24 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
-
-	"github.com/ehmo/gomoufox/camoufoxcfg"
 )
 
 func TestManagedRuntimeLaunch(t *testing.T) {
 	if os.Getenv("GOMOUFOX_RUNTIME_LAUNCH") != "1" {
 		t.Skip("set GOMOUFOX_RUNTIME_LAUNCH=1 to run the managed runtime launch gate")
 	}
+	testManagedRuntimeLaunch(t, SidecarRuntimeNodeDirect)
+}
+
+func TestManagedPythonEnvironmentLaunch(t *testing.T) {
+	if os.Getenv("GOMOUFOX_PYTHON_RUNTIME_LAUNCH") != "1" {
+		t.Skip("set GOMOUFOX_PYTHON_RUNTIME_LAUNCH=1 to run the managed Python environment launch gate")
+	}
+	testManagedRuntimeLaunch(t, SidecarRuntimePython)
+}
+
+func testManagedRuntimeLaunch(t *testing.T, runtime SidecarRuntime) {
+	t.Helper()
 	venvDir := os.Getenv("GOMOUFOX_RUNTIME_LAUNCH_VENV")
 	if venvDir == "" {
 		t.Fatal("GOMOUFOX_RUNTIME_LAUNCH_VENV must name an isolated runtime cache")
@@ -41,19 +51,18 @@ func TestManagedRuntimeLaunch(t *testing.T) {
 
 	if err := EnsureInstalled(ctx, func(opts *InstallOptions) {
 		opts.VenvDir = venvDir
-		opts.Runtime = SidecarRuntimeNodeDirect
+		opts.Runtime = runtime
 	}); err != nil {
-		t.Fatalf("install managed node-direct runtime: %v", err)
+		t.Fatalf("install managed %s runtime: %v", runtime, err)
 	}
 	browser, err := New(ctx,
 		WithVenvDir(venvDir),
-		WithSidecarRuntime(SidecarRuntimeNodeDirect),
+		WithSidecarRuntime(runtime),
 		WithAutoInstall(false),
-		WithHeadless(camoufoxcfg.HeadlessTrue),
 		WithAllowLocalhost(true),
 	)
 	if err != nil {
-		t.Fatalf("launch managed node-direct runtime: %v", err)
+		t.Fatalf("launch managed %s runtime: %v", runtime, err)
 	}
 	t.Cleanup(func() {
 		if err := browser.Close(); err != nil {

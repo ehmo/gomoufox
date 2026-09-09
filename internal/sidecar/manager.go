@@ -228,7 +228,7 @@ func (m *Manager) Stop(ctx context.Context) {
 	cmd := m.cmd
 	m.mu.Unlock()
 	if cmd != nil && cmd.Process != nil {
-		terminateProcessTree(cmd)
+		requestProcessStop(cmd)
 		select {
 		case <-m.done:
 		case <-time.After(sidecarStopKillTimeout):
@@ -549,6 +549,9 @@ func launchArgsJSON(cfg Config) ([]byte, error) {
 	if len(cfg.Fonts) > 0 {
 		launchArgs["fonts"] = cfg.Fonts
 	}
+	if cfg.Window == nil && !cfg.FingerprintExact {
+		launchArgs["_native_window"] = true
+	}
 	if len(cfg.Fingerprint) > 0 {
 		launchArgs["config"] = cfg.Fingerprint
 	}
@@ -618,6 +621,7 @@ import contextlib
 from pathlib import Path
 import os
 import subprocess
+import signal
 import sys
 import orjson
 from browserforge.fingerprints import Screen
@@ -625,8 +629,9 @@ from camoufox.addons import DefaultAddons
 import camoufox.pkgman as camoufox_pkgman
 import camoufox.utils as camoufox_utils
 from camoufox.server import LAUNCH_SCRIPT, get_nodejs, launch_options, to_camel_case_dict
-
+` + pythonNativeWindowScript + `
 launch_kwargs = orjson.loads(sys.stdin.buffer.read())
+window_keys = native_window_keys(launch_kwargs)
 managed_executable_path = launch_kwargs.pop("executable_path", None)
 if managed_executable_path:
     managed_executable = Path(managed_executable_path).resolve()
@@ -653,6 +658,7 @@ if isinstance(webgl_value, dict):
     launch_kwargs["webgl_config"] = (webgl_value.get("vendor"), webgl_value.get("renderer"))
 with contextlib.redirect_stdout(sys.stderr):
     config = launch_options(**launch_kwargs)
+apply_native_window(config, window_keys)
 if managed_executable_path and os.path.realpath(config.get("executable_path", "")) != os.path.realpath(managed_executable_path):
     raise RuntimeError("Camoufox resolved an unexpected managed browser executable")
 if config.get("proxy") is None:
@@ -665,6 +671,7 @@ if persistent_user_data_dir:
     payload["_sharedBrowser"] = True
 data = orjson.dumps(payload)
 process = subprocess.Popen([nodejs, str(LAUNCH_SCRIPT)], cwd=Path(nodejs).parent / "package", stdin=subprocess.PIPE, text=True)
+signal.signal(signal.SIGTERM, lambda signum, frame: process.send_signal(signum))
 if process.stdin:
     process.stdin.write(base64.b64encode(data).decode())
     process.stdin.close()

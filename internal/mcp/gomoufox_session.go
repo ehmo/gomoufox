@@ -15,6 +15,7 @@ import (
 	"github.com/ehmo/gomoufox/camoufoxcfg"
 	"github.com/ehmo/gomoufox/internal/a11y"
 	"github.com/ehmo/gomoufox/internal/policy"
+	"github.com/ehmo/gomoufox/internal/renderinfo"
 )
 
 type gomoufoxFactory struct {
@@ -123,6 +124,9 @@ type pageAdapter struct {
 
 func (l realGomoufoxLauncher) Launch(ctx context.Context, opts sessionOptions, dedicated bool) (mcpBrowser, error) {
 	launchOpts := []gomoufox.Option{gomoufox.WithMainWorldEval(true)}
+	if opts.headful {
+		launchOpts = append(launchOpts, gomoufox.WithHeadless(camoufoxcfg.HeadlessFalse))
+	}
 	if opts.os != "" {
 		launchOpts = append(launchOpts, gomoufox.WithOS(camoufoxcfg.OS(opts.os)))
 	}
@@ -311,7 +315,7 @@ func newGomoufoxFactory(cfg policy.Config) *gomoufoxFactory {
 }
 
 func (f *gomoufoxFactory) NewBrowserSession(ctx context.Context, opts sessionOptions) (browserSession, error) {
-	dedicated := opts.profilePath != "" || opts.os != "" || opts.proxy != ""
+	dedicated := opts.headful || opts.profilePath != "" || opts.os != "" || opts.proxy != ""
 	browser, closeBrowser, err := f.browser(ctx, opts, dedicated)
 	if err != nil {
 		return nil, err
@@ -340,13 +344,22 @@ func (f *gomoufoxFactory) NewBrowserSession(ctx context.Context, opts sessionOpt
 			return nil, err
 		}
 		if err := verifyMCPInternalEvaluation(ctx, page); err != nil {
-			err = errors.Join(err, page.Close(), abortMCPContext(browserContext))
+			err = errors.Join(err, abortMCPContext(browserContext))
 			if closeBrowser {
 				err = errors.Join(err, browser.Close())
 			}
 			return nil, err
 		}
-		return newGomoufoxSession(ctx, browser, browserContext, page, closeBrowser), nil
+		session := newGomoufoxSession(ctx, browser, browserContext, page, closeBrowser)
+		session.contextOptions = contextOpts
+		session.requestedOS = opts.os
+		if opts.width > 0 {
+			session.requestedViewport = &renderinfo.Size{Width: opts.width, Height: opts.height}
+		}
+		if opts.har != nil {
+			session.contextOptions = contextOpts[:len(contextOpts)-1]
+		}
+		return session, nil
 	}
 	browserContext, err := browser.NewContext(ctx, contextOpts...)
 	if err != nil {
@@ -364,13 +377,22 @@ func (f *gomoufoxFactory) NewBrowserSession(ctx context.Context, opts sessionOpt
 		return nil, err
 	}
 	if err := verifyMCPInternalEvaluation(ctx, page); err != nil {
-		err = errors.Join(err, page.Close(), abortMCPContext(browserContext))
+		err = errors.Join(err, abortMCPContext(browserContext))
 		if closeBrowser {
 			err = errors.Join(err, browser.Close())
 		}
 		return nil, err
 	}
-	return newGomoufoxSession(ctx, browser, browserContext, page, closeBrowser), nil
+	session := newGomoufoxSession(ctx, browser, browserContext, page, closeBrowser)
+	session.contextOptions = contextOpts
+	session.requestedOS = opts.os
+	if opts.width > 0 {
+		session.requestedViewport = &renderinfo.Size{Width: opts.width, Height: opts.height}
+	}
+	if opts.har != nil {
+		session.contextOptions = contextOpts[:len(contextOpts)-1]
+	}
+	return session, nil
 }
 
 func (f *gomoufoxFactory) browser(ctx context.Context, opts sessionOptions, dedicated bool) (mcpBrowser, bool, error) {
@@ -424,16 +446,19 @@ func abortMCPContext(browserContext mcpContext) error {
 }
 
 type gomoufoxSession struct {
-	browser      mcpBrowser
-	context      mcpContext
-	page         mcpPage
-	closeBrowser bool
-	refs         *a11y.Store
-	observations *observationBuffers
-	dialogMu     sync.Mutex
-	dialogPolicy string
-	dialogPrompt string
-	harResult    *gomoufox.HARResult
+	requestedViewport *renderinfo.Size
+	requestedOS       string
+	contextOptions    []gomoufox.ContextOption
+	browser           mcpBrowser
+	context           mcpContext
+	page              mcpPage
+	closeBrowser      bool
+	refs              *a11y.Store
+	observations      *observationBuffers
+	dialogMu          sync.Mutex
+	dialogPolicy      string
+	dialogPrompt      string
+	harResult         *gomoufox.HARResult
 }
 
 func newGomoufoxSession(ctx context.Context, browser mcpBrowser, browserContext mcpContext, page mcpPage, closeBrowser bool) *gomoufoxSession {
@@ -453,20 +478,17 @@ func newGomoufoxSession(ctx context.Context, browser mcpBrowser, browserContext 
 func (s *gomoufoxSession) Navigate(ctx context.Context, rawURL string, opts navigateOptions) (navigateResult, error) {
 	ctx, cancel := timeoutContext(ctx, opts.Timeout)
 	defer cancel()
-	resp, err := s.page.Goto(ctx, rawURL, gomoufox.WaitUntil(opts.WaitUntil), gomoufox.WithTimeout(opts.Timeout))
-	if err != nil {
-		return navigateResult{}, err
-	}
-	title, err := s.page.Title(ctx)
-	if err != nil {
-		return navigateResult{}, err
-	}
-	status := 0
-	if resp != nil {
-		status = resp.Status()
-	}
 	s.refs.Clear()
-	return navigateResult{URL: s.page.URL(), Title: title, Status: status}, nil
+	resp, err := s.page.Goto(ctx, rawURL, gomoufox.WaitUntil(opts.WaitUntil), gomoufox.WithTimeout(opts.Timeout))
+	result := navigateResult{URL: s.page.URL()}
+	if resp != nil {
+		result.Status = resp.Status()
+	}
+	if err != nil {
+		return result, err
+	}
+	result.Title, err = s.page.Title(ctx)
+	return result, err
 }
 
 func (s *gomoufoxSession) PageContent(ctx context.Context, opts pageContentOptions) (pageContent, error) {
@@ -484,12 +506,14 @@ func (s *gomoufoxSession) PageContent(ctx context.Context, opts pageContentOptio
 		return pageContent{}, err
 	}
 	var payload struct {
-		OK        bool   `json:"ok"`
-		URL       string `json:"url"`
-		HTML      string `json:"html"`
-		Text      string `json:"text"`
-		Message   string `json:"message"`
-		Truncated bool   `json:"truncated"`
+		OK            bool   `json:"ok"`
+		URL           string `json:"url"`
+		HTML          string `json:"html"`
+		Text          string `json:"text"`
+		Message       string `json:"message"`
+		Truncated     bool   `json:"truncated"`
+		HTMLTruncated bool   `json:"html_truncated"`
+		TextTruncated bool   `json:"text_truncated"`
 	}
 	if err := decodeJSONValue(result, &payload); err != nil {
 		return pageContent{}, err
@@ -497,7 +521,7 @@ func (s *gomoufoxSession) PageContent(ctx context.Context, opts pageContentOptio
 	if !payload.OK {
 		return pageContent{}, errors.New(payload.Message)
 	}
-	return pageContent{URL: payload.URL, Title: title, HTML: payload.HTML, Text: payload.Text, Truncated: payload.Truncated}, nil
+	return pageContent{URL: payload.URL, Title: title, HTML: payload.HTML, Text: payload.Text, Truncated: payload.Truncated, HTMLTruncated: payload.HTMLTruncated, TextTruncated: payload.TextTruncated}, nil
 }
 
 func (s *gomoufoxSession) Evaluate(ctx context.Context, script string, arg any, opts evaluateOptions) (any, error) {
@@ -751,8 +775,9 @@ func (s *gomoufoxSession) Screenshot(ctx context.Context, opts screenshotOptions
 	if err != nil {
 		return screenshotResult{}, err
 	}
-	width, height := s.viewport(ctx)
-	return screenshotResult{URL: s.page.URL(), Width: width, Height: height, Data: data}, nil
+	size, _ := renderinfo.ImageSize(data)
+	metrics, _ := renderinfo.Inspect(ctx, s.page.EvaluateInternal, s.requestedOS)
+	return screenshotResult{URL: s.page.URL(), Width: size.Width, Height: size.Height, Data: data, Rendering: metrics, RequestedViewport: s.requestedViewport}, nil
 }
 
 func (s *gomoufoxSession) Snapshot(ctx context.Context, opts snapshotOptions) (snapshotResult, error) {
@@ -800,29 +825,36 @@ func snapshotValueAllowed(role string, valueKind string, value string, includeVa
 }
 
 func (s *gomoufoxSession) Fetch(ctx context.Context, opts fetchOptions) (fetchResult, error) {
+	timeout := opts.Timeout
+	if timeout <= 0 {
+		timeout = 30 * time.Second
+	}
+	ctx, cancel := timeoutContext(ctx, timeout)
+	defer cancel()
 	if opts.NavigateFirst != "" {
 		if _, err := s.Navigate(ctx, opts.NavigateFirst, navigateOptions{WaitUntil: "domcontentloaded", Timeout: 30 * time.Second}); err != nil {
 			return fetchResult{}, err
 		}
 	}
 	result, err := s.page.EvaluateInternal(ctx, mcpFetchExpression, map[string]any{
-		"url":      opts.URL,
-		"method":   opts.Method,
-		"headers":  fetchHeadersForEvaluation(opts.Headers),
-		"body":     string(opts.Body),
-		"maxBytes": opts.MaxBytes,
+		"url":        opts.URL,
+		"method":     opts.Method,
+		"headers":    fetchHeadersForEvaluation(opts.Headers),
+		"bodyBase64": base64.StdEncoding.EncodeToString(opts.Body),
+		"maxBytes":   opts.MaxBytes,
 	})
 	if err != nil {
 		return fetchResult{}, err
 	}
 	var payload struct {
-		OK        bool              `json:"ok"`
-		URL       string            `json:"url"`
-		Status    int               `json:"status"`
-		Headers   map[string]string `json:"headers"`
-		Body      string            `json:"body"`
-		Message   string            `json:"message"`
-		Truncated bool              `json:"truncated"`
+		OK         bool              `json:"ok"`
+		URL        string            `json:"url"`
+		Status     int               `json:"status"`
+		Headers    map[string]string `json:"headers"`
+		Body       string            `json:"body"`
+		BodyBase64 string            `json:"body_base64"`
+		Message    string            `json:"message"`
+		Truncated  bool              `json:"truncated"`
 	}
 	if err := decodeJSONValue(result, &payload); err != nil {
 		return fetchResult{}, err
@@ -830,10 +862,19 @@ func (s *gomoufoxSession) Fetch(ctx context.Context, opts fetchOptions) (fetchRe
 	if !payload.OK {
 		return fetchResult{}, errors.New(payload.Message)
 	}
-	return fetchResult{URL: payload.URL, Status: payload.Status, Headers: payload.Headers, Body: []byte(payload.Body), Truncated: payload.Truncated}, nil
+	body := []byte(payload.Body)
+	if payload.BodyBase64 != "" {
+		body, err = base64.StdEncoding.DecodeString(payload.BodyBase64)
+		if err != nil {
+			return fetchResult{}, err
+		}
+	}
+	return fetchResult{URL: payload.URL, Status: payload.Status, Headers: payload.Headers, Body: body, Truncated: payload.Truncated}, nil
 }
 
 func (s *gomoufoxSession) FetchForm(ctx context.Context, opts fetchFormOptions) (fetchResult, error) {
+	ctx, cancel := timeoutContext(ctx, opts.Timeout)
+	defer cancel()
 	if opts.NavigateFirst != "" {
 		if _, err := s.Navigate(ctx, opts.NavigateFirst, navigateOptions{WaitUntil: "domcontentloaded", Timeout: 30 * time.Second}); err != nil {
 			return fetchResult{}, err
@@ -870,7 +911,9 @@ func (s *gomoufoxSession) FetchForm(ctx context.Context, opts fetchFormOptions) 
 		return fetchResult{}, ErrInvalidCall
 	}
 	defer func() {
-		_, _ = s.page.EvaluateInternal(context.Background(), `({inputID}) => {
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		_, _ = s.page.EvaluateInternal(cleanupCtx, `({inputID}) => {
   const input = document.getElementById(inputID);
   if (input) input.remove();
   return {ok: true};
@@ -951,7 +994,9 @@ func (s *gomoufoxSession) LoadStorageState(ctx context.Context, state *gomoufox.
 	if s.browser == nil || s.context == nil || s.page == nil || state == nil {
 		return ErrInvalidCall
 	}
-	nextContext, err := s.browser.NewContext(ctx, gomoufox.WithStorageState(state))
+	opts := append([]gomoufox.ContextOption(nil), s.contextOptions...)
+	opts = append(opts, gomoufox.WithStorageState(state))
+	nextContext, err := s.browser.NewContext(ctx, opts...)
 	if err != nil {
 		if errors.Is(err, gomoufox.ErrPersistentContextLimit) {
 			return ErrInvalidCall
@@ -964,18 +1009,15 @@ func (s *gomoufoxSession) LoadStorageState(ctx context.Context, state *gomoufox.
 		return err
 	}
 	if err := verifyMCPInternalEvaluation(ctx, nextPage); err != nil {
-		_ = nextPage.Close()
 		_ = nextContext.Close()
 		return err
 	}
-	oldPage := s.page
 	oldContext := s.context
 	s.page = nextPage
 	s.context = nextContext
 	s.refs.Clear()
 	s.ensureObservations().resetAll()
 	s.attachObservers(ctx)
-	_ = oldPage.Close()
 	_ = oldContext.Close()
 	return nil
 }
@@ -985,7 +1027,7 @@ func (s *gomoufoxSession) Close() error {
 	if s.observations != nil {
 		s.observations.resetAll()
 	}
-	if s.page != nil {
+	if s.context == nil && s.page != nil {
 		err = errors.Join(err, s.page.Close())
 	}
 	if s.context != nil {
@@ -1110,6 +1152,9 @@ func screenshotWorkLimitBytes(maxBytes int) int64 {
 
 func contextOptions(opts sessionOptions, allowDownloads bool) ([]gomoufox.ContextOption, error) {
 	out := []gomoufox.ContextOption{gomoufox.WithAcceptDownloads(allowDownloads)}
+	if opts.width > 0 && opts.height > 0 {
+		out = append(out, gomoufox.WithViewport(opts.width, opts.height))
+	}
 	if opts.locale != "" {
 		out = append(out, gomoufox.WithContextLocale(opts.locale))
 	}

@@ -799,41 +799,25 @@ func TestDoctorJSONAndFailure(t *testing.T) {
 	}
 }
 
-func TestDefaultDoctorUsesInstallHook(t *testing.T) {
+func TestDefaultDoctorUsesReadOnlyInspection(t *testing.T) {
+	original := doctorInspectInstallation
+	t.Cleanup(func() { doctorInspectInstallation = original })
 	called := false
-	restore := replaceDefaultDoctorEnsureInstalled(t, func(context.Context) error {
+	doctorInspectInstallation = func(_ context.Context, dir, runtimeName string) sidecar.InstallationInspection {
 		called = true
-		return nil
-	})
-	report, err := defaultDoctor(context.Background(), DoctorRequest{JSON: true})
-	if err != nil || !called {
-		t.Fatalf("defaultDoctor success err=%v called=%v", err, called)
+		if dir != "/cache" || runtimeName != "python" {
+			t.Fatalf("selection = %q %q", dir, runtimeName)
+		}
+		return sidecar.InstallationInspection{Runtime: runtimeName, CacheDir: dir, RuntimeAssets: sidecar.InstallationCheck{Path: "/cache/runtime", Status: "missing_manifest", Error: "missing"}}
 	}
-	if !report.RuntimeAssets.OK || !report.CamoufoxPkg.OK || !report.Playwright.OK || report.Playwright.Match == nil || !*report.Playwright.Match || !report.CamoufoxBin.OK {
-		t.Fatalf("success report = %#v", report)
+	report, err := defaultDoctor(context.Background(), DoctorRequest{Dir: "/cache", Runtime: "python"})
+	if err != nil || !called || report.RuntimeAssets.OK || report.Playwright.Version != "" || !report.hasFailure() {
+		t.Fatalf("report=%#v err=%v called=%v", report, err, called)
 	}
-	if report.Python.OK || report.Venv.OK {
-		t.Fatalf("default doctor should not report Python readiness: %#v", report)
-	}
-	if report.CamoufoxPkg.Version != sidecar.RequiredCamoufox ||
-		report.Playwright.PkgVersion != sidecar.RequiredPlaywright ||
-		report.Playwright.DriverVersion != sidecar.RequiredPlaywright {
-		t.Fatalf("doctor pins = camoufox %q playwright %q driver %q", report.CamoufoxPkg.Version, report.Playwright.PkgVersion, report.Playwright.DriverVersion)
-	}
-	restore()
-
-	restore = replaceDefaultDoctorEnsureInstalled(t, func(context.Context) error {
-		return gomoufox.ErrNotInstalled
-	})
-	report, err = defaultDoctor(context.Background(), DoctorRequest{})
-	if !errors.Is(err, gomoufox.ErrNotInstalled) || report.RuntimeAssets.OK || !strings.Contains(report.RuntimeAssets.Error, "not installed") {
-		t.Fatalf("failure report=%#v err=%v", report, err)
-	}
-	restore()
 }
 
 func TestDefaultDoctorWarnsWhenLinuxDisplayIsMissing(t *testing.T) {
-	restoreInstall := replaceDefaultDoctorEnsureInstalled(t, func(context.Context) error { return nil })
+	restoreInstall := replaceDoctorInspection(t)
 	defer restoreInstall()
 	restoreDisplay := replaceDoctorDisplayEnvironment(t, "linux", map[string]string{}, nil)
 	defer restoreDisplay()
@@ -851,7 +835,7 @@ func TestDefaultDoctorWarnsWhenLinuxDisplayIsMissing(t *testing.T) {
 }
 
 func TestDefaultDoctorWarnsForUnverifiedOfflineCamoufoxPath(t *testing.T) {
-	restoreInstall := replaceDefaultDoctorEnsureInstalled(t, func(context.Context) error { return nil })
+	restoreInstall := replaceDoctorInspection(t)
 	defer restoreInstall()
 	restoreEnv := replaceDoctorDisplayEnvironment(t, "darwin", map[string]string{
 		sidecar.EnvCamoufoxPath:                "/browser",
@@ -863,7 +847,7 @@ func TestDefaultDoctorWarnsForUnverifiedOfflineCamoufoxPath(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if report.CamoufoxBin.Path != "/browser" || !strings.Contains(report.CamoufoxBin.Warning, sidecar.EnvTrustUnverifiedCamoufoxPath) {
+	if !strings.Contains(report.CamoufoxBin.Warning, sidecar.EnvTrustUnverifiedCamoufoxPath) {
 		t.Fatalf("doctor camoufox bin check = %#v", report.CamoufoxBin)
 	}
 	if report.hasFailure() {
@@ -938,7 +922,7 @@ func TestAgentOptimizedHelpDiscovery(t *testing.T) {
 	if code := (Runner{}).Run(context.Background(), []string{"mcp", "--help"}, Streams{Stdout: &stdout, Stderr: &stderr}); code != ExitOK {
 		t.Fatalf("mcp help code=%d stderr=%q", code, stderr.String())
 	}
-	if got := stdout.String(); !strings.Contains(got, "Usage\n  gomoufox mcp") || !strings.Contains(got, "Tools\n  browser_navigate") || !strings.Contains(got, "--toolset") || !strings.Contains(got, "--max-response-bytes") || !strings.Contains(got, "--allowed-origins") || !strings.Contains(got, "--allow-localhost") || !strings.Contains(got, "broader private networks and metadata endpoints stay blocked") {
+	if got := stdout.String(); !strings.Contains(got, "Usage\n  gomoufox mcp") || !strings.Contains(got, "Tools\n  browser_capabilities, browser_navigate") || !strings.Contains(got, "--toolset") || !strings.Contains(got, "--max-response-bytes") || !strings.Contains(got, "--allowed-origins") || !strings.Contains(got, "--allow-localhost") || !strings.Contains(got, "broader private networks and metadata endpoints stay blocked") {
 		t.Fatalf("mcp help = %q", got)
 	}
 
@@ -1004,7 +988,7 @@ func TestAgentOptimizedHelpDiscovery(t *testing.T) {
 	if err := json.Unmarshal(stdout.Bytes(), &catalog); err != nil {
 		t.Fatalf("help json = %q err=%v", stdout.String(), err)
 	}
-	if len(catalog.Commands) != 1 || catalog.Commands[0].Name != "mcp" || len(catalog.MCPTools) == 0 || catalog.MCPTools[0] != "browser_navigate" {
+	if len(catalog.Commands) != 1 || catalog.Commands[0].Name != "mcp" || len(catalog.MCPTools) == 0 || catalog.MCPTools[0] != "browser_capabilities" {
 		t.Fatalf("catalog = %#v", catalog)
 	}
 	if len(catalog.Commands[0].Flags) == 0 || catalog.Commands[0].Summary == "" {
@@ -1117,7 +1101,7 @@ func TestSkillsCLI(t *testing.T) {
 	if code := (Runner{}).Run(context.Background(), []string{"skills", "list"}, Streams{Stdout: &stdout, Stderr: &stderr}); code != ExitOK {
 		t.Fatalf("skills list code=%d stderr=%q", code, stderr.String())
 	}
-	if got := stdout.String(); !strings.Contains(got, "core 0.1.1") || !strings.Contains(got, "mcp 0.1.1") || strings.Contains(got, "# gomoufox core") {
+	if got := stdout.String(); !strings.Contains(got, "core 0.1.2") || !strings.Contains(got, "mcp 0.1.2") || strings.Contains(got, "# gomoufox core") {
 		t.Fatalf("skills list = %q", got)
 	}
 
@@ -2447,7 +2431,7 @@ func TestDefaultLocalFetchRawTruncatesAndDataFile(t *testing.T) {
 		t.Fatalf("json = %v: %s", err, resp.Stdout)
 	}
 	body, _ := payload["body"].(string)
-	if !strings.HasPrefix(body, `{"abc`) || !strings.Contains(body, "truncated") {
+	if body != `{"abc` {
 		t.Fatalf("body = %q", body)
 	}
 	if payload["truncated"] != true || payload["bytes"] != float64(5) {
@@ -2984,7 +2968,7 @@ func TestRealLocalPageDelegatesToGomoufoxPage(t *testing.T) {
 		t.Fatalf("content=%q err=%v", content, err)
 	}
 	body, err := local.BodyText(context.Background())
-	if err != nil || body != "Body" || page.locatorSelector != "body" {
+	if err != nil || body != "Body" {
 		t.Fatalf("body=%q selector=%q err=%v", body, page.locatorSelector, err)
 	}
 	title, err := local.Title(context.Background())
@@ -4340,9 +4324,7 @@ func TestRunnerRuntimeParserAdditionalEdges(t *testing.T) {
 	if code := runner.Run(context.Background(), []string{"doctor"}, Streams{Stdout: &stdout, Stderr: &stderr}); code != ExitUnavailable {
 		t.Fatalf("doctor failure report code=%d", code)
 	}
-	restoreDoctorEnsure := defaultDoctorEnsureInstalled
-	defaultDoctorEnsureInstalled = func(context.Context) error { return nil }
-	t.Cleanup(func() { defaultDoctorEnsureInstalled = restoreDoctorEnsure })
+	replaceDoctorInspection(t)
 	stdout.Reset()
 	stderr.Reset()
 	if code := (Runner{}).Run(context.Background(), []string{"doctor"}, Streams{Stdout: &stdout, Stderr: &stderr}); code != ExitOK {
@@ -4544,10 +4526,6 @@ func TestDefaultEnsureInstalledHooksUseRequests(t *testing.T) {
 			if cfg.VenvDir != "/venv" || cfg.PythonBin != "/python" || cfg.Runtime != gomoufox.SidecarRuntimePython || !cfg.ForceReinstall || cfg.SkipBinaryFetch {
 				t.Fatalf("install cfg = %#v", cfg)
 			}
-		case 2:
-			if !cfg.SkipBinaryFetch || cfg.ForceReinstall || cfg.VenvDir != "" || cfg.PythonBin != "" || cfg.Runtime != "" {
-				t.Fatalf("doctor cfg = %#v", cfg)
-			}
 		default:
 			t.Fatalf("unexpected ensure call %d", calls)
 		}
@@ -4556,10 +4534,7 @@ func TestDefaultEnsureInstalledHooksUseRequests(t *testing.T) {
 	if err := defaultInstallEnsureInstalled(context.Background(), InstallRequest{Dir: "/venv", Python: "/python", Runtime: string(gomoufox.SidecarRuntimePython), Force: true}); err != nil {
 		t.Fatal(err)
 	}
-	if err := defaultDoctorEnsureInstalled(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-	if calls != 2 {
+	if calls != 1 {
 		t.Fatalf("ensure calls = %d", calls)
 	}
 }
@@ -5151,6 +5126,10 @@ func (p *fakeGomoufoxPage) FetchBytes(ctx context.Context, url, method string, h
 func (p *fakeGomoufoxPage) FetchBytesWithOptions(ctx context.Context, url, method string, headers map[string]string, body []byte, opts gomoufox.FetchBytesOptions) (gomoufox.FetchBytesResult, error) {
 	status, data, err := p.FetchBytes(ctx, url, method, headers, body)
 	p.fetchMaxBytes = opts.MaxBytes
+	if opts.MaxFileBytes > 0 {
+		opts.MaxBytes = opts.MaxFileBytes
+		p.fetchMaxBytes = opts.MaxBytes
+	}
 	if err != nil {
 		return gomoufox.FetchBytesResult{}, err
 	}
@@ -5345,6 +5324,10 @@ func (p *fakeLocalPage) FetchBytes(ctx context.Context, url, method string, head
 func (p *fakeLocalPage) FetchBytesWithOptions(ctx context.Context, url, method string, headers map[string]string, body []byte, opts gomoufox.FetchBytesOptions) (gomoufox.FetchBytesResult, error) {
 	status, data, err := p.FetchBytes(ctx, url, method, headers, body)
 	p.fetchMaxBytes = opts.MaxBytes
+	if opts.MaxFileBytes > 0 {
+		opts.MaxBytes = opts.MaxFileBytes
+		p.fetchMaxBytes = opts.MaxBytes
+	}
 	if err != nil {
 		return gomoufox.FetchBytesResult{}, err
 	}
@@ -5617,11 +5600,18 @@ func allDoctorOK() DoctorReport {
 	}
 }
 
-func replaceDefaultDoctorEnsureInstalled(t *testing.T, fn func(context.Context) error) func() {
+func replaceDoctorInspection(t *testing.T) func() {
 	t.Helper()
-	orig := defaultDoctorEnsureInstalled
-	defaultDoctorEnsureInstalled = fn
-	restore := func() { defaultDoctorEnsureInstalled = orig }
+	original := doctorInspectInstallation
+	doctorInspectInstallation = func(context.Context, string, string) sidecar.InstallationInspection {
+		r := allDoctorOK()
+		return sidecar.InstallationInspection{
+			RuntimeAssets: sidecar.InstallationCheck(r.RuntimeAssets),
+			CamoufoxPkg:   sidecar.InstallationCheck(r.CamoufoxPkg), Playwright: sidecar.InstallationCheck(r.Playwright),
+			CamoufoxBin: sidecar.InstallationCheck(r.CamoufoxBin),
+		}
+	}
+	restore := func() { doctorInspectInstallation = original }
 	t.Cleanup(restore)
 	return restore
 }

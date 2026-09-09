@@ -10,6 +10,11 @@ func VenvPython(venvDir string) (string, error) {
 	if venvDir == "" {
 		venvDir = DefaultCacheDir()
 	}
+	environment, err := pythonEnvironmentDir(venvDir)
+	if err != nil {
+		return "", err
+	}
+	venvDir = environment
 	var python string
 	if sidecarGOOS == "windows" {
 		python = filepath.Join(venvDir, "Scripts", "python.exe")
@@ -26,6 +31,11 @@ func VenvPip(venvDir string) (string, error) {
 	if venvDir == "" {
 		venvDir = DefaultCacheDir()
 	}
+	environment, err := pythonEnvironmentDir(venvDir)
+	if err != nil {
+		return "", err
+	}
+	venvDir = environment
 	if sidecarGOOS == "windows" {
 		return filepath.Join(venvDir, "Scripts", "pip.exe"), nil
 	}

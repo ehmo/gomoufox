@@ -170,21 +170,62 @@ func (p *Page) RunAndWaitForDownload(ctx context.Context, action func() error, o
 	return &Download{raw: download}, nil
 }
 
-func (p *Page) Evaluate(ctx context.Context, expression string, arg ...any) (any, error) {
+// SetViewportSize changes the page's CSS viewport. It also works in a persistent context.
+func (p *Page) SetViewportSize(ctx context.Context, width, height int) error {
 	if err := ctx.Err(); err != nil {
-		return nil, err
+		return err
 	}
-	return p.raw.Evaluate(expression, arg...)
+	if width <= 0 || height <= 0 {
+		return fmt.Errorf("viewport width and height must be positive")
+	}
+	page, ok := p.raw.(pwbridge.ViewportPage)
+	if !ok {
+		return fmt.Errorf("browser connector does not support viewport resizing")
+	}
+	return page.SetViewportSize(width, height)
+}
+
+func (p *Page) Evaluate(ctx context.Context, expression string, arg ...any) (any, error) {
+	if strings.HasPrefix(strings.TrimSpace(expression), "mw:") {
+		return p.evaluateMainWorld(ctx, expression, arg...)
+	}
+	return p.evaluateWithContext(ctx, p.raw.Evaluate, expression, arg...)
 }
 
 // EvaluateInternal executes expression through the browser helper evaluation
 // path without adding Camoufox's main-world "mw:" prefix. MCP sessions use this
 // only after a startup probe confirms it stays separate from page-world scripts.
 func (p *Page) EvaluateInternal(ctx context.Context, expression string, arg ...any) (any, error) {
+	return p.evaluateWithContext(ctx, p.raw.EvaluateInternal, expression, arg...)
+}
+
+func (p *Page) evaluateWithContext(ctx context.Context, evaluate func(string, ...any) (any, error), expression string, arg ...any) (any, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	return p.raw.EvaluateInternal(expression, arg...)
+	if ctx.Done() == nil {
+		return evaluate(expression, arg...)
+	}
+	type result struct {
+		value any
+		err   error
+	}
+	done := make(chan result, 1)
+	go func() {
+		value, err := evaluate(expression, arg...)
+		done <- result{value, err}
+	}()
+	select {
+	case out := <-done:
+		if ctx.Err() == nil {
+			return out.value, out.err
+		}
+	case <-ctx.Done():
+	}
+	// Evaluation has no protocol timeout. Closing this page interrupts pending
+	// JavaScript and prevents it from overlapping the next session operation.
+	_ = p.raw.Close()
+	return nil, fmt.Errorf("%w: %w", ErrEvaluationInterrupted, ctx.Err())
 }
 
 func (p *Page) EvaluateIntoJSON(ctx context.Context, expression string, dst any, arg ...any) error {
@@ -244,7 +285,7 @@ func (p *Page) WaitForSelector(ctx context.Context, selector string, opts ...Wai
 	for _, opt := range opts {
 		opt(&cfg)
 	}
-	el, err := p.raw.WaitForSelector(selector, pwbridge.WaitForSelectorOptions{Timeout: cfg.timeout, State: cfg.state})
+	el, err := p.raw.WaitForSelector(selector, pwbridge.WaitForSelectorOptions{Timeout: boundTimeoutToContext(ctx, cfg.timeout), State: cfg.state})
 	if err != nil {
 		return nil, err
 	}
@@ -266,7 +307,9 @@ func (p *Page) Screenshot(ctx context.Context, opts ...ScreenshotOption) ([]byte
 	for _, opt := range opts {
 		opt(&cfg)
 	}
-	return p.raw.Screenshot(cfg.toBridge())
+	options := cfg.toBridge()
+	options.Timeout = deadlineTimeout(ctx, 0)
+	return p.raw.Screenshot(options)
 }
 
 func (p *Page) ScreenshotToFile(ctx context.Context, filePath string, opts ...ScreenshotOption) error {
@@ -418,7 +461,13 @@ type FetchBytesOptions struct {
 	// MaxBytes caps bytes read from the browser response stream. Zero uses the
 	// default response cap. Negative values explicitly disable the cap.
 	MaxBytes int
+	// MaxFileBytes selects the separate file-transfer acquisition budget, up to
+	// MaxTransferFileBytes. It is mutually exclusive with MaxBytes. The caller
+	// must reject Truncated results before saving an artifact.
+	MaxFileBytes int
 }
+
+const MaxTransferFileBytes = 50 * 1024 * 1024
 
 // FetchBytesResult is the result of a bounded in-browser fetch.
 type FetchBytesResult struct {
@@ -468,15 +517,19 @@ func (p *Page) FetchBytesWithOptions(ctx context.Context, url, method string, he
 	defer p.releaseFetch()
 	p.beginGuardrailFetchObservation(ctx, url, method)
 	defer p.endGuardrailFetchObservation()
-	result, err := p.raw.EvaluateInternal(browserFetchExpression, map[string]any{
-		"url":        url,
-		"method":     method,
-		"headers":    fetchHeadersForEvaluation(headers),
-		"bodyBase64": base64.StdEncoding.EncodeToString(body),
-		"hasBody":    len(body) > 0,
-		"maxBytes":   maxBytes,
+	result, err := p.EvaluateInternal(ctx, browserFetchExpression, map[string]any{
+		"url":            url,
+		"method":         method,
+		"headers":        fetchHeadersForEvaluation(headers),
+		"bodyBase64":     base64.StdEncoding.EncodeToString(body),
+		"hasBody":        len(body) > 0,
+		"maxBytes":       maxBytes,
+		"verifyComplete": opts.MaxFileBytes > 0,
 	})
 	if err != nil {
+		if errors.Is(err, ErrEvaluationInterrupted) || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return FetchBytesResult{}, err
+		}
 		if reason, ok := p.guardrailBlockedActiveFetch(); ok {
 			return FetchBytesResult{}, fmt.Errorf("%w: %s", ErrURLBlocked, reason)
 		}
@@ -805,6 +858,12 @@ func fetchHeadersForEvaluation(headers map[string]string) map[string]any {
 }
 
 func fetchMaxBytes(opts FetchBytesOptions) (int, error) {
+	if opts.MaxFileBytes != 0 {
+		if opts.MaxBytes != 0 || opts.MaxFileBytes < 0 || opts.MaxFileBytes > MaxTransferFileBytes {
+			return 0, fmt.Errorf("file response cap must be 1..%d bytes and cannot be combined with MaxBytes", MaxTransferFileBytes)
+		}
+		return opts.MaxFileBytes, nil
+	}
 	if opts.MaxBytes < 0 {
 		return 0, nil
 	}
@@ -828,7 +887,7 @@ func (p *Page) Close() error {
 
 func (p *Page) Raw() any { return p.raw.Raw() }
 
-const browserFetchExpression = `async ({url, method, headers, bodyBase64, hasBody, maxBytes}) => {
+const browserFetchExpression = `async ({url, method, headers, bodyBase64, hasBody, maxBytes, verifyComplete}) => {
   let reader;
   let cancelReader = async () => {};
   const fromBase64 = (value) => {
@@ -875,7 +934,7 @@ const browserFetchExpression = `async ({url, method, headers, bodyBase64, hasBod
       }
       chunks.push(chunk);
       total += chunk.byteLength;
-      if (limit > 0 && total >= limit) {
+      if (!verifyComplete && limit > 0 && total >= limit) {
         truncated = true;
         await cancelReader();
         break;

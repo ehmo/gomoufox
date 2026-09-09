@@ -564,6 +564,7 @@ func TestPythonRequirementsLocksMatchPinsAndFailClosed(t *testing.T) {
 }
 
 func TestEnsureInstalledWithCompatibleOfflineVenv(t *testing.T) {
+	stubPythonRuntimeDriver(t)
 	if runtime.GOOS == "windows" {
 		t.Skip("fake shell python is unix-only")
 	}
@@ -587,6 +588,7 @@ exit 65
 }
 
 func TestEnsureInstalledPropagatesLocalFailureBranches(t *testing.T) {
+	stubPythonRuntimeDriver(t)
 	if runtime.GOOS == "windows" {
 		t.Skip("fake shell python is unix-only")
 	}
@@ -619,6 +621,11 @@ exit 42
 		t.Fatalf("ensure venv err = %v", err)
 	}
 
+	originalVenv := ensureVenvForInstall
+	t.Cleanup(func() { ensureVenvForInstall = originalVenv })
+	ensureVenvForInstall = func(_ context.Context, python, dir string) error {
+		return copyTree(filepath.Dir(python), filepath.Join(dir, "bin"))
+	}
 	siteRoot := fakePlaywrightPackage(t, RequiredPlaywright)
 	venv := fakeCompatibleVenv(t, siteRoot, RequiredCamoufox)
 	python, err := VenvPython(venv)
@@ -661,7 +668,7 @@ exit 0
 	venvPythonErr := errors.New("venv python failed")
 	venvPythonAfterInstall = func(string) (string, error) { return "", venvPythonErr }
 	t.Cleanup(func() { venvPythonAfterInstall = oldVenvPythonAfterInstall })
-	if err := EnsureInstalled(context.Background(), InstallOptions{VenvDir: forcedVenv, PythonBin: forcedPython, Runtime: RuntimePython, CamoufoxPath: fakeVerifiedBrowserTree(t)}); !errors.Is(err, venvPythonErr) {
+	if err := EnsureInstalled(context.Background(), InstallOptions{VenvDir: forcedVenv, PythonBin: forcedPython, Runtime: RuntimePython, CamoufoxPath: fakeVerifiedBrowserTree(t), ForceReinstall: true}); !errors.Is(err, venvPythonErr) {
 		t.Fatalf("post-install venv python err = %v", err)
 	}
 	venvPythonAfterInstall = oldVenvPythonAfterInstall
@@ -720,7 +727,7 @@ exit 42
 
 }
 
-func TestEnsureInstalledCreatesVenvThenFailsBinaryValidation(t *testing.T) {
+func TestEnsureInstalledValidatesNewPackagesBeforeBrowserAssets(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("fake shell python is unix-only")
 	}
@@ -744,8 +751,8 @@ PIP
 fi
 exit 42
 `)
-	if err := EnsureInstalled(context.Background(), InstallOptions{VenvDir: filepath.Join(t.TempDir(), "venv"), PythonBin: pythonRemovedAfterPip, Runtime: RuntimePython, CamoufoxPath: t.TempDir()}); !errors.Is(err, ErrNotInstalled) {
-		t.Fatalf("created venv binary validation err = %v", err)
+	if err := EnsureInstalled(context.Background(), InstallOptions{VenvDir: filepath.Join(t.TempDir(), "venv"), PythonBin: pythonRemovedAfterPip, Runtime: RuntimePython, CamoufoxPath: t.TempDir()}); !errors.Is(err, ErrVersionMismatch) {
+		t.Fatalf("new venv package validation err = %v", err)
 	}
 }
 
@@ -1566,4 +1573,12 @@ func replaceUserCacheDir(t *testing.T, dir string, err error) func() {
 
 func shQuote(value string) string {
 	return strconv.Quote(strings.ReplaceAll(value, "'", "'\"'\"'"))
+}
+
+func stubPythonRuntimeDriver(t *testing.T) {
+	t.Helper()
+	browser := installCamoufoxBrowserForRuntime
+	restore := replaceRuntimeAssetInstallers(t)
+	installCamoufoxBrowserForRuntime = browser
+	t.Cleanup(restore)
 }

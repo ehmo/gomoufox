@@ -62,6 +62,12 @@
       "public_exposed": true,
       "justification": "Small deterministic doc formatter used in public CI and release workflows."
     },
+    "managed_runtime.py": {
+      "decision": "keep",
+      "scope": "managed-benchmark-runtime",
+      "public_exposed": true,
+      "justification": "Resolves active Python environments and their shared browser cache for explicit benchmark and fingerprint tooling."
+    },
     "package-release.py": {
       "decision": "keep",
       "scope": "release-packaging",

@@ -12,6 +12,11 @@ import time
 from datetime import datetime, timezone
 from urllib.parse import urlparse
 
+try:
+    from managed_runtime import selected_python
+except ModuleNotFoundError:
+    from scripts.managed_runtime import selected_python
+
 
 CATALOG_PATH = pathlib.Path(__file__).with_name("realpass-targets.json")
 
@@ -299,18 +304,6 @@ def target_arg(target):
     return f"{target['name']}|{target['kind']}={target['url']}"
 
 
-def selected_python(override):
-    if override:
-        return override
-    for candidate in (
-        pathlib.Path.home() / "Library/Caches/gomoufox/venv/bin/python",
-        pathlib.Path.home() / ".cache/gomoufox/venv/bin/python",
-    ):
-        if candidate.exists() and os.access(candidate, os.X_OK):
-            return str(candidate)
-    return os.environ.get("PYTHON", "python3")
-
-
 def go_runner(args, out_dir):
     if args.gomoufox_realpass:
         return pathlib.Path(args.gomoufox_realpass), None
@@ -592,6 +585,13 @@ def options_from_reports(go_report, python_report):
     go_options = go_report.get("options") or {}
     python_options = python_report.get("options") or {}
     out = {}
+    for key in ("resource_scope", "resource_sampling"):
+        go_value = go_options.get(key)
+        python_value = python_options.get(key)
+        if go_value is not None or python_value is not None:
+            if go_value != python_value:
+                raise SystemExit(f"report option mismatch for {key}: go={go_value!r} python={python_value!r}")
+            out[key] = go_value
     for source_key, dest_key in (
         ("timeout", "timeout_seconds"),
         ("settle", "settle_seconds"),
@@ -709,6 +709,16 @@ def python_removal_readiness(benchmark):
     python = summary.get("python") or {}
     ratio_values = summary.get("ratios") or {}
     criteria = [
+        {
+            "name": "complete_harness_resource_scope",
+            "passed": options.get("resource_scope") == "harness_process_tree",
+            "detail": f"resource_scope={options.get('resource_scope', 'legacy_sidecar_only')}",
+        },
+        {
+            "name": "fixed_period_resource_sampling",
+            "passed": options.get("resource_sampling") == "fixed_period",
+            "detail": f"resource_sampling={options.get('resource_sampling', 'legacy_mixed_cadence')}",
+        },
         {
             "name": "go_sidecar_runtime_is_node_direct",
             "passed": options.get("go_sidecar_runtime") == "node-direct",
@@ -844,7 +854,16 @@ def markdown_report(benchmark):
         "It records outcome parity, wall time, browser work duration, peak RSS, peak CPU, and agent-output token footprint.",
         "For parity, both runtimes use `--unsafe-direct-network` and the same generated Linux persona bundle. Local URL guardrails are tested elsewhere.",
         runner_interpretation(benchmark["options"].get("go_runner", "built_binary")),
-        "Resource samples cover the gomoufox sidecar process tree and the Python Camoufox harness process tree.",
+        (
+            "Resource samples cover each complete harness process tree, including the runner, every driver and the browser."
+            if benchmark["options"].get("resource_scope") == "harness_process_tree"
+            else "Resource samples cover the gomoufox sidecar process tree and the Python Camoufox harness process tree."
+        ),
+        (
+            "Both runtimes use a fixed sampling period that includes snapshot collection time. A slow sample can delay the next one."
+            if benchmark["options"].get("resource_sampling") == "fixed_period"
+            else "These results predate matching fixed-period resource sampling."
+        ),
         "",
         "## Modes",
         "",
@@ -857,13 +876,13 @@ def markdown_report(benchmark):
         "Refresh the checked baseline after significant browser, sidecar, MCP, CLI, or resource-related changes:",
         "",
         "```bash",
-        "scripts/benchmark-realpass.py --mode full --go-report-style compact --update-doc docs/BENCHMARKS.md",
+        "scripts/benchmark-realpass.py --mode full --go-sidecar-runtime node-direct --go-report-style compact --update-doc docs/BENCHMARKS.md",
         "```",
         "",
         "Run the extended matrix before release candidates or major runtime changes:",
         "",
         "```bash",
-        "scripts/benchmark-realpass.py --mode extended --loops 2 --run-order alternate --go-report-style compact --out dist/benchmarks/extended",
+        "scripts/benchmark-realpass.py --mode extended --go-sidecar-runtime node-direct --loops 2 --run-order alternate --go-report-style compact --out dist/benchmarks/extended",
         "```",
         "",
         "Run the local fingerprint audit when changing Camoufox pins, launch options,",
@@ -875,11 +894,11 @@ def markdown_report(benchmark):
         "```",
         "",
         "The audit serves one local page and records Python Camoufox, gomoufox with the",
-        "Python sidecar, and gomoufox with node-direct. Release gating compares the two",
+        "Python sidecar, and gomoufox with node-direct using one shared persona. Every",
+        "runtime must complete its probe and retain all expected fields. Gating compares the two",
         "gomoufox runtimes and fails on any unallowed drift in JS-visible fields such as",
-        "UA, platform, languages, screen, timezone, WebGL, WebRTC, fonts, and canvas. The",
-        "Python Camoufox row is context, not the fail-closed comparator, because its",
-        "generated persona can differ on a single local run.",
+        "UA, platform, languages, screen, timezone, WebGL, WebRTC, fonts, and canvas.",
+        "The Python Camoufox row provides an upstream reference.",
         "",
         "## Pass/Fail Rules",
         "",

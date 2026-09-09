@@ -1,8 +1,9 @@
-async ({url, method, headers, body, maxBytes}) => {
+async ({url, method, headers, body, bodyBase64, maxBytes}) => {
   let reader;
   let safeCancel = async () => {};
   try {
-    const response = await fetch(url, {method, headers, body: body || undefined, credentials: "include"});
+    const requestBody = bodyBase64 ? Uint8Array.from(atob(bodyBase64), c => c.charCodeAt(0)) : (body || undefined);
+    const response = await fetch(url, {method, headers, body: requestBody, credentials: "include"});
     const getReader = (stream) => stream && stream.getReader ? stream.getReader() : null;
     const read = (reader) => reader.read();
     const cancelReader = (reader) => reader.cancel();
@@ -46,8 +47,11 @@ async ({url, method, headers, body, maxBytes}) => {
       bytes.set(chunk, offset);
       offset += chunk.byteLength;
     }
-    const text = new TextDecoder().decode(bytes);
-    return {ok: true, url: response.url, status: response.status, headers: headersObject, body: text, truncated};
+    let binary = "";
+    for (let offset = 0; offset < bytes.length; offset += 0x8000) {
+      binary += String.fromCharCode(...bytes.subarray(offset, offset + 0x8000));
+    }
+    return {ok: true, url: response.url, status: response.status, headers: headersObject, body_base64: btoa(binary), truncated};
   } catch (error) {
     await safeCancel();
     const message = error && error.message ? String(error.message) : String(error);

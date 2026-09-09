@@ -1231,6 +1231,8 @@ func (c *fakeBrowserContext) Close(options ...playwright.BrowserContextCloseOpti
 
 type fakePage struct {
 	playwright.Page
+	viewportWidth, viewportHeight int
+	viewportErr                   error
 
 	gotoURL                  string
 	gotoOptions              playwright.PageGotoOptions
@@ -1284,6 +1286,24 @@ type fakePage struct {
 	locatorSelector          string
 	locatorResp              playwright.Locator
 	closeCalls               int
+}
+
+func (p *fakePage) SetViewportSize(width, height int) error {
+	p.viewportWidth, p.viewportHeight = width, height
+	return p.viewportErr
+}
+
+func TestRealPageViewportDelegatesDimensionsAndErrors(t *testing.T) {
+	raw := &fakePage{}
+	page := &realPage{raw: raw}
+	if err := page.SetViewportSize(390, 844); err != nil || raw.viewportWidth != 390 || raw.viewportHeight != 844 {
+		t.Fatalf("viewport = %dx%d, %v", raw.viewportWidth, raw.viewportHeight, err)
+	}
+	failure := errors.New("viewport rejected")
+	raw.viewportErr = failure
+	if err := page.SetViewportSize(1440, 900); !errors.Is(err, failure) {
+		t.Fatalf("viewport error = %v", err)
+	}
 }
 
 func (p *fakePage) Goto(url string, options ...playwright.PageGotoOptions) (playwright.Response, error) {

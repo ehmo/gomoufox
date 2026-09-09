@@ -12,10 +12,11 @@ import (
 )
 
 type Context struct {
-	browser *Browser
-	raw     pwbridge.BrowserContext
-	mu      sync.Mutex
-	routes  map[routeKey]pwbridge.RouteHandler
+	browser  *Browser
+	raw      pwbridge.BrowserContext
+	mu       sync.Mutex
+	routes   map[routeKey]pwbridge.RouteHandler
+	viewport *pwbridge.Viewport
 
 	har            *harcapture.Recorder
 	harCloseOnce   sync.Once
@@ -33,7 +34,14 @@ func (c *Context) NewPage(ctx context.Context) (*Page, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Page{browser: c.browser, context: c, raw: raw}, nil
+	page := &Page{browser: c.browser, context: c, raw: raw}
+	if c.viewport != nil {
+		if err := page.SetViewportSize(ctx, c.viewport.Width, c.viewport.Height); err != nil {
+			_ = raw.Close()
+			return nil, err
+		}
+	}
+	return page, nil
 }
 
 func (c *Context) Pages() []*Page {
@@ -143,6 +151,9 @@ func (c *Context) OnResponse(handler func(*Response)) {
 
 func (c *Context) Close() error {
 	if c.har == nil {
+		if c.browser != nil && c.browser.cfg.persistentCtx {
+			return c.browser.Close()
+		}
 		return c.raw.Close()
 	}
 	return c.closeHAR(true)
@@ -152,7 +163,7 @@ func (c *Context) Close() error {
 // For contexts without HAR recording it is equivalent to Close.
 func (c *Context) Abort() error {
 	if c.har == nil {
-		return c.raw.Close()
+		return c.Close()
 	}
 	return c.closeHAR(false)
 }

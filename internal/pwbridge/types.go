@@ -62,6 +62,10 @@ type Viewport struct {
 	Height int
 }
 
+type ViewportPage interface {
+	SetViewportSize(width, height int) error
+}
+
 type Proxy struct {
 	Server   string
 	Username string
@@ -170,6 +174,7 @@ type WaitForSelectorOptions struct {
 }
 
 type ScreenshotOptions struct {
+	Timeout  time.Duration
 	FullPage bool
 	Type     string
 	Quality  int

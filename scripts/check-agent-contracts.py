@@ -3,6 +3,7 @@ import argparse
 import json
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -56,6 +57,11 @@ CONTRACTS = {
         "budget": 4096,
         "token_budget": 1024,
         "mcp_call": {"name": "skills_get", "arguments": {"name": "core"}},
+    },
+    "cli-flags.json": {
+        "budget": 65536,
+        "token_budget": 16384,
+        "cli_flags": True,
     },
 }
 
@@ -159,7 +165,9 @@ def live_contracts(root: Path, gomoufox: str | None) -> dict[str, str]:
     command = gomoufox_base(root, gomoufox)
     out: dict[str, str] = {}
     for name, spec in CONTRACTS.items():
-        if spec.get("mcp"):
+        if spec.get("cli_flags"):
+            data = live_cli_flags(root, command, json.loads(out["cli-help-full.json"]))
+        elif spec.get("mcp"):
             data = run_mcp_tools_list(root, command)
         elif "mcp_call" in spec:
             call = spec["mcp_call"]
@@ -178,6 +186,143 @@ def live_contracts(root: Path, gomoufox: str | None) -> dict[str, str]:
             raise RuntimeError(f"{name} is estimated {tokens} tokens, over budget {token_budget}")
         out[name] = text
     return out
+
+
+def live_cli_flags(root: Path, command: list[str], help_catalog: dict) -> dict:
+    topics = [item["name"] for item in help_catalog["commands"]]
+    topics += ["session export", "session import", "skills list", "skills show", "skills export", "skills install", "agents install"]
+    result = {"version": 1, "commands": {}}
+    for topic in [""] + sorted(set(topics)):
+        data = run_json(root, command, ["help", *topic.split(), "--json", "--fields", "flag_schema"])
+        if len(compact_json(data).encode()) > 8192:
+            raise RuntimeError(f"{topic} flag discovery exceeds 8192 bytes")
+        schema = data["flag_schema"]
+        if not topic:
+            result["global"] = schema["global"]
+        else:
+            result["commands"][topic] = {key: value for key, value in schema.items() if key not in ("global", "command")}
+    return result
+
+
+def flag_table(flags: dict) -> str:
+    rows = ["| Flag | Type | Default | Constraints |", "| --- | --- | --- | --- |"]
+    for name, detail in sorted(flags.items()):
+        notes = []
+        if detail.get("required"):
+            notes.append("Required.")
+        if detail.get("format"):
+            notes.append(f"Format: {detail['format']}.")
+        if detail.get("units"):
+            notes.append(f"Units: {detail['units']}.")
+        if detail.get("enum"):
+            notes.append("Values: " + ", ".join(detail["enum"]) + ".")
+        for field, label in (("minimum", "Minimum"), ("maximum", "Maximum"), ("max_bytes", "Byte limit"), ("max_items", "Item limit")):
+            if field in detail:
+                notes.append(f"{label}: {detail[field]:,}.")
+        if detail.get("repeat"):
+            notes.append("Repeatable.")
+        if detail.get("optional_value"):
+            notes.append("Optional value uses =.")
+        notes += [re.sub(r"(?<![\w.])\d{4,}(?![\w.])", lambda match: f"{int(match.group()):,}", detail[key]) for key in ("default_source", "notes") if detail.get(key)]
+        default = json.dumps(detail["default"], ensure_ascii=False) if "default" in detail else "unspecified"
+        cells = [f"`--{name}`", detail["type"], f"`{default}`", " ".join(notes)]
+        rows.append("| " + " | ".join(cell.replace("|", "&#124;") for cell in cells) + " |")
+    return "\n".join(rows) + "\n"
+
+
+def update_cli_flag_tables(text: str, manifest: dict) -> str:
+    section = re.compile(r"(^### (?:Global Flags|`gomoufox ([^`]+)`)[^\n]*\n)(.*?)(?=^### |^## |\Z)", re.MULTILINE | re.DOTALL)
+    table = re.compile(r"^\| Flag \|[^\n]*\n(?:\|[^\n]*\n)+", re.MULTILINE)
+
+    def replace(match: re.Match) -> str:
+        heading, topic, body = match.groups()
+        if topic is None:
+            flags = manifest["global"]
+        else:
+            words = topic.split()
+            command = words[0]
+            if command in ("session", "skills", "agents") and len(words) > 1:
+                command += " " + words[1]
+            if command not in manifest["commands"]:
+                raise RuntimeError(f"CLI docs reference unknown command {command}")
+            flags = manifest["commands"][command].get("flags", {})
+        if table.search(body):
+            body = table.sub(lambda _: flag_table(flags), body, count=1)
+        elif flags:
+            raise RuntimeError(f"{heading.strip()} needs a Flag table for generated discovery")
+        return heading + body
+
+    return section.sub(replace, text)
+
+
+def command_examples(text: str) -> list[str]:
+    examples = set(re.findall(r"`(gomoufox [^`\n]+)`", text))
+    for block in re.findall(r"^```(?:bash|sh)?\s*\n(.*?)^```", text, re.MULTILINE | re.DOTALL):
+        examples.update(line.strip() for line in block.splitlines() if line.strip().startswith("gomoufox "))
+    return sorted(examples)
+
+
+def check_cli_example(example: str, manifest: dict) -> list[str]:
+    try:
+        args = shlex.split(example, comments=True)[1:]
+    except ValueError as exc:
+        return [f"invalid CLI example quoting: {exc}"]
+    command = ""
+    flags = dict(manifest["global"])
+    failures = []
+    index = 0
+    while index < len(args):
+        arg = args[index]
+        index += 1
+        if arg in ("|", ">", ">>", "2>", "&&", ";"):
+            break
+        if not arg.startswith("--"):
+            if not command:
+                if arg.startswith("<") or arg == "version":
+                    return failures
+                command = arg
+                if command not in manifest["commands"]:
+                    return [f"unknown CLI example command: {command}"]
+                flags.update(manifest["commands"][command].get("flags", {}))
+            elif command in ("skills", "session", "agents"):
+                command += " " + arg
+                if command not in manifest["commands"]:
+                    return [f"unknown CLI example command: {command}"]
+                flags.update(manifest["commands"][command].get("flags", {}))
+            continue
+        name, equal, value = arg[2:].partition("=")
+        detail = flags.get(name)
+        if detail is None:
+            failures.append(f"unknown CLI example flag for {command or 'global'}: --{name}")
+            continue
+        if not equal and detail["type"] != "boolean" and not detail.get("optional_value"):
+            if index >= len(args):
+                failures.append(f"CLI example --{name} requires a value")
+                continue
+            value = args[index]
+            index += 1
+        if not value or "<" in value or "$" in value:
+            continue
+        enum = detail.get("enum")
+        values = value.split(",") if detail.get("format") == "csv" else [value]
+        if name == "method":
+            values = [value.upper()]
+        if enum and any(item not in enum for item in values):
+            failures.append(f"CLI example --{name} has an unsupported enum value")
+        if detail["type"] == "integer":
+            try:
+                number = int(value)
+                if number < detail.get("minimum", number) or number > detail.get("maximum", number):
+                    failures.append(f"CLI example --{name} is outside its bounds")
+            except ValueError:
+                failures.append(f"CLI example --{name} expects an integer")
+        if detail.get("format") == "duration" and re.fullmatch(r"[+-]?[0-9.]+", value):
+            failures.append(f"CLI example --{name} requires a duration unit")
+    return failures
+
+
+def check_cli_examples(text: str, manifest: dict) -> list[str]:
+    return [failure for example in command_examples(text) for failure in check_cli_example(example, manifest)]
 
 
 def parse_tool_docs(path: Path) -> dict[str, dict[str, object]]:
@@ -235,24 +380,22 @@ def check_cli_help_doc(path: Path, root: Path, command: list[str]) -> list[str]:
 def check_mcp_skill_body(root: Path, gomoufox: str | None, live: dict[str, str]) -> list[str]:
     command = gomoufox_base(root, gomoufox)
     failures: list[str] = []
-    skill = run_json(root, command, ["skills", "show", "mcp", "--json"])
-    body = str(skill.get("body", ""))
+    manifest = json.loads(live["cli-flags.json"])
     tools = {tool["name"] for tool in json.loads(live["mcp-tools-list.json"])["tools"]}
     allowed_non_tools = {"session_id"}
-    for match in sorted(set(re.findall(r"`((?:browser|session|skills)_[a-z0-9_]+)`", body))):
-        if match not in tools and match not in allowed_non_tools:
-            failures.append(f"embedded mcp skill references unknown MCP tool {match!r}")
-
-    mcp_help = run_json(root, command, ["help", "mcp", "--json"])
-    allowed_flags = set(mcp_help.get("global", []))
-    for command_doc in mcp_help.get("commands", []):
-        if isinstance(command_doc, dict):
-            allowed_flags.update(command_doc.get("flags", []))
-    normalized = {flag.split()[0] for flag in allowed_flags}
-    allowed_cli_bridge_flags = {"--save-session", "--wait"}
-    for flag in sorted(set(re.findall(r"--[a-z0-9-]+", body))):
-        if flag not in normalized and flag not in allowed_cli_bridge_flags:
-            failures.append(f"embedded mcp skill references unknown mcp flag {flag!r}")
+    allowed_flags = set(manifest["global"])
+    for schema in manifest["commands"].values():
+        allowed_flags.update(schema.get("flags", {}))
+    for name in ("core", "mcp"):
+        skill = run_json(root, command, ["skills", "show", name, "--json"])
+        body = str(skill.get("body", ""))
+        for match in sorted(set(re.findall(r"\b((?:browser|session|skills)_[a-z0-9_]+)\b", body))):
+            if match not in tools and match not in allowed_non_tools:
+                failures.append(f"embedded {name} skill references unknown MCP tool {match!r}")
+        for flag in sorted(set(re.findall(r"--([a-z0-9-]+)", body))):
+            if flag not in allowed_flags:
+                failures.append(f"embedded {name} skill references unknown CLI flag --{flag}")
+        failures.extend(check_cli_examples(body, manifest))
     return failures
 
 
@@ -386,8 +529,10 @@ def update_docs(root: Path, docs_path: Path, gomoufox: str | None, live: dict[st
     live_help = run_json(root, command, ["help", "--json"])
     text = docs_path.read_text(encoding="utf-8")
     text = update_cli_help_doc(text, live_help)
+    text = update_cli_flag_tables(text, json.loads(live["cli-flags.json"]))
     text = update_mcp_docs(text, live["mcp-tools-list.json"])
     docs_path.write_text(text, encoding="utf-8")
+    run_json(root, command, ["skills", "export", "--out", str(root / "skills"), "--force", "--json"])
 
 
 def check_mcp_docs(path: Path, mcp_tools_result: str) -> list[str]:
@@ -526,6 +671,11 @@ def check_docs(root: Path, docs_path: Path, spec_path: Path | None, gomoufox: st
     if docs_path.exists():
         failures.extend(check_cli_help_doc(docs_path, root, command))
         failures.extend(check_mcp_docs(docs_path, live["mcp-tools-list.json"]))
+        manifest = json.loads(live["cli-flags.json"])
+        text = docs_path.read_text(encoding="utf-8")
+        if update_cli_flag_tables(text, manifest) != text:
+            failures.append(f"{docs_path} CLI flag table drift: run check-agent-contracts.py --update")
+        failures.extend(check_cli_examples(text, manifest))
     failures.extend(check_mcp_contract_invariants(live["mcp-tools-list.json"]))
     failures.extend(check_mcp_skill_body(root, gomoufox, live))
     failures.extend(check_known_prose(root, docs_path, spec_path))
@@ -562,7 +712,7 @@ def main() -> int:
     parser.add_argument("--contracts-dir", default="docs/agent-contracts", help="contract snapshot directory")
     parser.add_argument("--docs-path", default="cli-mcp.md", help="private CLI/MCP Markdown spec to check when present")
     parser.add_argument("--spec-path", default="spec.md", help="private guardrail spec to check when present")
-    parser.add_argument("--gomoufox", help="path to a gomoufox binary; defaults to go run ./cmd/gomoufox")
+    parser.add_argument("--gomoufox", help="path to a gomoufox binary; defaults to a temporary build of ./cmd/gomoufox")
     parser.add_argument("--update", action="store_true", help="refresh contract snapshots")
     args = parser.parse_args()
 
@@ -581,7 +731,12 @@ def main() -> int:
         return 1
 
     try:
-        failures = check_or_update(root, contracts_dir, docs_path, spec_path, args.gomoufox, args.update)
+        with tempfile.TemporaryDirectory(prefix="gomoufox-contract-bin-") as temporary:
+            binary = args.gomoufox
+            if not binary:
+                binary = str(Path(temporary) / ("gomoufox.exe" if os.name == "nt" else "gomoufox"))
+                subprocess.run(["go", "build", "-o", binary, "./cmd/gomoufox"], cwd=root, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            failures = check_or_update(root, contracts_dir, docs_path, spec_path, binary, args.update)
     except Exception as exc:
         print(str(exc), file=sys.stderr)
         return 1

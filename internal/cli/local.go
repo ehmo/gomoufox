@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -22,10 +23,12 @@ import (
 	"github.com/ehmo/gomoufox/internal/content"
 	"github.com/ehmo/gomoufox/internal/netguard"
 	"github.com/ehmo/gomoufox/internal/policy"
+	"github.com/ehmo/gomoufox/internal/renderinfo"
 	"github.com/ehmo/gomoufox/internal/safefile"
 )
 
 var localOpenFile = os.Open
+var errFileInputTooLarge = errors.New("file input too large")
 
 func defaultLocalCommand(ctx context.Context, req LocalCommandRequest) (LocalCommandResponse, error) {
 	switch req.Command {
@@ -132,13 +135,15 @@ func localGuardrailBlockedResponse(req LocalCommandRequest, reason string) Local
 	if detail != "" && detail != message && detail != gomoufox.ErrURLBlocked.Error() {
 		message += ": " + detail
 	}
-	resp := LocalCommandResponse{ExitCode: ExitURLBlocked, Stderr: message + "\n"}
+	resp := LocalCommandResponse{ExitCode: ExitURLBlocked, Stderr: message + "\n" + policy.NetworkBlockHint + "\n"}
 	if req.JSON {
 		var out bytes.Buffer
 		_ = json.NewEncoder(&out).Encode(struct {
 			Error   string `json:"error"`
 			Message string `json:"message"`
-		}{Error: "url_blocked", Message: message})
+			Reason  string `json:"reason"`
+			Hint    string `json:"hint"`
+		}{Error: "url_blocked", Message: "The request was rejected by the network policy.", Reason: "network_policy", Hint: policy.NetworkBlockHint})
 		resp.Stdout = out.Bytes()
 	}
 	return resp
@@ -204,6 +209,8 @@ func localGet(ctx context.Context, req LocalCommandRequest) (LocalCommandRespons
 		return LocalCommandResponse{}, err
 	}
 	defer closeAll()
+	ctx, cancel := context.WithTimeout(ctx, flagDuration(req, "timeout", 30*time.Second))
+	defer cancel()
 	target := req.Args[0]
 	nav, err := p.Goto(ctx, target, gomoufox.WaitUntil(flagString(req, "wait_load_state", "domcontentloaded")), gomoufox.WithTimeout(flagDuration(req, "timeout", 30*time.Second)))
 	if blocked, ok, err := checkedNavigationResponse(req, nav, err); err != nil {
@@ -220,7 +227,7 @@ func localGet(ctx context.Context, req LocalCommandRequest) (LocalCommandRespons
 	if err != nil {
 		return LocalCommandResponse{}, err
 	}
-	body, _ := p.BodyText(ctx)
+	body := content.ReaderText(html)
 	title, _ := p.Title(ctx)
 	format := content.FormatMarkdown
 	if localBool(req, "html") {
@@ -234,21 +241,31 @@ func localGet(ctx context.Context, req LocalCommandRequest) (LocalCommandRespons
 	}
 	if req.JSON {
 		return jsonResponse(struct {
-			URL             string         `json:"url"`
-			FinalURL        string         `json:"final_url"`
-			Title           string         `json:"title"`
-			Content         string         `json:"content"`
-			Format          content.Format `json:"format"`
-			MarkdownQuality string         `json:"markdown_quality,omitempty"`
-			Bytes           int            `json:"bytes"`
-			Truncated       bool           `json:"truncated"`
+			URL              string               `json:"url"`
+			FinalURL         string               `json:"final_url"`
+			Title            string               `json:"title"`
+			Content          string               `json:"content"`
+			Format           content.Format       `json:"format"`
+			MarkdownQuality  string               `json:"markdown_quality,omitempty"`
+			ExtractionMethod string               `json:"extraction_method"`
+			Bytes            int                  `json:"bytes"`
+			Truncated        bool                 `json:"truncated"`
+			Status           int                  `json:"status"`
+			HTTPRecovery     *policy.HTTPRecovery `json:"http_recovery,omitempty"`
 		}{
 			URL: target, FinalURL: p.URL(), Title: title, Content: extracted.Content,
 			Format: extracted.Format, MarkdownQuality: extracted.MarkdownQuality,
-			Bytes: extracted.Bytes, Truncated: extracted.Truncated,
+			ExtractionMethod: extracted.ExtractionMethod,
+			Bytes:            extracted.Bytes, Truncated: extracted.Truncated,
+			Status: navigationStatus(nav), HTTPRecovery: policy.HTTPRecoveryForStatus(navigationStatus(nav)),
 		})
 	}
-	return LocalCommandResponse{ExitCode: ExitOK, Stdout: []byte(extracted.Content)}, nil
+	response := LocalCommandResponse{ExitCode: ExitOK, Stdout: []byte(extracted.Content)}
+	response.Stderr = httpRecoveryDiagnostic(navigationStatus(nav))
+	if extracted.Truncated {
+		response.Stderr += fmt.Sprintf("get output truncated to %d bytes; use --json for extraction metadata or increase --max-bytes\n", extracted.Bytes)
+	}
+	return response, nil
 }
 
 func localScreenshot(ctx context.Context, req LocalCommandRequest) (LocalCommandResponse, error) {
@@ -259,6 +276,8 @@ func localScreenshot(ctx context.Context, req LocalCommandRequest) (LocalCommand
 		return LocalCommandResponse{}, err
 	}
 	defer closeAll()
+	ctx, cancel := context.WithTimeout(ctx, flagDuration(req, "timeout", 30*time.Second))
+	defer cancel()
 	nav, err := p.Goto(ctx, req.Args[0], gomoufox.WaitUntil(flagString(req, "wait_load_state", "load")), gomoufox.WithTimeout(flagDuration(req, "timeout", 30*time.Second)))
 	if blocked, ok, err := checkedNavigationResponse(req, nav, err); err != nil {
 		return LocalCommandResponse{}, err
@@ -296,7 +315,23 @@ func localScreenshot(ctx context.Context, req LocalCommandRequest) (LocalCommand
 			return LocalCommandResponse{}, err
 		}
 		if req.JSON {
-			return jsonResponse(map[string]any{"path": out, "width": width, "height": height, "bytes": len(data), "format": screenshotFormat(out)})
+			size, sizeErr := renderinfo.ImageSize(data)
+			payload := map[string]any{"path": out, "width": size.Width, "height": size.Height, "bytes": len(data), "format": screenshotFormat(out), "requested_viewport": renderinfo.Size{Width: width, Height: height}}
+			if sizeErr != nil {
+				payload["image_dimensions_status"] = "unavailable"
+			}
+			if inspector, ok := p.(interface {
+				RenderingInfo(context.Context, string) (*renderinfo.Metrics, error)
+			}); ok {
+				if metrics, err := inspector.RenderingInfo(ctx, flagString(req, "os", "")); err == nil {
+					payload["rendering"] = metrics
+				} else {
+					payload["rendering_status"] = "unavailable"
+				}
+			} else {
+				payload["rendering_status"] = "unavailable"
+			}
+			return jsonResponse(payload)
 		}
 		return LocalCommandResponse{ExitCode: ExitOK, Stdout: []byte(out + "\n")}, nil
 	}
@@ -309,6 +344,8 @@ func localEval(ctx context.Context, req LocalCommandRequest) (LocalCommandRespon
 		return LocalCommandResponse{}, err
 	}
 	defer closeAll()
+	ctx, cancel := context.WithTimeout(ctx, flagDuration(req, "timeout", 30*time.Second))
+	defer cancel()
 	nav, err := p.Goto(ctx, req.Args[0], gomoufox.WaitUntil(flagString(req, "wait_load_state", "domcontentloaded")), gomoufox.WithTimeout(flagDuration(req, "timeout", 30*time.Second)))
 	if blocked, ok, err := checkedNavigationResponse(req, nav, err); err != nil {
 		return LocalCommandResponse{}, err
@@ -345,6 +382,8 @@ func localFetch(ctx context.Context, req LocalCommandRequest) (LocalCommandRespo
 		return LocalCommandResponse{}, err
 	}
 	defer closeAll()
+	ctx, cancel := context.WithTimeout(ctx, flagDuration(req, "timeout", 30*time.Second))
+	defer cancel()
 	if nav := flagString(req, "navigate_first", ""); nav != "" {
 		navResp, err := p.Goto(ctx, nav, gomoufox.WithTimeout(flagDuration(req, "timeout", 30*time.Second)))
 		if blocked, ok, err := checkedNavigationResponse(req, navResp, err); err != nil {
@@ -358,14 +397,31 @@ func localFetch(ctx context.Context, req LocalCommandRequest) (LocalCommandRespo
 		return LocalCommandResponse{}, err
 	}
 	headers := headersFromFlags(req)
-	if ct := flagString(req, "content_type", ""); ct != "" {
+	isMultipart := len(flagStringList(req, "form"))+len(flagStringList(req, "form_file")) > 0
+	if isMultipart {
+		var contentType string
+		body, contentType, err = multipartBody(req)
+		if err != nil {
+			return LocalCommandResponse{}, err
+		}
+		headers["Content-Type"] = contentType
+	} else if ct := flagString(req, "content_type", ""); ct != "" {
 		headers["Content-Type"] = ct
 	} else if len(body) > 0 && json.Valid(body) && headers["Content-Type"] == "" {
 		headers["Content-Type"] = "application/json"
 	}
-	method := strings.ToUpper(flagString(req, "method", "GET"))
+	defaultMethod := "GET"
+	if isMultipart {
+		defaultMethod = "POST"
+	}
+	method := strings.ToUpper(flagString(req, "method", defaultMethod))
 	capBytes := flagInt(req, "max_bytes", 512*1024)
-	result, err := p.FetchBytesWithOptions(ctx, req.Args[0], method, headers, body, gomoufox.FetchBytesOptions{MaxBytes: capBytes})
+	options := gomoufox.FetchBytesOptions{MaxBytes: capBytes}
+	outputPath := flagString(req, "out", "")
+	if outputPath != "" {
+		options = gomoufox.FetchBytesOptions{MaxFileBytes: flagInt(req, "max_file_bytes", gomoufox.MaxTransferFileBytes)}
+	}
+	result, err := p.FetchBytesWithOptions(ctx, req.Args[0], method, headers, body, options)
 	if err != nil {
 		if errors.Is(err, gomoufox.ErrURLBlocked) {
 			return localGuardrailBlockedResponse(req, err.Error()), nil
@@ -375,17 +431,51 @@ func localFetch(ctx context.Context, req LocalCommandRequest) (LocalCommandRespo
 	status := result.StatusCode
 	data := result.Body
 	bodyBytes := len(data)
-	if result.Truncated {
-		data = append(data, []byte("\n<!-- truncated -->")...)
+	if outputPath != "" {
+		if result.Truncated {
+			return LocalCommandResponse{}, fmt.Errorf("download exceeds --max-file-bytes (%d); destination was not changed", options.MaxFileBytes)
+		}
+		if status < 200 || status >= 300 {
+			return LocalCommandResponse{}, fmt.Errorf("download returned HTTP %d; destination was not changed. %s", status, strings.TrimSpace(httpRecoveryDiagnostic(status)))
+		}
+		if err := writeFile0600(outputPath, data, localBool(req, "overwrite")); err != nil {
+			return LocalCommandResponse{}, err
+		}
+		displayPath := outputPath
+		if req.DisplayOut != "" {
+			displayPath = req.DisplayOut
+		}
+		return jsonResponse(map[string]any{"url": req.Args[0], "status": status, "saved": true, "path": displayPath, "bytes": bodyBytes, "sha256": fmt.Sprintf("%x", sha256.Sum256(data))})
 	}
 	if !req.JSON {
-		return LocalCommandResponse{ExitCode: ExitOK, Stdout: data}, nil
+		if result.Truncated {
+			return LocalCommandResponse{}, fmt.Errorf("response exceeds --max-bytes (%d); use --out <path> for a complete file or --json for an explicitly truncated preview", capBytes)
+		}
+		return LocalCommandResponse{ExitCode: ExitOK, Stdout: data, Stderr: httpRecoveryDiagnostic(status)}, nil
 	}
 	var payload any = string(data)
 	if !localBool(req, "raw") && json.Valid(data) {
 		_ = json.Unmarshal(data, &payload)
 	}
-	return jsonResponse(map[string]any{"url": req.Args[0], "status": status, "body": payload, "bytes": bodyBytes, "truncated": result.Truncated})
+	out := map[string]any{"url": req.Args[0], "status": status, "body": payload, "bytes": bodyBytes, "truncated": result.Truncated}
+	if recovery := policy.HTTPRecoveryForStatus(status); recovery != nil {
+		out["http_recovery"] = recovery
+	}
+	return jsonResponse(out)
+}
+
+func navigationStatus(response *localNavigationResponse) int {
+	if response == nil {
+		return 0
+	}
+	return response.Status
+}
+
+func httpRecoveryDiagnostic(status int) string {
+	if recovery := policy.HTTPRecoveryForStatus(status); recovery != nil {
+		return recovery.Message + " " + recovery.Hint + "\n"
+	}
+	return ""
 }
 
 func localOpen(ctx context.Context, req LocalCommandRequest) (LocalCommandResponse, error) {
@@ -581,6 +671,9 @@ func openRealBrowser(ctx context.Context, req LocalCommandRequest) (localStorage
 
 func contextOptionsForLocal(req LocalCommandRequest, base []gomoufox.ContextOption) ([]gomoufox.ContextOption, error) {
 	opts := append([]gomoufox.ContextOption(nil), base...)
+	if flagString(req, "width", "") != "" || flagString(req, "height", "") != "" {
+		opts = append(opts, gomoufox.WithViewport(flagInt(req, "width", 1280), flagInt(req, "height", 800)))
+	}
 	if locale := flagString(req, "locale", ""); locale != "" {
 		opts = append(opts, gomoufox.WithContextLocale(locale))
 	}
@@ -623,7 +716,11 @@ func (p realLocalPage) WaitForSelector(ctx context.Context, selector string) err
 }
 func (p realLocalPage) Content(ctx context.Context) (string, error) { return p.p.Content(ctx) }
 func (p realLocalPage) BodyText(ctx context.Context) (string, error) {
-	return p.p.Locator("body").TextContent(ctx)
+	rawHTML, err := p.p.Content(ctx)
+	if err != nil {
+		return "", err
+	}
+	return content.ReaderText(rawHTML), nil
 }
 func (p realLocalPage) Title(ctx context.Context) (string, error) { return p.p.Title(ctx) }
 func (p realLocalPage) URL() string                               { return p.p.URL() }
@@ -816,7 +913,11 @@ func scriptFromFlags(req LocalCommandRequest) (string, error) {
 	if script := flagString(req, "script", ""); script != "" {
 		return script, nil
 	}
-	return readCappedFile(flagString(req, "script_file", ""), 64*1024)
+	script, err := readCappedFile(flagString(req, "script_file", ""), 64*1024)
+	if errors.Is(err, errFileInputTooLarge) {
+		return "", errors.New(scriptSizeHint)
+	}
+	return script, err
 }
 
 func bodyFromFlags(req LocalCommandRequest) ([]byte, error) {
@@ -824,7 +925,7 @@ func bodyFromFlags(req LocalCommandRequest) ([]byte, error) {
 		return []byte(body), nil
 	}
 	if path := flagString(req, "data_file", ""); path != "" {
-		return readCappedFileBytes(path, 1024*1024)
+		return readCappedFileBytes(path, gomoufox.MaxTransferFileBytes)
 	}
 	return nil, nil
 }
@@ -960,7 +1061,7 @@ func readCappedReader(reader io.Reader, cap int) ([]byte, error) {
 		return nil, err
 	}
 	if len(data) > cap {
-		return nil, fmt.Errorf("file exceeds %d bytes", cap)
+		return nil, fmt.Errorf("file exceeds %d bytes: %w", cap, errFileInputTooLarge)
 	}
 	return data, nil
 }
@@ -983,4 +1084,14 @@ func writeSessionStateFile(path string, state *gomoufox.StorageState, overwrite 
 		return fmt.Errorf("state exceeds %d bytes", policy.InlineSessionLoadBytes)
 	}
 	return writeFile0600(path, data, overwrite)
+}
+
+func (p realLocalPage) RenderingInfo(ctx context.Context, requestedOS string) (*renderinfo.Metrics, error) {
+	evaluator, ok := p.p.(interface {
+		EvaluateInternal(context.Context, string, ...any) (any, error)
+	})
+	if !ok {
+		return nil, errors.New("rendering metrics unavailable")
+	}
+	return renderinfo.Inspect(ctx, evaluator.EvaluateInternal, requestedOS)
 }

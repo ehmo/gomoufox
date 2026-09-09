@@ -201,6 +201,10 @@ type realPage struct {
 	raw playwright.Page
 }
 
+func (p *realPage) SetViewportSize(width, height int) error {
+	return p.raw.SetViewportSize(width, height)
+}
+
 func (p *realPage) Goto(url string, opts GotoOptions) (Response, error) {
 	resp, err := p.raw.Goto(url, toPWGotoOptions(opts))
 	if err != nil || resp == nil {
@@ -639,6 +643,9 @@ func toPWScreenshotOptions(opts ScreenshotOptions) playwright.PageScreenshotOpti
 		FullPage: playwright.Bool(opts.FullPage),
 		Timeout:  playwright.Float(10000),
 	}
+	if opts.Timeout > 0 {
+		out.Timeout = timeoutPtr(opts.Timeout)
+	}
 	if opts.Type != "" {
 		v := playwright.ScreenshotType(opts.Type)
 		out.Type = &v
@@ -654,6 +661,9 @@ func toPWScreenshotOptions(opts ScreenshotOptions) playwright.PageScreenshotOpti
 
 func toPWLocatorScreenshotOptions(opts ScreenshotOptions) playwright.LocatorScreenshotOptions {
 	out := playwright.LocatorScreenshotOptions{}
+	if opts.Timeout > 0 {
+		out.Timeout = timeoutPtr(opts.Timeout)
+	}
 	if opts.Type != "" {
 		v := playwright.ScreenshotType(opts.Type)
 		out.Type = &v

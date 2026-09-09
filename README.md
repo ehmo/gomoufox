@@ -160,8 +160,8 @@ that directory only when the deployment needs persistent session state.
 
 Default Go, CLI, and MCP flows use the Go-managed node-direct runtime. The
 default install assembles the exact Playwright 1.57 driver from checksum-pinned
-official `playwright-core` npm and Node.js artifacts, then fetches gomoufox's
-launch server and the pinned Camoufox browser archive. Persistent profiles and
+official `playwright-core` npm and Node.js artifacts, writes the bundled launch
+server and fetches the pinned Camoufox browser archive. Persistent profiles and
 browser-context locale settings use the node-direct runtime; geoip and humanize
 launch options still require the Python sidecar.
 
@@ -256,11 +256,29 @@ sensitive. `HARCaptureFull` preserves request and response content. A successful
 ```bash
 gomoufox get https://example.com --markdown
 gomoufox screenshot https://example.com --out page.png --full-page
+gomoufox screenshot https://example.com --out mobile.png --width 390 --height 844
 gomoufox fetch https://api.example.com/me --navigate-first https://example.com
 gomoufox open https://app.example.com --save-session state.json --wait
 gomoufox fetch https://app.example.com/api/me --cookies-file state.json
 gomoufox record https://app.example.com --out capture.har
 ```
+
+`get`, `eval` and `screenshot` accept `--width` and `--height` in CSS pixels.
+Their `--timeout` budget starts after browser startup and covers navigation,
+selector readiness and capture; a selector wait uses the remaining budget.
+MCP `session_create` accepts the same settings as `width` and `height`.
+Screenshot JSON reports encoded image `width` and `height`, the
+`requested_viewport`, and `rendering` metrics with effective CSS dimensions and
+`device_pixel_ratio`. Full-page and clipped captures can have different image
+and viewport dimensions.
+
+`rendering` also reports the host OS, requested OS fingerprint, browser platform,
+body font family and up to 32 web-font loading states. `--os` selects a Camoufox
+fingerprint; it does not install fonts or turn the host into that OS. Loaded
+fonts do not prove that every character has a glyph, so `glyph_coverage` remains
+`not_verified`. For repeatable typography, serve the required web fonts with the
+page and inspect representative characters in the capture. Unavailable metrics
+are marked explicitly.
 
 Fetch responses are read through a bounded browser stream. `gomoufox fetch`
 defaults to 512 KiB, reports truncation in JSON output, and cancels the reader
@@ -293,8 +311,13 @@ Automation tips:
 - Use `--json` for machine-readable output and keep status logs on stderr.
 - Use `--timeout <dur>` for bounded shell jobs.
 - Use `open --save-session` for human login, then reuse the state with
-  `--cookies-file`.
+  `--cookies-file`. Save storage state for session-cookie handoff; reopening a
+  profile alone does not guarantee session-cookie persistence.
 - Use `--profile <dir>` when a workflow needs full persistent browser state.
+  Relative CLI paths resolve from the command's working directory. Each local
+  CLI call starts and closes its own browser; without a profile or imported
+  state, separate calls do not share login or page state. Use MCP named sessions
+  or a running daemon when later calls need the same live browser.
 - Keep the default URL policy for normal work. Use `--allow-localhost` only for
   explicit localhost or loopback HTTP(S) targets.
 
@@ -395,6 +418,19 @@ Dry-run output shows the exact absolute paths that would be written.
 
 ## MCP
 
+Rejected tool arguments include `argument_error` with the field, rule and
+correction from the live schema. Browser failures retain their error code and
+add a safe `reason`, `message` and `hint`. Reasons distinguish timeout, closed
+sessions, stale refs, ambiguous selectors, frame changes, runtime/launch
+failures, network failures and script errors. Raw driver text and supplied
+values are omitted.
+
+Form-batch failures report `phase`, `completed_actions`, zero-based
+`failed_index` and `total_actions`. Validation failures mean no actions ran.
+Execution failures leave completed actions applied and mark the failed action
+as possibly applied. Inspect the page before resuming; replaying the whole
+batch can repeat side effects.
+
 Run browser tools over stdio:
 
 ```bash
@@ -449,6 +485,16 @@ MCP defaults:
   exclusively reserved until finalization returns. Full capture also requires
   `--allow-har-sensitive-values`; even metadata HAR files remain sensitive and
   returned routes are untrusted website-controlled data.
+- For login inside MCP, create `session_create` with `headful: true`, then
+  navigate using that session ID to open its visible window. Complete login,
+  wait for a signed-in selector, and call `session_save` while the session is
+  alive (`--allow-session-export` is required). Continue with the same session ID.
+  The session owns a dedicated browser; `session_destroy` closes it.
+- MCP profile paths resolve under `--session-dir/profiles`. A profile belongs to
+  one named session until cleanup finishes. `profile_in_use` names the owning
+  session when this server knows it; reuse that ID. For a profile held by another
+  process, close its owner or choose another directory. Keep lock files intact.
+  `session_list.state_source` distinguishes ephemeral, profile and imported state.
 - To reuse a CLI login in MCP, save state with `gomoufox open --save-session`,
   place the file under `--session-dir`, start MCP with `--allow-session-import`,
   then call `session_create` with `storage_state_path` or `session_load` with
@@ -473,40 +519,46 @@ Camoufox without producing Go-only failures?
 
 Latest checked evidence:
 [docs/BENCHMARKS.md](docs/BENCHMARKS.md),
-[Python-sidecar artifact](docs/benchmarks/2026-06-08-release-gate.json), and
-[node-direct artifact](docs/benchmarks/2026-08-22-node-direct-readiness.json).
-The node-direct run used this
-[shared Linux persona](docs/personas/2026-08-22-node-direct-readiness.json)
-for both runtimes.
+[8-site baseline](docs/benchmarks/2026-09-08-full-streamed.json), and
+[100-site node-direct artifact](docs/benchmarks/2026-09-08-node-direct-streamed-readiness.json).
+Both runtimes in the extended comparison used this
+[shared Linux persona](docs/personas/2026-09-08-node-direct-readiness.json).
+The current figures include each complete harness process tree: the runner,
+drivers and browser. Both runtimes use a fixed sampling period that includes
+snapshot collection time. Earlier artifacts used a narrower Go resource scope
+and different sampling cadences.
+Earlier Python-sidecar results remain in the
+[2026-06-08 artifact](docs/benchmarks/2026-06-08-release-gate.json).
 
 | Runtime | Passed | Blocked | Failed | Wall ms | Peak RSS MiB | Peak CPU % | Report tokens |
 |---|---:|---:|---:|---:|---:|---:|---:|
-| Python Camoufox | 91 | 9 | **0** | **345,684** | 2,691.4 | 471.4 | 81,812 |
-| gomoufox, Python sidecar | **95** | **5** | **0** | 366,338 | 2,765.3 | 569.9 | **13,059** |
-| gomoufox, node-direct Go | 91 | 9 | **0** | 347,514 | **2,548.9** | **446.2** | 13,111 |
+| Python Camoufox | 90 | 10 | 0 | 351,119 | 3,148.6 | 617.4 | 83,606 |
+| gomoufox, node-direct Go | 90 | 10 | 0 | 349,133 | 3,219.6 | 631.4 | 13,173 |
 
-Bold means best in that column. The sidecar row comes from the previous extended
-release-gate artifact; node-direct comes from the readiness artifact.
-Use the table for direction, not single-run timing claims.
+Outcome counts come from the second loop; wall time averages both loops, and
+resource figures use the larger peak. Both loops matched all 100 outcomes.
 
 Latest extended validation: 100 targets, 60s timeout, `commit` wait, 3s settle,
 no screenshots, reused browser, compact Go report, 0s extra load-state wait, and
-250,000-byte classification cap.
-The checked artifact uses two alternating loops.
-gomoufox passed 91, blocked 9, failed 0. Python Camoufox passed 91, blocked 9,
+250,000-byte classification cap. The artifact contains two alternating loops.
+gomoufox passed 90, blocked 10, failed 0. Python Camoufox passed 90, blocked 10,
 failed 0. The run had 0 persistent Go-only regressions and 0 paired outcome
-mismatches. See
-[docs/benchmarks/2026-08-22-node-direct-readiness.json](docs/benchmarks/2026-08-22-node-direct-readiness.json).
+mismatches. See the
+[extended artifact](docs/benchmarks/2026-09-08-node-direct-streamed-readiness.json).
 
 | Ratio | node-direct Go / Python Camoufox |
 |---|---:|
-| Wall time | 1.005 |
-| Peak RSS | 0.947 |
-| Peak CPU | 0.947 |
-| Report tokens | 0.160 |
+| Wall time | 0.994 |
+| Peak RSS | 1.023 |
+| Peak CPU | 1.023 |
+| Report tokens | 0.158 |
 
-Node-direct stayed within the release RSS and CPU caps and produced a much
-smaller agent report. Treat a report-token ratio above 0.50 as a regression.
+The release evidence check passed its timing, resource and report-size limits.
+The separate node-direct promotion comparison remains blocked. Failed criteria:
+`peak_rss_beats_python`, `peak_cpu_beats_python`.
+The promotion RSS and CPU criteria each require a ratio at or below 0.95.
+Consumer no-Python readiness is checked separately. Treat a report-token ratio
+above 0.50 as a regression.
 Release gates use `--unsafe-direct-network`, block reproducible outcome mismatch,
 and give a new shared block, failure, or performance outlier one focused retry.
 If that retry differs by outcome, the gate runs one paired confirmation in the
@@ -517,9 +569,9 @@ outcome persists in every paired observation. The artifact still records every
 paired mismatch.
 
 ```bash
-scripts/benchmark-realpass.py --mode smoke
-scripts/benchmark-realpass.py --mode smoke --loops 2 --run-order alternate
-scripts/benchmark-realpass.py --mode extended --loops 2 --run-order alternate
+scripts/benchmark-realpass.py --mode smoke --go-sidecar-runtime node-direct
+scripts/benchmark-realpass.py --mode smoke --go-sidecar-runtime node-direct --loops 2 --run-order alternate
+scripts/benchmark-realpass.py --mode extended --go-sidecar-runtime node-direct --loops 2 --run-order alternate
 scripts/benchmark-realpass.py --mode extended --list-targets
 scripts/fingerprint-audit.py
 ```
@@ -640,9 +692,40 @@ gomoufox doctor --json
 gomoufox --verbose doctor
 ```
 
-Check `GOMOUFOX_CAMOUFOX_PATH` only when you intentionally bypass the managed
-runtime. Offline browser paths are manifest-verified unless
-`GOMOUFOX_TRUST_UNVERIFIED_CAMOUFOX_PATH=1` is set for a trusted local build.
+Doctor reads the cache without installing or repairing it. Use `--dir` to inspect
+a custom install directory and `--runtime python` for the legacy environment.
+The report separates the running executable and build from the binary on `PATH`,
+and expected runtime pins from observed package versions and asset integrity.
+It does not check whether a newer release exists. Failed checks include repair
+commands scoped to that executable and cache. `gomoufox install --json` separates
+disabled downloads, unavailable upstream assets, integrity failures and version
+mismatches, and returns a doctor command for the selected installation.
+
+Repair stages and verifies the complete browser runtime before replacing it.
+Python package upgrades use a new `python-envs/env-*` directory inside the cache;
+an atomic marker selects it only after packages and runtime assets pass checks.
+The directory keeps its original path so Python script interpreter paths remain
+valid. Failed upgrades preserve the previous installation. Previous Python
+environments remain on disk for processes that still use them.
+
+`GOMOUFOX_CAMOUFOX_PATH` selects an offline installation source. Doctor checks the
+managed cache, including its integrity when
+`GOMOUFOX_TRUST_UNVERIFIED_CAMOUFOX_PATH=1` is set. That override does not turn a
+failed integrity check into a passing report.
+
+### How do I recover from a blocked request?
+
+A `network_policy` failure identifies a local guardrail rejection. Check the
+running MCP connection with `browser_capabilities`; an authorized configuration
+change requires restarting that connection. CLI loopback access needs
+`--allow-localhost`. Changing transports does not remove the policy constraint.
+
+CLI get/fetch and MCP navigation/fetch report observed HTTP status separately.
+HTTP errors add `http_recovery` with guidance for authentication, access denial,
+rate limits or server failures. Content remains inspectable, and a 403 or 503
+alone is not labeled a bot check. Stop unchanged retries, observe the site's
+limits and use approved login or documented APIs only when authorized. Browser
+automation does not guarantee success on a site's checks.
 
 ## Compatibility
 
@@ -676,9 +759,12 @@ docs-number formatting, unit tests, agent contracts, `go vet`, and the public
 consumer canary in dry-run mode. Public tag releases run the heavier coverage,
 vulnerability, package, attestation, and post-release audit checks.
 
-Agent-facing CLI and MCP discovery snapshots live in `docs/agent-contracts/`.
-When CLI help or MCP tool schemas change, run
-`python3 scripts/check-agent-contracts.py --update` and review the diff.
+Agent-facing discovery snapshots live in `docs/agent-contracts/`, including the
+[typed CLI flag catalog](docs/agent-contracts/cli-flags.json). When CLI flags,
+MCP schemas or embedded skills change, run
+`python3 scripts/check-agent-contracts.py --update` and review the diff. It also
+generates CLI reference tables and installable skills, and checks command examples
+against the live flag schemas.
 
 Run `python3 scripts/format-doc-numbers.py --write` after editing docs with
 large displayed numbers.
@@ -691,3 +777,76 @@ gomoufox is MIT licensed.
 
 Camoufox is MPL-2.0. gomoufox starts Camoufox as a subprocess and downloads its
 browser binary at runtime. gomoufox does not vendor or modify Camoufox.
+
+Evaluation deadlines close the affected page to stop pending JavaScript. Recreate
+the MCP session after `evaluation_interrupted`; inspect persisted state before
+repeating an operation that may have had side effects.
+
+For complete binary downloads, use `gomoufox fetch <url> --out file.pdf` with
+`--navigate-first <page-url>` or `--cookies-file state.json` when the request needs
+authentication. File acquisition defaults to 50 MiB; `--max-file-bytes` may lower
+that limit. The response is held within that byte budget, then written atomically
+with mode 0600. JSON metadata includes its byte count and SHA-256 digest. Existing
+files require `--overwrite`. Truncation, HTTP errors and failed transfers leave the
+destination unchanged. `--max-bytes` remains the text-preview budget; plain stdout
+fails on truncation, while `--json` can return a preview with `truncated: true`.
+
+CLI file uploads accept up to 50 MiB through `--data-file`; inline `--data` keeps
+its 1 MiB text cap. Use `gomoufox fetch <url> --form note=value --form-file
+image=path/to/image.png` for multipart uploads. The default method is POST when
+multipart flags are present. Fields and files may repeat; the complete multipart
+body, including its boundary, must fit within 50 MiB. The command supplies the
+Content-Type boundary. Authentication uses the same browser profile, cookies or
+`--navigate-first` page as other fetch requests.
+
+MCP `browser_fetch` accepts `body_path` for a binary request file under
+`--session-dir`, up to 50 MiB. It requires `--allow-browser-file-fetch` in addition
+to browser fetch and target-scope opt-ins. `body` and `body_path` are exclusive.
+`browser_fetch_form` accepts file paths for multipart endpoints. Neither file route
+requires embedding bytes in scripts or MCP messages. `browser_fetch.timeout_ms`
+bounds the whole navigation-and-fetch operation, defaulting to 30 seconds.
+
+MCP evaluation accepts expressions or functions. A function receives the supplied
+`arg` value: `arg => arg.token`. No global `arg` is created. Promise results are
+awaited within the evaluation deadline; pending main-world results use a temporary
+page property that is removed after completion. Explicit main-world scripts are
+visible to the page. Internal snapshot and extraction helpers keep their separate
+isolated execution path.
+
+Call `browser_capabilities` before using optional MCP features. It reports the
+running connection's gates, limits, network scope and diagnostic availability
+without launching a browser. Both toolsets expose it. Diagnostic tools require
+`--toolset full`; changing the command requires restarting the client connection.
+Inspect the report again after restart. File and cookie suboperations retain
+their separate gates, and an enabled tool still obeys network policy.
+
+`gomoufox setup --recipe research --dry-run` previews the default core setup.
+`gomoufox setup --recipe local-development --dry-run` selects the full toolset
+and adds `--allow-localhost`. Both recipes leave evaluation, fetch, file transfer
+and storage gates disabled unless explicitly supplied through `--mcp-arg`.
+An explicit `--toolset` overrides the recipe. Setup validates the resulting stdio
+command, shows its argument array and names the required connection restart.
+
+MCP `session_limit` errors report capacity and bounded active session IDs.
+`session_list` also reports used and available slots. After a rejected create,
+inspect existing sessions before reusing one or destroying one you no longer
+need. A session recording HAR must finish recording before ordinary destruction.
+
+Use `session_create` with `reuse_if_exists: true` and the same creation settings
+to acquire a named session. It reports `created`, `reused` and `browser_started`;
+a settings conflict leaves the existing session intact. Continue with
+`browser_navigate` and `require_existing: true` to prevent implicit creation after
+a failed acquisition or expiry. Stop on an acquisition error before navigating.
+
+Reader text omits scripts, styles, templates and explicitly hidden subtrees,
+while preserving block boundaries. Whitespace is normalized; stylesheet-based
+visibility is not inferred. Markdown keeps its `article` or `fallback` quality
+label, and MCP extraction reports truncation if either acquired representation
+reached its budget.
+
+Content JSON includes `extraction_method`: `dom_html`, `reader_text`, `article`
+or `reader_fallback`. MCP `truncation_sources` separates `html_acquisition`,
+`text_acquisition` and final `output` caps. A fallback can contain the complete
+reader text even when its HTML acquisition was truncated. Output byte counts
+stay within the requested cap without splitting UTF-8 characters. Plain CLI
+output reports truncation on stderr; it no longer appends bytes beyond the cap.

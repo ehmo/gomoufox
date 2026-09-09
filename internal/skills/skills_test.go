@@ -193,6 +193,18 @@ func TestDefaultRegistry(t *testing.T) {
 	}
 }
 
+func TestPublishedSkillVersionsKeepTheirContent(t *testing.T) {
+	for name, checksum := range map[string]string{
+		"core": "90e2845a9dcdd79e174050d4439d5d3b555577a819bd888f319abe27adf9f736",
+		"mcp":  "9ef300d7d21b4503bd05355aca054e422475c9388ef4f598436ac2acdd72333c",
+	} {
+		skill, err := DefaultRegistry().Resolve(name, "0.1.1")
+		if err != nil || skill.SHA256 != checksum {
+			t.Fatalf("published %s@0.1.1 changed: %s %v", name, skill.SHA256, err)
+		}
+	}
+}
+
 func TestInstallableSkillsMatchRepositoryArtifacts(t *testing.T) {
 	installables := DefaultInstallableSkills()
 	if len(installables) != 2 {

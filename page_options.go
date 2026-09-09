@@ -71,7 +71,7 @@ func (c gotoConfig) toBridge(ctx context.Context) pwbridge.GotoOptions {
 	if timeout <= 0 {
 		timeout = deadlineTimeout(ctx, 30*time.Second)
 	}
-	return pwbridge.GotoOptions{WaitUntil: c.waitUntil, Referer: c.referer, Timeout: timeout}
+	return pwbridge.GotoOptions{WaitUntil: c.waitUntil, Referer: c.referer, Timeout: boundTimeoutToContext(ctx, timeout)}
 }
 
 func (c navigateConfig) toBridge(ctx context.Context) pwbridge.NavigateOptions {
@@ -79,7 +79,7 @@ func (c navigateConfig) toBridge(ctx context.Context) pwbridge.NavigateOptions {
 	if timeout <= 0 {
 		timeout = deadlineTimeout(ctx, 30*time.Second)
 	}
-	return pwbridge.NavigateOptions{WaitUntil: c.waitUntil, Timeout: timeout}
+	return pwbridge.NavigateOptions{WaitUntil: c.waitUntil, Timeout: boundTimeoutToContext(ctx, timeout)}
 }
 
 func (c downloadConfig) toBridge(ctx context.Context) pwbridge.DownloadOptions {
@@ -87,7 +87,7 @@ func (c downloadConfig) toBridge(ctx context.Context) pwbridge.DownloadOptions {
 	if timeout <= 0 {
 		timeout = deadlineTimeout(ctx, 30*time.Second)
 	}
-	return pwbridge.DownloadOptions{Timeout: timeout}
+	return pwbridge.DownloadOptions{Timeout: boundTimeoutToContext(ctx, timeout)}
 }
 
 type WaitForSelectorOption func(*waitForSelectorConfig)
@@ -172,4 +172,15 @@ func mapDownloadError(err error) error {
 		return fmt.Errorf("%w: %v", ErrTimeout, err)
 	}
 	return err
+}
+
+// A per-operation timeout may shorten a caller deadline, but cannot extend it.
+func boundTimeoutToContext(ctx context.Context, timeout time.Duration) time.Duration {
+	if _, ok := ctx.Deadline(); ok {
+		remaining := deadlineTimeout(ctx, 0)
+		if timeout <= 0 || remaining < timeout {
+			return remaining
+		}
+	}
+	return timeout
 }

@@ -1,0 +1,1010 @@
+{
+  "commands": {
+    "agents": {
+      "constraints": [
+        "Global flags can precede or follow the command. A separate CLI call creates a new browser context; --profile and storage state persist authentication, not page state.",
+        "Query a subcommand: gomoufox help agents install --json --fields flag_schema."
+      ],
+      "usage": "gomoufox agents <install> [flags]"
+    },
+    "agents install": {
+      "constraints": [
+        "Global flags can precede or follow the command. A separate CLI call creates a new browser context; --profile and storage state persist authentication, not page state."
+      ],
+      "flags": {
+        "dry-run": {
+          "default": false,
+          "type": "boolean"
+        },
+        "features": {
+          "default": "skills,mcp",
+          "enum": [
+            "skills",
+            "mcp"
+          ],
+          "format": "csv",
+          "notes": "Enum applies to each CSV item.",
+          "type": "string"
+        },
+        "force": {
+          "default": false,
+          "type": "boolean"
+        },
+        "mcp-arg": {
+          "default": "",
+          "repeat": true,
+          "type": "string"
+        },
+        "scope": {
+          "default": "user",
+          "enum": [
+            "user",
+            "project"
+          ],
+          "type": "string"
+        },
+        "target": {
+          "default": "all",
+          "enum": [
+            "codex",
+            "claude",
+            "cursor",
+            "gemini",
+            "all"
+          ],
+          "type": "string"
+        },
+        "toolset": {
+          "default": "core",
+          "enum": [
+            "core",
+            "full"
+          ],
+          "type": "string"
+        }
+      },
+      "usage": "gomoufox agents install [--target codex|claude|cursor|gemini|all] [--scope user|project] [--features skills,mcp] [--toolset core] [--mcp-arg <arg>] [--force] [--dry-run] [--json]"
+    },
+    "doctor": {
+      "constraints": [
+        "Global flags can precede or follow the command. A separate CLI call creates a new browser context; --profile and storage state persist authentication, not page state."
+      ],
+      "flags": {
+        "dir": {
+          "default": "",
+          "default_source": "OS cache directory/gomoufox/venv; see doctor.",
+          "format": "path",
+          "type": "string"
+        },
+        "runtime": {
+          "default": "node-direct",
+          "enum": [
+            "node-direct",
+            "python"
+          ],
+          "type": "string"
+        }
+      },
+      "usage": "gomoufox doctor [--dir path] [--runtime node-direct|python] [--json]"
+    },
+    "eval": {
+      "constraints": [
+        "Global flags can precede or follow the command. A separate CLI call creates a new browser context; --profile and storage state persist authentication, not page state.",
+        "Requires --enable-eval and exactly one of --script or --script-file. --arg and --arg-file are mutually exclusive; the script must be a function to receive its JSON argument."
+      ],
+      "flags": {
+        "arg": {
+          "default": "",
+          "format": "json",
+          "max_bytes": 245760,
+          "notes": "Passed to a function parameter; no global arg is created. Excludes --arg-file.",
+          "type": "string"
+        },
+        "arg-file": {
+          "default": "",
+          "format": "path",
+          "max_bytes": 245760,
+          "notes": "File contents must be JSON.",
+          "type": "string"
+        },
+        "enable-eval": {
+          "default": false,
+          "type": "boolean"
+        },
+        "height": {
+          "default": 800,
+          "maximum": 100000,
+          "minimum": 1,
+          "notes": "Default applies when either viewport flag is supplied; otherwise use the browser context default.",
+          "type": "integer",
+          "units": "CSS pixels"
+        },
+        "script": {
+          "default": "",
+          "format": "javascript",
+          "max_bytes": 65536,
+          "type": "string"
+        },
+        "script-file": {
+          "default": "",
+          "format": "path",
+          "max_bytes": 65536,
+          "type": "string"
+        },
+        "wait-load-state": {
+          "default": "domcontentloaded",
+          "enum": [
+            "domcontentloaded",
+            "load",
+            "networkidle"
+          ],
+          "type": "string"
+        },
+        "wait-selector": {
+          "default": "",
+          "format": "css-selector",
+          "type": "string"
+        },
+        "width": {
+          "default": 1280,
+          "maximum": 100000,
+          "minimum": 1,
+          "notes": "Default applies when either viewport flag is supplied; otherwise use the browser context default.",
+          "type": "integer",
+          "units": "CSS pixels"
+        }
+      },
+      "usage": "gomoufox eval <url> --enable-eval (--script <js>|--script-file <path>)"
+    },
+    "fetch": {
+      "constraints": [
+        "Global flags can precede or follow the command. A separate CLI call creates a new browser context; --profile and storage state persist authentication, not page state.",
+        "--data and --data-file are mutually exclusive. Multipart excludes those body flags and Content-Type overrides. --out excludes --max-bytes and --raw; --max-file-bytes and --overwrite require --out. --cookies-file excludes --profile."
+      ],
+      "flags": {
+        "content-type": {
+          "default": "",
+          "type": "string"
+        },
+        "cookies-file": {
+          "default": "",
+          "format": "path",
+          "type": "string"
+        },
+        "data": {
+          "default": "",
+          "max_bytes": 1048576,
+          "type": "string"
+        },
+        "data-file": {
+          "default": "",
+          "format": "path",
+          "max_bytes": 52428800,
+          "type": "string"
+        },
+        "form": {
+          "default": "",
+          "format": "name=value",
+          "max_items": 128,
+          "notes": "Complete multipart body is limited to 50 MiB.",
+          "repeat": true,
+          "type": "string"
+        },
+        "form-file": {
+          "default": "",
+          "format": "name=path",
+          "max_bytes": 52428800,
+          "max_items": 32,
+          "notes": "Complete multipart body is limited to 50 MiB.",
+          "repeat": true,
+          "type": "string"
+        },
+        "header": {
+          "default": "",
+          "format": "name:value",
+          "repeat": true,
+          "type": "string"
+        },
+        "max-bytes": {
+          "default": 524288,
+          "maximum": 524288,
+          "minimum": 1,
+          "type": "integer",
+          "units": "bytes"
+        },
+        "max-file-bytes": {
+          "default": 52428800,
+          "maximum": 52428800,
+          "minimum": 1,
+          "type": "integer",
+          "units": "bytes"
+        },
+        "method": {
+          "default": "GET",
+          "enum": [
+            "GET",
+            "POST",
+            "PUT",
+            "PATCH",
+            "DELETE",
+            "HEAD"
+          ],
+          "notes": "Case-insensitive. Multipart defaults to POST.",
+          "type": "string"
+        },
+        "navigate-first": {
+          "default": "",
+          "format": "url",
+          "type": "string"
+        },
+        "out": {
+          "default": "",
+          "format": "path",
+          "type": "string"
+        },
+        "overwrite": {
+          "default": false,
+          "type": "boolean"
+        },
+        "raw": {
+          "default": false,
+          "notes": "With --json, keeps body as a string inside the JSON envelope. Without --json, stdout is already body bytes. Excludes --out.",
+          "type": "boolean"
+        }
+      },
+      "usage": "gomoufox fetch <url> [--method GET] [--data <text>] [--navigate-first <url>]"
+    },
+    "get": {
+      "constraints": [
+        "Global flags can precede or follow the command. A separate CLI call creates a new browser context; --profile and storage state persist authentication, not page state.",
+        "--html, --text and --markdown are mutually exclusive; default is markdown. --cookies-file and --profile are mutually exclusive."
+      ],
+      "flags": {
+        "cookies-file": {
+          "default": "",
+          "format": "path",
+          "type": "string"
+        },
+        "height": {
+          "default": 800,
+          "maximum": 100000,
+          "minimum": 1,
+          "notes": "Default applies when either viewport flag is supplied; otherwise use the browser context default.",
+          "type": "integer",
+          "units": "CSS pixels"
+        },
+        "html": {
+          "default": false,
+          "type": "boolean"
+        },
+        "markdown": {
+          "default": false,
+          "type": "boolean"
+        },
+        "max-bytes": {
+          "default": 524288,
+          "maximum": 524288,
+          "minimum": 1,
+          "type": "integer",
+          "units": "bytes"
+        },
+        "text": {
+          "default": false,
+          "type": "boolean"
+        },
+        "wait-load-state": {
+          "default": "domcontentloaded",
+          "enum": [
+            "domcontentloaded",
+            "load",
+            "networkidle"
+          ],
+          "type": "string"
+        },
+        "wait-selector": {
+          "default": "",
+          "format": "css-selector",
+          "type": "string"
+        },
+        "width": {
+          "default": 1280,
+          "maximum": 100000,
+          "minimum": 1,
+          "notes": "Default applies when either viewport flag is supplied; otherwise use the browser context default.",
+          "type": "integer",
+          "units": "CSS pixels"
+        }
+      },
+      "usage": "gomoufox get <url> [--html|--text|--markdown] [--wait-selector <css>]"
+    },
+    "help": {
+      "constraints": [
+        "Global flags can precede or follow the command. A separate CLI call creates a new browser context; --profile and storage state persist authentication, not page state."
+      ],
+      "flags": {
+        "fields": {
+          "default": "",
+          "enum": [
+            "usage",
+            "global",
+            "cli_guardrail_overrides",
+            "commands",
+            "discovery",
+            "mcp_tools",
+            "flag_schema"
+          ],
+          "format": "csv",
+          "notes": "Enum applies to each CSV item.",
+          "type": "string"
+        },
+        "full": {
+          "default": false,
+          "type": "boolean"
+        }
+      },
+      "usage": "gomoufox help [command] [--json] [--fields <list>] [--full]"
+    },
+    "install": {
+      "constraints": [
+        "Global flags can precede or follow the command. A separate CLI call creates a new browser context; --profile and storage state persist authentication, not page state.",
+        "--python requires --runtime python."
+      ],
+      "flags": {
+        "dir": {
+          "default": "",
+          "default_source": "OS cache directory/gomoufox/venv; see doctor.",
+          "format": "path",
+          "type": "string"
+        },
+        "force": {
+          "default": false,
+          "type": "boolean"
+        },
+        "python": {
+          "default": "",
+          "format": "path",
+          "type": "string"
+        },
+        "runtime": {
+          "default": "node-direct",
+          "enum": [
+            "node-direct",
+            "python"
+          ],
+          "type": "string"
+        }
+      },
+      "usage": "gomoufox install [--dir <cache>] [--runtime node-direct|python] [--python <path>] [--force]"
+    },
+    "mcp": {
+      "constraints": [
+        "Global flags can precede or follow the command. A separate CLI call creates a new browser context; --profile and storage state persist authentication, not page state.",
+        "HTTP requires --auth-token. --allow-har-sensitive-values requires --allow-har-recording. Call browser_capabilities after startup to inspect effective gates, limits and scope."
+      ],
+      "flags": {
+        "allow-browser-fetch": {
+          "default": false,
+          "type": "boolean"
+        },
+        "allow-browser-file-fetch": {
+          "default": false,
+          "type": "boolean"
+        },
+        "allow-cookie-mutation": {
+          "default": false,
+          "type": "boolean"
+        },
+        "allow-cookie-values": {
+          "default": false,
+          "type": "boolean"
+        },
+        "allow-file-download": {
+          "default": false,
+          "type": "boolean"
+        },
+        "allow-file-upload": {
+          "default": false,
+          "type": "boolean"
+        },
+        "allow-har-recording": {
+          "default": false,
+          "type": "boolean"
+        },
+        "allow-har-sensitive-values": {
+          "default": false,
+          "type": "boolean"
+        },
+        "allow-session-export": {
+          "default": false,
+          "type": "boolean"
+        },
+        "allow-session-import": {
+          "default": false,
+          "type": "boolean"
+        },
+        "allow-session-proxy": {
+          "default": false,
+          "type": "boolean"
+        },
+        "allow-snapshot-values": {
+          "default": false,
+          "type": "boolean"
+        },
+        "allowed-hosts": {
+          "default": "",
+          "format": "csv",
+          "type": "string"
+        },
+        "allowed-origins": {
+          "default": "",
+          "format": "csv",
+          "type": "string"
+        },
+        "auth-token": {
+          "default": "",
+          "format": "secret",
+          "type": "string"
+        },
+        "enable-eval": {
+          "default": false,
+          "type": "boolean"
+        },
+        "max-input-bytes": {
+          "default": 262144,
+          "maximum": 1048576,
+          "notes": "Zero or negative selects the default cap.",
+          "type": "integer",
+          "units": "bytes"
+        },
+        "max-response-bytes": {
+          "default": 524288,
+          "maximum": 524288,
+          "notes": "Zero or negative selects the default cap.",
+          "type": "integer",
+          "units": "bytes"
+        },
+        "max-sessions": {
+          "default": 5,
+          "maximum": 20,
+          "minimum": 1,
+          "type": "integer",
+          "units": "sessions"
+        },
+        "no-content-warning": {
+          "default": false,
+          "notes": "Suppresses the text warning. Structured `provenance` metadata remains.",
+          "type": "boolean"
+        },
+        "port": {
+          "default": 3742,
+          "maximum": 65535,
+          "minimum": 1,
+          "type": "integer",
+          "units": "TCP port"
+        },
+        "session-dir": {
+          "default": "",
+          "default_source": "OS user config directory/gomoufox/sessions, with a temp-directory fallback.",
+          "format": "path",
+          "type": "string"
+        },
+        "session-ttl": {
+          "default": "30m0s",
+          "format": "duration",
+          "notes": "Greater than zero; a suffix is required, for example 500ms or 25s. Maximum 24h.",
+          "type": "string",
+          "units": "Go duration suffix: ns, us, \u00b5s, ms, s, m, h"
+        },
+        "toolset": {
+          "default": "full",
+          "enum": [
+            "core",
+            "full"
+          ],
+          "type": "string"
+        },
+        "transport": {
+          "default": "stdio",
+          "enum": [
+            "stdio",
+            "http"
+          ],
+          "type": "string"
+        }
+      },
+      "usage": "gomoufox mcp [--transport stdio|http] [--session-dir <dir>]"
+    },
+    "open": {
+      "constraints": [
+        "Global flags can precede or follow the command. A separate CLI call creates a new browser context; --profile and storage state persist authentication, not page state.",
+        "Forces headful mode; rejects --headless and --no-wait. Storage export happens after window closure."
+      ],
+      "flags": {
+        "humanize": {
+          "default": "true",
+          "format": "true|false|seconds (number)",
+          "notes": "Non-negative seconds. Optional value must use =, for example --humanize=0.5.",
+          "optional_value": true,
+          "type": "string"
+        },
+        "no-wait": {
+          "default": false,
+          "notes": "Unsupported; open must retain ownership until closure.",
+          "type": "boolean"
+        },
+        "save-session": {
+          "default": "",
+          "format": "path",
+          "type": "string"
+        },
+        "wait": {
+          "default": true,
+          "notes": "open waits for closure; --wait=false is unsupported.",
+          "type": "boolean"
+        }
+      },
+      "usage": "gomoufox open <url> [--profile <dir>] [--save-session <path>] [--wait]"
+    },
+    "record": {
+      "constraints": [
+        "Global flags can precede or follow the command. A separate CLI call creates a new browser context; --profile and storage state persist authentication, not page state.",
+        "Requires --out; forces headful mode. --profile is unsupported; use --cookies-file. --save-session must differ from --out."
+      ],
+      "flags": {
+        "capture": {
+          "default": "metadata",
+          "enum": [
+            "metadata",
+            "full"
+          ],
+          "type": "string"
+        },
+        "cookies-file": {
+          "default": "",
+          "format": "path",
+          "type": "string"
+        },
+        "humanize": {
+          "default": "true",
+          "format": "true|false|seconds (number)",
+          "notes": "Non-negative seconds. Optional value must use =, for example --humanize=0.5.",
+          "optional_value": true,
+          "type": "string"
+        },
+        "max-bytes": {
+          "default": 67108864,
+          "maximum": 268435456,
+          "minimum": 1,
+          "type": "integer",
+          "units": "bytes"
+        },
+        "out": {
+          "default": "",
+          "format": "path",
+          "required": true,
+          "type": "string"
+        },
+        "overwrite": {
+          "default": false,
+          "type": "boolean"
+        },
+        "save-session": {
+          "default": "",
+          "format": "path",
+          "type": "string"
+        },
+        "url-filter": {
+          "default": "",
+          "format": "glob",
+          "max_bytes": 2048,
+          "type": "string"
+        }
+      },
+      "usage": "gomoufox record <url> --out <path> [--capture metadata|full] [--cookies-file <state>]"
+    },
+    "screenshot": {
+      "constraints": [
+        "Global flags can precede or follow the command. A separate CLI call creates a new browser context; --profile and storage state persist authentication, not page state."
+      ],
+      "flags": {
+        "clip": {
+          "default": "",
+          "format": "x,y,width,height (numbers)",
+          "type": "string",
+          "units": "CSS pixels"
+        },
+        "full-page": {
+          "default": false,
+          "type": "boolean"
+        },
+        "height": {
+          "default": 800,
+          "maximum": 100000,
+          "minimum": 1,
+          "type": "integer",
+          "units": "CSS pixels"
+        },
+        "max-bytes": {
+          "default_source": "No CLI output byte cap unless a positive value is supplied.",
+          "notes": "Positive values must be at most 2097152, or 10485760 with --full-page. Zero or negative disables this CLI cap.",
+          "type": "integer",
+          "units": "bytes"
+        },
+        "out": {
+          "default": "",
+          "format": "path",
+          "type": "string"
+        },
+        "quality": {
+          "default": 0,
+          "maximum": 100,
+          "minimum": 0,
+          "notes": "JPEG only; zero uses the browser default.",
+          "type": "integer",
+          "units": "percent"
+        },
+        "wait-load-state": {
+          "default": "load",
+          "enum": [
+            "domcontentloaded",
+            "load",
+            "networkidle"
+          ],
+          "type": "string"
+        },
+        "wait-selector": {
+          "default": "",
+          "format": "css-selector",
+          "type": "string"
+        },
+        "width": {
+          "default": 1280,
+          "maximum": 100000,
+          "minimum": 1,
+          "type": "integer",
+          "units": "CSS pixels"
+        }
+      },
+      "usage": "gomoufox screenshot <url> --out <path> [--full-page|--wait-selector <css>]"
+    },
+    "serve": {
+      "constraints": [
+        "Global flags can precede or follow the command. A separate CLI call creates a new browser context; --profile and storage state persist authentication, not page state.",
+        "Requires --auth-token or GOMOUFOX_DAEMON_TOKEN. URL guardrail overrides are unsupported."
+      ],
+      "flags": {
+        "allow-session-export": {
+          "default": false,
+          "type": "boolean"
+        },
+        "allowed-hosts": {
+          "default": "",
+          "format": "csv",
+          "type": "string"
+        },
+        "allowed-origins": {
+          "default": "",
+          "format": "csv",
+          "type": "string"
+        },
+        "auth-token": {
+          "default": "",
+          "default_source": "GOMOUFOX_DAEMON_TOKEN when set",
+          "format": "secret",
+          "type": "string"
+        },
+        "bind": {
+          "default": "127.0.0.1",
+          "type": "string"
+        },
+        "enable-eval": {
+          "default": false,
+          "type": "boolean"
+        },
+        "port": {
+          "default": 3741,
+          "maximum": 65535,
+          "minimum": 1,
+          "type": "integer",
+          "units": "TCP port"
+        },
+        "session-dir": {
+          "default": "",
+          "default_source": "OS user config directory/gomoufox/sessions, with a temp-directory fallback.",
+          "format": "path",
+          "type": "string"
+        }
+      },
+      "usage": "gomoufox serve [--auth-token <token>] [--bind 127.0.0.1] [--port 3741] [--session-dir <dir>]"
+    },
+    "session": {
+      "constraints": [
+        "Global flags can precede or follow the command. A separate CLI call creates a new browser context; --profile and storage state persist authentication, not page state.",
+        "Query a subcommand: gomoufox help session import --json --fields flag_schema."
+      ],
+      "usage": "gomoufox session <export|import> [flags]"
+    },
+    "session export": {
+      "constraints": [
+        "Global flags can precede or follow the command. A separate CLI call creates a new browser context; --profile and storage state persist authentication, not page state.",
+        "Requires --out and a source profile through --from-profile or --profile."
+      ],
+      "flags": {
+        "from-profile": {
+          "default": "",
+          "format": "path",
+          "type": "string"
+        },
+        "out": {
+          "default": "",
+          "format": "path",
+          "required": true,
+          "type": "string"
+        }
+      },
+      "usage": "gomoufox session export --out <path> [--profile <dir>|--from-profile <dir>]"
+    },
+    "session import": {
+      "constraints": [
+        "Global flags can precede or follow the command. A separate CLI call creates a new browser context; --profile and storage state persist authentication, not page state.",
+        "Requires --file and --out; --overwrite permits replacing storage state."
+      ],
+      "flags": {
+        "file": {
+          "default": "",
+          "format": "path",
+          "required": true,
+          "type": "string"
+        },
+        "out": {
+          "default": "",
+          "format": "path",
+          "required": true,
+          "type": "string"
+        },
+        "overwrite": {
+          "default": false,
+          "type": "boolean"
+        }
+      },
+      "usage": "gomoufox session import --file <path> --out <profile> [--overwrite]"
+    },
+    "setup": {
+      "constraints": [
+        "Global flags can precede or follow the command. A separate CLI call creates a new browser context; --profile and storage state persist authentication, not page state.",
+        "--mcp-arg overrides are validated as a stdio MCP command; restart the agent connection after applying."
+      ],
+      "flags": {
+        "dry-run": {
+          "default": false,
+          "type": "boolean"
+        },
+        "features": {
+          "default": "skills,mcp",
+          "enum": [
+            "skills",
+            "mcp"
+          ],
+          "format": "csv",
+          "notes": "Enum applies to each CSV item.",
+          "type": "string"
+        },
+        "force": {
+          "default": false,
+          "type": "boolean"
+        },
+        "mcp-arg": {
+          "default": "",
+          "repeat": true,
+          "type": "string"
+        },
+        "recipe": {
+          "default": "research",
+          "enum": [
+            "research",
+            "local-development"
+          ],
+          "type": "string"
+        },
+        "scope": {
+          "default": "user",
+          "enum": [
+            "user",
+            "project"
+          ],
+          "type": "string"
+        },
+        "skip-doctor": {
+          "default": false,
+          "type": "boolean"
+        },
+        "skip-install": {
+          "default": false,
+          "type": "boolean"
+        },
+        "target": {
+          "default": "all",
+          "enum": [
+            "codex",
+            "claude",
+            "cursor",
+            "gemini",
+            "all"
+          ],
+          "type": "string"
+        },
+        "toolset": {
+          "default_source": "research recipe: core; local-development recipe: full",
+          "enum": [
+            "core",
+            "full"
+          ],
+          "type": "string"
+        },
+        "yes": {
+          "default": false,
+          "type": "boolean"
+        }
+      },
+      "usage": "gomoufox setup [--target all] [--scope user|project] [--features skills,mcp] [--yes] [--dry-run]"
+    },
+    "skills": {
+      "constraints": [
+        "Global flags can precede or follow the command. A separate CLI call creates a new browser context; --profile and storage state persist authentication, not page state.",
+        "Query a subcommand: gomoufox help skills install --json --fields flag_schema."
+      ],
+      "usage": "gomoufox skills <list|show|export|install> [flags]"
+    },
+    "skills export": {
+      "constraints": [
+        "Global flags can precede or follow the command. A separate CLI call creates a new browser context; --profile and storage state persist authentication, not page state.",
+        "Requires --out."
+      ],
+      "flags": {
+        "force": {
+          "default": false,
+          "type": "boolean"
+        },
+        "out": {
+          "default": "",
+          "format": "path",
+          "required": true,
+          "type": "string"
+        }
+      },
+      "usage": "gomoufox skills export --out <dir> [--force] [--json]"
+    },
+    "skills install": {
+      "constraints": [
+        "Global flags can precede or follow the command. A separate CLI call creates a new browser context; --profile and storage state persist authentication, not page state."
+      ],
+      "flags": {
+        "dir": {
+          "default": "",
+          "format": "path",
+          "type": "string"
+        },
+        "dry-run": {
+          "default": false,
+          "type": "boolean"
+        },
+        "force": {
+          "default": false,
+          "type": "boolean"
+        },
+        "target": {
+          "default": "codex",
+          "enum": [
+            "codex"
+          ],
+          "type": "string"
+        }
+      },
+      "usage": "gomoufox skills install [--target codex] [--dir <dir>] [--force] [--dry-run] [--json]"
+    },
+    "skills list": {
+      "constraints": [
+        "Global flags can precede or follow the command. A separate CLI call creates a new browser context; --profile and storage state persist authentication, not page state."
+      ],
+      "usage": "gomoufox skills list [--json]"
+    },
+    "skills show": {
+      "constraints": [
+        "Global flags can precede or follow the command. A separate CLI call creates a new browser context; --profile and storage state persist authentication, not page state."
+      ],
+      "flags": {
+        "version": {
+          "default": "",
+          "default_source": "Latest embedded version of the selected skill.",
+          "type": "string"
+        }
+      },
+      "usage": "gomoufox skills show <name> [--version <v>] [--json]"
+    }
+  },
+  "global": {
+    "allow-localhost": {
+      "default": false,
+      "notes": "Browser CLI and MCP startup only. Permits explicit loopback HTTP(S); other private networks and metadata endpoints remain blocked.",
+      "type": "boolean"
+    },
+    "allow-schemes": {
+      "default": "",
+      "format": "csv",
+      "type": "string"
+    },
+    "headful": {
+      "default": false,
+      "notes": "open and record force headful mode.",
+      "type": "boolean"
+    },
+    "headless": {
+      "default": true,
+      "notes": "open and record force headful mode.",
+      "type": "boolean"
+    },
+    "help": {
+      "default": false,
+      "type": "boolean"
+    },
+    "json": {
+      "default": false,
+      "notes": "Structured stdout where supported; diagnostics stay on stderr.",
+      "type": "boolean"
+    },
+    "locale": {
+      "default": "",
+      "format": "BCP-47 language tag",
+      "type": "string"
+    },
+    "os": {
+      "default": "",
+      "default_source": "Generated fingerprint OS when omitted.",
+      "enum": [
+        "windows",
+        "macos",
+        "linux"
+      ],
+      "type": "string"
+    },
+    "profile": {
+      "default": "",
+      "format": "path",
+      "notes": "Relative to the CLI working directory; use an absolute path for repeatable ownership.",
+      "type": "string"
+    },
+    "proxy": {
+      "default": "",
+      "format": "url",
+      "type": "string"
+    },
+    "server": {
+      "default": "",
+      "default_source": "GOMOUFOX_DAEMON when set",
+      "format": "url",
+      "type": "string"
+    },
+    "server-token": {
+      "default": "",
+      "default_source": "GOMOUFOX_DAEMON_TOKEN when set",
+      "format": "secret",
+      "type": "string"
+    },
+    "timeout": {
+      "default": "30s",
+      "format": "duration",
+      "notes": "Greater than zero; a suffix is required, for example 500ms or 25s.",
+      "type": "string",
+      "units": "Go duration suffix: ns, us, \u00b5s, ms, s, m, h"
+    },
+    "verbose": {
+      "default": false,
+      "type": "boolean"
+    },
+    "version": {
+      "default": false,
+      "type": "boolean"
+    }
+  },
+  "version": 1
+}

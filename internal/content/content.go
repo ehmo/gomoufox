@@ -5,6 +5,7 @@ import (
 	"io"
 	"net/url"
 	"strings"
+	"unicode/utf8"
 
 	"golang.org/x/net/html"
 )
@@ -18,34 +19,48 @@ const (
 )
 
 type Result struct {
-	Content         string `json:"content"`
-	Format          Format `json:"format"`
-	MarkdownQuality string `json:"markdown_quality,omitempty"`
-	Bytes           int    `json:"bytes"`
-	Truncated       bool   `json:"truncated"`
+	Content          string `json:"content"`
+	Format           Format `json:"format"`
+	MarkdownQuality  string `json:"markdown_quality,omitempty"`
+	ExtractionMethod string `json:"extraction_method"`
+	Bytes            int    `json:"bytes"`
+	Truncated        bool   `json:"truncated"`
 }
 
 func Extract(rawHTML, bodyText, pageURL string, format Format, maxBytes int) (Result, error) {
 	var result Result
 	switch format {
 	case FormatHTML:
-		result = Result{Content: rawHTML, Format: FormatHTML}
+		result = Result{Content: rawHTML, Format: FormatHTML, ExtractionMethod: "dom_html"}
 	case FormatText:
-		result = Result{Content: strings.TrimSpace(bodyText), Format: FormatText}
+		result = Result{Content: strings.TrimSpace(bodyText), Format: FormatText, ExtractionMethod: "reader_text"}
 	case "", FormatMarkdown:
 		md, quality := markdownFromHTML(rawHTML, bodyText, pageURL)
 		result = Result{Content: md, Format: FormatMarkdown, MarkdownQuality: quality}
+		result.ExtractionMethod = "article"
+		if quality == "fallback" {
+			result.ExtractionMethod = "reader_fallback"
+		}
 	default:
-		result = Result{Content: rawHTML, Format: format}
+		result = Result{Content: rawHTML, Format: format, ExtractionMethod: "raw"}
 	}
-	result.Bytes = len([]byte(result.Content))
-	if maxBytes > 0 && result.Bytes > maxBytes {
-		data := []byte(result.Content)
-		result.Content = string(data[:maxBytes]) + "\n<!-- truncated -->"
-		result.Bytes = len([]byte(result.Content))
-		result.Truncated = true
+	if maxBytes > 0 {
+		result.Content, result.Truncated = TruncateUTF8(result.Content, maxBytes)
 	}
+	result.Bytes = len(result.Content)
 	return result, nil
+}
+
+// TruncateUTF8 bounds valid UTF-8 text without splitting a code point.
+func TruncateUTF8(value string, maxBytes int) (string, bool) {
+	if maxBytes < 0 || len(value) <= maxBytes {
+		return value, false
+	}
+	cut := maxBytes
+	for cut > 0 && !utf8.RuneStart(value[cut]) {
+		cut--
+	}
+	return value[:cut], true
 }
 
 func markdownFromHTML(rawHTML, bodyText, pageURL string) (string, string) {

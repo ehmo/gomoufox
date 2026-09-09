@@ -1,11 +1,31 @@
 {
   "_meta": {
-    "gomoufox/agent_hint": "use core for lower-token browser control; use full for diagnostics or gated tools",
+    "gomoufox/agent_hint": "call browser_capabilities to inspect running gates, limits and diagnostic availability",
     "gomoufox/core_command": "gomoufox mcp --toolset core",
-    "gomoufox/tool_count": 32,
+    "gomoufox/tool_count": 33,
     "gomoufox/toolset": "full"
   },
   "tools": [
+    {
+      "_meta": {
+        "gomoufox/risk": {
+          "level": "low"
+        }
+      },
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": true
+      },
+      "description": "Inspect this server's enabled gates, limits, network scope and diagnostic-tool availability without starting a browser.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {},
+        "type": "object"
+      },
+      "name": "browser_capabilities"
+    },
     {
       "_meta": {
         "gomoufox/risk": {
@@ -26,9 +46,13 @@
       "inputSchema": {
         "additionalProperties": false,
         "properties": {
+          "require_existing": {
+            "default": false,
+            "description": "Fail if the named session is missing; never create implicitly.",
+            "type": "boolean"
+          },
           "session_id": {
             "default": "default",
-            "description": "Session name.",
             "type": "string"
           },
           "timeout_ms": {
@@ -97,7 +121,6 @@
           },
           "session_id": {
             "default": "default",
-            "description": "Session name.",
             "type": "string"
           }
         },
@@ -145,7 +168,6 @@
           },
           "session_id": {
             "default": "default",
-            "description": "Session name.",
             "type": "string"
           }
         },
@@ -191,7 +213,6 @@
           },
           "session_id": {
             "default": "default",
-            "description": "Session name.",
             "type": "string"
           }
         },
@@ -231,7 +252,7 @@
             "type": "integer"
           },
           "ref": {
-            "description": "Element ref from browser_snapshot. Provide exactly one of ref or selector.",
+            "description": "Snapshot ref. Provide exactly one of ref or selector.",
             "type": "string"
           },
           "selector": {
@@ -240,7 +261,6 @@
           },
           "session_id": {
             "default": "default",
-            "description": "Session name.",
             "type": "string"
           },
           "timeout_ms": {
@@ -292,7 +312,7 @@
             "type": "boolean"
           },
           "ref": {
-            "description": "Element ref from browser_snapshot. Provide exactly one of ref or selector.",
+            "description": "Snapshot ref. Provide exactly one of ref or selector.",
             "type": "string"
           },
           "selector": {
@@ -301,7 +321,6 @@
           },
           "session_id": {
             "default": "default",
-            "description": "Session name.",
             "type": "string"
           },
           "text": {
@@ -345,7 +364,7 @@
             "type": "string"
           },
           "ref": {
-            "description": "Element ref from browser_snapshot. Provide exactly one of ref or selector.",
+            "description": "Snapshot ref. Provide exactly one of ref or selector.",
             "type": "string"
           },
           "selector": {
@@ -354,7 +373,6 @@
           },
           "session_id": {
             "default": "default",
-            "description": "Session name.",
             "type": "string"
           },
           "timeout_ms": {
@@ -393,7 +411,7 @@
             "type": "boolean"
           },
           "ref": {
-            "description": "Element ref from browser_snapshot. Provide exactly one of ref or selector.",
+            "description": "Snapshot ref. Provide exactly one of ref or selector.",
             "type": "string"
           },
           "selector": {
@@ -402,7 +420,6 @@
           },
           "session_id": {
             "default": "default",
-            "description": "Session name.",
             "type": "string"
           },
           "timeout_ms": {
@@ -454,7 +471,6 @@
           },
           "session_id": {
             "default": "default",
-            "description": "Session name.",
             "type": "string"
           },
           "timeout_ms": {
@@ -512,7 +528,7 @@
             "type": "array"
           },
           "ref": {
-            "description": "Element ref from browser_snapshot. Provide exactly one of ref or selector.",
+            "description": "Snapshot ref. Provide exactly one of ref or selector.",
             "type": "string"
           },
           "selector": {
@@ -521,7 +537,6 @@
           },
           "session_id": {
             "default": "default",
-            "description": "Session name.",
             "type": "string"
           },
           "timeout_ms": {
@@ -572,7 +587,7 @@
             "type": "boolean"
           },
           "ref": {
-            "description": "Element ref from browser_snapshot. Provide exactly one of ref or selector.",
+            "description": "Snapshot ref. Provide exactly one of ref or selector.",
             "type": "string"
           },
           "selector": {
@@ -581,7 +596,6 @@
           },
           "session_id": {
             "default": "default",
-            "description": "Session name.",
             "type": "string"
           },
           "timeout_ms": {
@@ -628,7 +642,7 @@
             "type": "array"
           },
           "ref": {
-            "description": "Element ref from browser_snapshot. Provide exactly one of ref or selector.",
+            "description": "Snapshot ref. Provide exactly one of ref or selector.",
             "type": "string"
           },
           "selector": {
@@ -637,7 +651,6 @@
           },
           "session_id": {
             "default": "default",
-            "description": "Session name.",
             "type": "string"
           },
           "timeout_ms": {
@@ -684,7 +697,7 @@
             "type": "string"
           },
           "ref": {
-            "description": "Element ref from browser_snapshot. Provide exactly one of ref or selector.",
+            "description": "Snapshot ref. Provide exactly one of ref or selector.",
             "type": "string"
           },
           "selector": {
@@ -693,7 +706,6 @@
           },
           "session_id": {
             "default": "default",
-            "description": "Session name.",
             "type": "string"
           },
           "timeout_ms": {
@@ -758,7 +770,6 @@
           },
           "session_id": {
             "default": "default",
-            "description": "Session name.",
             "type": "string"
           }
         },
@@ -851,7 +862,7 @@
                   "type": "boolean"
                 },
                 "ref": {
-                  "description": "Element ref from browser_snapshot. Provide exactly one of ref or selector.",
+                  "description": "Snapshot ref. Provide exactly one of ref or selector.",
                   "type": "string"
                 },
                 "selector": {
@@ -891,7 +902,6 @@
           },
           "session_id": {
             "default": "default",
-            "description": "Session name.",
             "type": "string"
           }
         },
@@ -933,7 +943,6 @@
           },
           "session_id": {
             "default": "default",
-            "description": "Session name.",
             "type": "string"
           },
           "text": {
@@ -986,13 +995,12 @@
             ]
           },
           "script": {
-            "description": "JavaScript expression or IIFE.",
+            "description": "Expression or function; functions receive arg. Promises are awaited.",
             "maxLength": 65536,
             "type": "string"
           },
           "session_id": {
             "default": "default",
-            "description": "Session name.",
             "type": "string"
           },
           "timeout_ms": {
@@ -1036,6 +1044,11 @@
             "maxLength": 1048576,
             "type": "string"
           },
+          "body_path": {
+            "description": "Binary body file under --session-dir; max 50 MiB. Requires --allow-browser-file-fetch; excludes body.",
+            "maxLength": 4096,
+            "type": "string"
+          },
           "headers": {
             "additionalProperties": {
               "maxLength": 4096,
@@ -1069,11 +1082,16 @@
           },
           "session_id": {
             "default": "default",
-            "description": "Session name.",
             "type": "string"
           },
+          "timeout_ms": {
+            "default": 30000,
+            "maximum": 120000,
+            "minimum": 0,
+            "type": "integer"
+          },
           "url": {
-            "description": "URL to fetch. Must use http:// or https:// scheme. Requires --allow-browser-fetch plus --allowed-origins or --allowed-hosts.",
+            "description": "HTTP(S); requires --allow-browser-fetch and --allowed-origins/--allowed-hosts.",
             "pattern": "^https?://",
             "type": "string"
           }
@@ -1108,7 +1126,7 @@
       "description": "Execute a browser-context multipart/form-data request with files from --session-dir; requires --allow-browser-fetch, --allow-browser-file-fetch, and an explicit target scope.",
       "inputSchema": {
         "additionalProperties": false,
-        "description": "Sends multipart/form-data from browser context using transient file inputs. At least one file is required; file bytes are not accepted inline.",
+        "description": "Browser multipart via transient file inputs. Requires file paths; inline bytes are unsupported.",
         "properties": {
           "fields": {
             "items": {
@@ -1120,7 +1138,7 @@
                   "type": "string"
                 },
                 "value": {
-                  "description": "Multipart text field value. Responses do not echo it unless the remote server returns it.",
+                  "description": "Text value; remote responses may echo it.",
                   "maxLength": 1048576,
                   "type": "string"
                 }
@@ -1135,7 +1153,7 @@
             "type": "array"
           },
           "files": {
-            "description": "Multipart files selected from paths under --session-dir. Responses do not echo file paths.",
+            "description": "Files under --session-dir; paths are omitted from responses.",
             "items": {
               "additionalProperties": false,
               "properties": {
@@ -1145,7 +1163,7 @@
                   "type": "string"
                 },
                 "path": {
-                  "description": "File path under --session-dir. The response does not echo paths.",
+                  "description": "File path under --session-dir.",
                   "maxLength": 4096,
                   "type": "string"
                 }
@@ -1165,7 +1183,7 @@
               "maxLength": 4096,
               "type": "string"
             },
-            "description": "Request headers. Do not include Content-Type; the browser generates the multipart/form-data boundary.",
+            "description": "Omit Content-Type; the browser supplies the multipart boundary.",
             "maxProperties": 100,
             "type": "object"
           },
@@ -1192,7 +1210,6 @@
           },
           "session_id": {
             "default": "default",
-            "description": "Session name.",
             "type": "string"
           },
           "timeout_ms": {
@@ -1202,7 +1219,7 @@
             "type": "integer"
           },
           "url": {
-            "description": "URL to fetch. Must use http:// or https:// scheme. Requires --allow-browser-fetch, --allow-browser-file-fetch, and --allowed-origins or --allowed-hosts.",
+            "description": "HTTP(S); requires --allow-browser-fetch, --allow-browser-file-fetch and --allowed-origins/--allowed-hosts.",
             "pattern": "^https?://",
             "type": "string"
           }
@@ -1245,7 +1262,6 @@
           },
           "session_id": {
             "default": "default",
-            "description": "Session name.",
             "type": "string"
           }
         },
@@ -1283,7 +1299,6 @@
           },
           "session_id": {
             "default": "default",
-            "description": "Session name.",
             "type": "string"
           }
         },
@@ -1310,7 +1325,6 @@
         "properties": {
           "session_id": {
             "default": "default",
-            "description": "Session name.",
             "type": "string"
           }
         },
@@ -1404,7 +1418,6 @@
           },
           "session_id": {
             "default": "default",
-            "description": "Session name.",
             "type": "string"
           },
           "urls": {
@@ -1456,7 +1469,6 @@
           },
           "session_id": {
             "default": "default",
-            "description": "Session name.",
             "type": "string"
           }
         },
@@ -1497,7 +1509,6 @@
           },
           "session_id": {
             "default": "default",
-            "description": "Session name.",
             "type": "string"
           },
           "state": {
@@ -1525,10 +1536,21 @@
         "openWorldHint": false,
         "readOnlyHint": false
       },
-      "description": "Create a named session with optional profile, proxy, locale, OS, or storage_state.",
+      "description": "Create a configurable named session.",
       "inputSchema": {
         "additionalProperties": false,
         "properties": {
+          "headful": {
+            "default": false,
+            "description": "Visible login window; launched on first browser call.",
+            "type": "boolean"
+          },
+          "height": {
+            "default": 800,
+            "maximum": 10000,
+            "minimum": 1,
+            "type": "integer"
+          },
           "locale": {
             "description": "Browser locale.",
             "type": "string"
@@ -1546,16 +1568,27 @@
             "type": "string"
           },
           "proxy": {
-            "description": "Upstream proxy URL. Requires --allow-session-proxy; gomoufox network policy still runs first.",
+            "description": "Proxy URL; requires --allow-session-proxy. Network policy applies.",
             "type": "string"
           },
+          "reuse_if_exists": {
+            "default": false,
+            "description": "Acquire an existing session only with matching creation settings.",
+            "type": "boolean"
+          },
           "session_id": {
-            "description": "Unique session name.",
+            "description": "Unique name.",
             "type": "string"
           },
           "storage_state_path": {
-            "description": "Storage_state file under --session-dir. Requires --allow-session-import.",
+            "description": "Storage_state under --session-dir; requires --allow-session-import.",
             "type": "string"
+          },
+          "width": {
+            "default": 1280,
+            "maximum": 10000,
+            "minimum": 1,
+            "type": "integer"
           }
         },
         "required": [

@@ -10,7 +10,7 @@
     },
     {
       "name": "doctor",
-      "usage": "gomoufox doctor [--json]"
+      "usage": "gomoufox doctor [--dir path] [--runtime node-direct|python] [--json]"
     },
     {
       "name": "install",
@@ -68,6 +68,7 @@
   "discovery": [
     "gomoufox help --json",
     "gomoufox help <command> --json",
+    "gomoufox help <command> --json --fields flag_schema",
     "gomoufox help --json --fields commands",
     "gomoufox skills list --json",
     "gomoufox skills show core --json",

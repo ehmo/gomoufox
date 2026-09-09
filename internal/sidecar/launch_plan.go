@@ -24,8 +24,9 @@ from camoufox.addons import DefaultAddons
 import camoufox.pkgman as camoufox_pkgman
 import camoufox.utils as camoufox_utils
 from camoufox.server import launch_options, to_camel_case_dict
-
+` + pythonNativeWindowScript + `
 launch_kwargs = orjson.loads(sys.stdin.buffer.read())
+window_keys = native_window_keys(launch_kwargs)
 managed_executable_path = launch_kwargs.pop("executable_path", None)
 if managed_executable_path:
     managed_executable = Path(managed_executable_path).resolve()
@@ -50,6 +51,7 @@ if isinstance(webgl_value, dict):
     launch_kwargs["webgl_config"] = (webgl_value.get("vendor"), webgl_value.get("renderer"))
 with contextlib.redirect_stdout(sys.stderr):
     config = launch_options(**launch_kwargs)
+apply_native_window(config, window_keys)
 if managed_executable_path and os.path.realpath(config.get("executable_path", "")) != os.path.realpath(managed_executable_path):
     raise RuntimeError("Camoufox resolved an unexpected managed browser executable")
 if config.get("proxy") is None:

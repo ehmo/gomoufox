@@ -12,6 +12,11 @@ import time
 from datetime import datetime, timezone
 from urllib.parse import urlparse
 
+try:
+    from managed_runtime import cache_from_environment
+except ModuleNotFoundError:
+    from scripts.managed_runtime import cache_from_environment
+
 from camoufox.sync_api import Camoufox
 from camoufox.addons import DefaultAddons
 import camoufox.pkgman as camoufox_pkgman
@@ -158,6 +163,8 @@ def main() -> int:
             "load_state_timeout": f"{args.load_state_timeout:g}s",
             "content_max_bytes": args.content_max_bytes,
             "sample_interval": f"{args.sample_interval:g}s",
+            "resource_scope": "harness_process_tree",
+            "resource_sampling": "fixed_period",
             "headful": args.headful,
             "screenshots": args.screenshots,
             "reuse_browser": args.reuse_browser,
@@ -234,7 +241,7 @@ def managed_camoufox_executable(override=""):
     if not goos or not arch:
         raise ValueError(f"gomoufox has no managed Camoufox runtime for {sys.platform}/{machine}")
     browser_root = (
-        pathlib.Path(sys.prefix)
+        cache_from_environment(sys.prefix)
         / "runtime"
         / "v1"
         / CAMOUFOX_BINARY_VERSION
@@ -558,6 +565,7 @@ class ProcessMonitor:
         return self.summary
 
     def run(self):
+        next_sample = time.monotonic()
         while not self.stop_event.is_set():
             try:
                 sample = sample_process_tree(self.root_pid)
@@ -575,7 +583,10 @@ class ProcessMonitor:
             except Exception as exc:
                 if len(self.summary["sample_errors"]) < 5:
                     self.summary["sample_errors"].append(str(exc))
-            self.stop_event.wait(self.interval)
+            next_sample += self.interval
+            now = time.monotonic()
+            next_sample = max(next_sample, now)
+            self.stop_event.wait(next_sample - now)
 
 
 def sample_process_tree(root_pid):
