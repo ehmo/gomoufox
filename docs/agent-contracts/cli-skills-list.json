@@ -1,10 +1,10 @@
 {
   "skills": [
     {
-      "bytes": 3288,
+      "bytes": 3306,
       "min_gomoufox": "0.1.0",
       "name": "core",
-      "sha256": "8aacfa488ec6d74322cb68a64b96b27986af79fe0a50141ea5c5681b4f8b1d9e",
+      "sha256": "126e055a68c9eaa2307dc0e23911e24c34ba1641b5d0275016f82ba0783ab636",
       "summary": "Core gomoufox browser automation workflow for agents.",
       "version": "0.1.2"
     },

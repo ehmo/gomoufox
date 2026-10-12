@@ -305,9 +305,10 @@ func commandFlagConstraints(command string) []string {
 	specific := map[string]string{
 		"":               "--allow-schemes applies to browser CLI commands; mcp and serve reject scheme overrides. --allow-localhost permits loopback HTTP(S), not all private networks.",
 		"get":            "--html, --text and --markdown are mutually exclusive; default is markdown. --cookies-file and --profile are mutually exclusive.",
-		"eval":           "Requires --enable-eval and exactly one of --script or --script-file. --arg and --arg-file are mutually exclusive; the script must be a function to receive its JSON argument.",
+		"screenshot":     "--cookies-file excludes --profile.",
+		"eval":           "Requires --enable-eval and exactly one of --script or --script-file. --arg and --arg-file are mutually exclusive; the script must be a function to receive its JSON argument. --cookies-file excludes --profile.",
 		"fetch":          "--data and --data-file are mutually exclusive. Multipart excludes those body flags and Content-Type overrides. --out excludes --max-bytes and --raw; --max-file-bytes and --overwrite require --out. --cookies-file excludes --profile.",
-		"open":           "Forces headful mode; rejects --headless and --no-wait. Storage export happens after window closure.",
+		"open":           "Forces headful mode; rejects --headless and --no-wait. Prints the final URL (with --json, a window_ready event) as soon as navigation succeeds. Storage export happens after window closure; if a browser quit prevents it, the last snapshot taken while the window was open is saved. --profile does not keep session cookies across restarts; without --save-session, open warns on stderr when the run set any.",
 		"record":         "Requires --out; forces headful mode. --profile is unsupported; use --cookies-file. --save-session must differ from --out.",
 		"mcp":            "HTTP requires --auth-token. --allow-har-sensitive-values requires --allow-har-recording. Call browser_capabilities after startup to inspect effective gates, limits and scope.",
 		"serve":          "Requires --auth-token or GOMOUFOX_DAEMON_TOKEN. URL guardrail overrides are unsupported.",

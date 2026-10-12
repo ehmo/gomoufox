@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"errors"
 	"path/filepath"
+	"strings"
 	"sync"
+	"time"
 
 	"github.com/ehmo/gomoufox/internal/harcapture"
 	"github.com/ehmo/gomoufox/internal/pwbridge"
@@ -30,7 +32,7 @@ func (c *Context) NewPage(ctx context.Context) (*Page, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	raw, err := c.raw.NewPage()
+	raw, err := c.newRawPage(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -42,6 +44,36 @@ func (c *Context) NewPage(ctx context.Context) (*Page, error) {
 		}
 	}
 	return page, nil
+}
+
+const (
+	missingWindowRetryBudget   = 5 * time.Second
+	missingWindowRetryInterval = 100 * time.Millisecond
+)
+
+// newRawPage retries Juggler's "window is null" failure. Camoufox opens each
+// page in a new browser window, and on macOS that open can return no window
+// while a headful browser is still starting.
+func (c *Context) newRawPage(ctx context.Context) (pwbridge.Page, error) {
+	deadline := time.Now().Add(missingWindowRetryBudget)
+	for {
+		raw, err := c.raw.NewPage()
+		if err == nil || !isMissingWindowError(err) || !time.Now().Before(deadline) {
+			return raw, err
+		}
+
+		timer := time.NewTimer(missingWindowRetryInterval)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return nil, err
+		case <-timer.C:
+		}
+	}
+}
+
+func isMissingWindowError(err error) bool {
+	return strings.Contains(err.Error(), "window is null")
 }
 
 func (c *Context) Pages() []*Page {

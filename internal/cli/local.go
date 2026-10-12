@@ -86,6 +86,7 @@ type localPage interface {
 	FetchBytesWithOptions(context.Context, string, string, map[string]string, []byte, gomoufox.FetchBytesOptions) (gomoufox.FetchBytesResult, error)
 	WaitClosed(context.Context) error
 	StorageState(context.Context) (*gomoufox.StorageState, error)
+	SessionSnapshot(context.Context) (*gomoufox.StorageState, error)
 	Close() error
 }
 
@@ -314,9 +315,13 @@ func localScreenshot(ctx context.Context, req LocalCommandRequest) (LocalCommand
 		if err := writeFile0600(out, data, true); err != nil {
 			return LocalCommandResponse{}, err
 		}
+		displayOut := out
+		if req.DisplayOut != "" {
+			displayOut = req.DisplayOut
+		}
 		if req.JSON {
 			size, sizeErr := renderinfo.ImageSize(data)
-			payload := map[string]any{"path": out, "width": size.Width, "height": size.Height, "bytes": len(data), "format": screenshotFormat(out), "requested_viewport": renderinfo.Size{Width: width, Height: height}}
+			payload := map[string]any{"path": displayOut, "width": size.Width, "height": size.Height, "bytes": len(data), "format": screenshotFormat(out), "requested_viewport": renderinfo.Size{Width: width, Height: height}}
 			if sizeErr != nil {
 				payload["image_dimensions_status"] = "unavailable"
 			}
@@ -333,7 +338,7 @@ func localScreenshot(ctx context.Context, req LocalCommandRequest) (LocalCommand
 			}
 			return jsonResponse(payload)
 		}
-		return LocalCommandResponse{ExitCode: ExitOK, Stdout: []byte(out + "\n")}, nil
+		return LocalCommandResponse{ExitCode: ExitOK, Stdout: []byte(displayOut + "\n")}, nil
 	}
 	return LocalCommandResponse{ExitCode: ExitOK, Stdout: data}, nil
 }
@@ -490,23 +495,176 @@ func localOpen(ctx context.Context, req LocalCommandRequest) (LocalCommandRespon
 	} else if ok {
 		return blocked, nil
 	}
-	stdout := []byte(p.URL() + "\n")
-	if err := p.WaitClosed(ctx); err != nil {
-		if !isExpectedPageCloseError(err) {
-			return LocalCommandResponse{}, err
+	finalURL := p.URL()
+	var stdout []byte
+	if req.Progress != nil {
+		writeOpenReady(ctx, req, p, finalURL)
+	} else {
+		stdout = []byte(finalURL + "\n")
+	}
+	sessionPath := flagString(req, "save_session", "")
+	var saved savedSession
+	if sessionPath == "" && req.Profile != "" {
+		saved, err = waitClosedProfile(ctx, p)
+	} else {
+		saved, err = waitClosedSaving(ctx, p, sessionPath)
+	}
+	if err != nil {
+		return LocalCommandResponse{}, err
+	}
+	if req.JSON && req.Progress != nil {
+		event := map[string]any{"event": "closed", "url": finalURL}
+		if sessionPath != "" {
+			event["session_path"] = sessionPath
+		}
+		return LocalCommandResponse{ExitCode: ExitOK, Stdout: mustJSONLine(event), Stderr: saved.note}, nil
+	}
+	if sessionPath != "" {
+		stdout = append(stdout, []byte(sessionPath+"\n")...)
+	}
+	return LocalCommandResponse{ExitCode: ExitOK, Stdout: stdout, Stderr: saved.note}, nil
+}
+
+// writeOpenReady tells the caller that the window is usable. open blocks until
+// the user closes the window, so this line is the only early signal.
+func writeOpenReady(ctx context.Context, req LocalCommandRequest, p localPage, url string) {
+	if !req.JSON {
+		_, _ = io.WriteString(req.Progress, url+"\n")
+		return
+	}
+
+	title, _ := p.Title(ctx)
+	_, _ = req.Progress.Write(mustJSONLine(map[string]any{"event": "window_ready", "url": url, "title": title}))
+}
+
+// mustJSONLine encodes one compact JSON event per line for streaming readers.
+func mustJSONLine(value any) []byte {
+	data, _ := json.Marshal(value)
+	return append(data, '\n')
+}
+
+// sessionSnapshotInterval is a var so tests can shorten it.
+var sessionSnapshotInterval = time.Second
+
+type savedSession struct {
+	// note explains a fallback to the snapshot taken while the page was open.
+	note string
+}
+
+// waitClosedSaving waits for the user to close the page and, when path is set,
+// writes the context storage state there. A browser quit (Cmd+Q on macOS)
+// closes every window first, and StorageState then fails while it opens helper
+// pages to read localStorage. The function therefore snapshots cookies and the
+// current origin's localStorage while the page is open and saves the snapshot
+// when the full export fails.
+func waitClosedSaving(ctx context.Context, p localPage, path string) (savedSession, error) {
+	if path == "" {
+		if err := p.WaitClosed(ctx); err != nil && !isExpectedPageCloseError(err) {
+			return savedSession{}, err
+		}
+		return savedSession{}, nil
+	}
+
+	snapshot, err := waitClosedSnapshots(ctx, p)
+	if err != nil && !isExpectedPageCloseError(err) {
+		return savedSession{}, err
+	}
+
+	var saved savedSession
+	state, err := p.StorageState(ctx)
+	if err != nil {
+		if latest, snapErr := p.SessionSnapshot(ctx); snapErr == nil && latest != nil {
+			snapshot = mergeSessionSnapshot(snapshot, latest)
+		}
+		if snapshot == nil {
+			return savedSession{}, err
+		}
+		state = snapshot
+		saved.note = fmt.Sprintf("storage state export after close failed (%v); saved the last snapshot taken while the window was open\n", err)
+	}
+	if err := writeFile0600(path, mustJSON(state), true); err != nil {
+		return savedSession{}, err
+	}
+	return saved, nil
+}
+
+// waitClosedProfile waits for the user to close the page and warns when the
+// run set session cookies. Firefox drops cookies without an expiry on restart,
+// so a login that depends on them does not survive in the profile.
+func waitClosedProfile(ctx context.Context, p localPage) (savedSession, error) {
+	snapshot, err := waitClosedSnapshots(ctx, p)
+	if err != nil && !isExpectedPageCloseError(err) {
+		return savedSession{}, err
+	}
+	if snapshot == nil {
+		return savedSession{}, nil
+	}
+
+	count := 0
+	for _, cookie := range snapshot.Cookies {
+		if cookie.Expires < 0 {
+			count++
 		}
 	}
-	if out := flagString(req, "save_session", ""); out != "" {
-		state, err := p.StorageState(ctx)
-		if err != nil {
-			return LocalCommandResponse{}, err
-		}
-		if err := writeFile0600(out, mustJSON(state), true); err != nil {
-			return LocalCommandResponse{}, err
-		}
-		stdout = append(stdout, []byte(out+"\n")...)
+	if count == 0 {
+		return savedSession{}, nil
 	}
-	return LocalCommandResponse{ExitCode: ExitOK, Stdout: stdout}, nil
+
+	noun := "cookies"
+	if count == 1 {
+		noun = "cookie"
+	}
+	return savedSession{note: fmt.Sprintf("--profile keeps only cookies with an expiry; this run set %d session %s, and the browser drops them when it closes. To keep a login, rerun open with --save-session <file> and pass that file to later commands with --cookies-file\n", count, noun)}, nil
+}
+
+func waitClosedSnapshots(ctx context.Context, p localPage) (*gomoufox.StorageState, error) {
+	done := make(chan error, 1)
+	go func() { done <- p.WaitClosed(ctx) }()
+
+	var snapshot *gomoufox.StorageState
+	take := func() {
+		if latest, err := p.SessionSnapshot(ctx); err == nil && latest != nil {
+			snapshot = mergeSessionSnapshot(snapshot, latest)
+		}
+	}
+	take()
+
+	ticker := time.NewTicker(sessionSnapshotInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case err := <-done:
+			return snapshot, err
+		case <-ticker.C:
+			take()
+		}
+	}
+}
+
+// mergeSessionSnapshot keeps the newest cookies and the newest localStorage per
+// origin. An origin reported with no entries was cleared, so it is dropped.
+func mergeSessionSnapshot(older, newer *gomoufox.StorageState) *gomoufox.StorageState {
+	if older == nil {
+		older = &gomoufox.StorageState{}
+	}
+	merged := &gomoufox.StorageState{Cookies: newer.Cookies}
+	replaced := make(map[string]bool, len(newer.Origins))
+	for _, origin := range newer.Origins {
+		replaced[origin.Origin] = true
+	}
+	for _, origin := range older.Origins {
+		if replaced[origin.Origin] {
+			continue
+		}
+		merged.Origins = append(merged.Origins, origin)
+	}
+	for _, origin := range newer.Origins {
+		if len(origin.LocalStorage) == 0 {
+			continue
+		}
+		merged.Origins = append(merged.Origins, origin)
+	}
+	return merged
 }
 
 func localRecord(ctx context.Context, req LocalCommandRequest) (LocalCommandResponse, error) {
@@ -530,20 +688,12 @@ func localRecord(ctx context.Context, req LocalCommandRequest) (LocalCommandResp
 	} else if ok {
 		return blocked, nil
 	}
-	if err := p.WaitClosed(ctx); err != nil && !isExpectedPageCloseError(err) {
+	sessionPath := flagString(req, "save_session", "")
+	saved, err := waitClosedSaving(ctx, p, sessionPath)
+	if err != nil {
 		return LocalCommandResponse{}, err
 	}
 	finalURL := p.URL()
-	sessionPath := flagString(req, "save_session", "")
-	if sessionPath != "" {
-		state, err := p.StorageState(ctx)
-		if err != nil {
-			return LocalCommandResponse{}, err
-		}
-		if err := writeFile0600(sessionPath, mustJSON(state), true); err != nil {
-			return LocalCommandResponse{}, err
-		}
-	}
 	if err := p.Close(); err != nil {
 		return LocalCommandResponse{}, err
 	}
@@ -566,13 +716,15 @@ func localRecord(ctx context.Context, req LocalCommandRequest) (LocalCommandResp
 		if sessionPath != "" {
 			payload["session_path"] = sessionPath
 		}
-		return jsonResponse(payload)
+		resp, err := jsonResponse(payload)
+		resp.Stderr = saved.note
+		return resp, err
 	}
 	stdout := []byte(finalURL + "\n" + harPath + "\n")
 	if sessionPath != "" {
 		stdout = append(stdout, []byte(sessionPath+"\n")...)
 	}
-	return LocalCommandResponse{ExitCode: ExitOK, Stdout: stdout}, nil
+	return LocalCommandResponse{ExitCode: ExitOK, Stdout: stdout, Stderr: saved.note}, nil
 }
 
 func localSessionImport(req LocalCommandRequest) (LocalCommandResponse, error) {
@@ -783,6 +935,58 @@ func (p realLocalPage) StorageState(ctx context.Context) (*gomoufox.StorageState
 	return storageStateFromPlaywright(state)
 }
 func (p realLocalPage) Close() error { return p.p.Close() }
+
+const localStorageSnapshotScript = `() => ({ origin: location.origin, entries: Object.entries(localStorage) })`
+
+// SessionSnapshot reads the context cookies and the current origin's
+// localStorage without opening pages. Cookies survive a failed page read, so a
+// closed page still yields fresh cookies.
+func (p realLocalPage) SessionSnapshot(ctx context.Context) (*gomoufox.StorageState, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	raw, ok := p.p.Raw().(interface {
+		Context() playwright.BrowserContext
+	})
+	if !ok {
+		return nil, errors.New("page storage state is not supported")
+	}
+	cookies, err := raw.Context().Cookies()
+	if err != nil {
+		return nil, err
+	}
+	state, err := storageStateFromPlaywright(&playwright.StorageState{Cookies: cookies})
+	if err != nil {
+		return nil, err
+	}
+	if origin, ok := p.localStorageOrigin(ctx); ok {
+		state.Origins = []gomoufox.Origin{origin}
+	}
+	return state, nil
+}
+
+func (p realLocalPage) localStorageOrigin(ctx context.Context) (gomoufox.Origin, bool) {
+	value, err := p.p.Evaluate(ctx, localStorageSnapshotScript)
+	if err != nil {
+		return gomoufox.Origin{}, false
+	}
+	data, err := json.Marshal(value)
+	if err != nil {
+		return gomoufox.Origin{}, false
+	}
+	var read struct {
+		Origin  string      `json:"origin"`
+		Entries [][2]string `json:"entries"`
+	}
+	if err := json.Unmarshal(data, &read); err != nil || !strings.HasPrefix(read.Origin, "http") {
+		return gomoufox.Origin{}, false
+	}
+	origin := gomoufox.Origin{Origin: read.Origin}
+	for _, entry := range read.Entries {
+		origin.LocalStorage = append(origin.LocalStorage, gomoufox.LSEntry{Name: entry[0], Value: entry[1]})
+	}
+	return origin, true
+}
 
 type realLocalBrowser struct {
 	b gomoufoxBrowserForLocal

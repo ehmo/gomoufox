@@ -5000,6 +5000,8 @@ type fakeLocalPage struct {
 	waitClosedCalls int
 	state           *gomoufox.StorageState
 	storageCalls    int
+	snapshot        *gomoufox.StorageState
+	snapshotErr     error
 	closed          bool
 	gotoErr         error
 	waitErr         error
@@ -5265,8 +5267,14 @@ func (p *fakePlaywrightPageRaw) Context() playwright.BrowserContext { return p.c
 
 type fakePlaywrightStorageContext struct {
 	playwright.BrowserContext
-	state *playwright.StorageState
-	err   error
+	state      *playwright.StorageState
+	err        error
+	cookies    []playwright.Cookie
+	cookiesErr error
+}
+
+func (c *fakePlaywrightStorageContext) Cookies(urls ...string) ([]playwright.Cookie, error) {
+	return c.cookies, c.cookiesErr
 }
 
 func (c *fakePlaywrightStorageContext) StorageState(path ...string) (*playwright.StorageState, error) {
@@ -5359,6 +5367,9 @@ func (p *fakeLocalPage) WaitClosed(ctx context.Context) error {
 	case <-ctx.Done():
 		return ctx.Err()
 	}
+}
+func (p *fakeLocalPage) SessionSnapshot(context.Context) (*gomoufox.StorageState, error) {
+	return p.snapshot, p.snapshotErr
 }
 func (p *fakeLocalPage) StorageState(context.Context) (*gomoufox.StorageState, error) {
 	p.storageCalls++

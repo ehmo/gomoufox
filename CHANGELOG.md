@@ -1,5 +1,30 @@
 # Changelog
 
+## v0.1.30
+
+- Report `open` readiness right after navigation: print the final URL, or a
+  JSON `window_ready` event. With `--json`, the exit line is now a `closed`
+  event.
+- Keep `open` and `record` session state when the browser quits first. They
+  snapshot cookies and current-origin localStorage while the window is open and
+  save the last snapshot when the storage export fails.
+- Retry page creation for up to 5 seconds when the browser reports
+  `window is null`.
+- Accept `--cookies-file` on `screenshot` and `eval`, as the skill text already
+  documented. The daemon confines `cookies_file` to its session directory for
+  `get`, `screenshot` and `eval`.
+- Confine daemon `screenshot --out` and `eval --script-file` to the session
+  directory and daemon `--profile` to its `profiles` subdirectory. Daemon file
+  flags can no longer read or write profile data, and a symlinked `profiles`
+  directory is rejected. Daemon screenshots report a relative output path.
+- Keep HTTP MCP browser sessions alive after the request that created them.
+  Only startup cancellation and session close now end the browser.
+- Warn when `open --profile` sets session cookies without `--save-session`,
+  because Firefox drops session cookies on restart.
+- Refresh the hash-locked Python dependencies.
+- Build with Go 1.26.9 and `golang.org/x/net` v0.60.0 to fix ten reachable
+  standard-library vulnerabilities found by the release gate.
+
 ## v0.1.29
 
 - Keep explicit viewport sizes when applying generated fingerprints and report

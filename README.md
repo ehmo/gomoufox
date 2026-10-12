@@ -5,7 +5,7 @@
 # gomoufox
 
 <p align="center">
-  <img alt="Go 1.26.6" src="https://img.shields.io/badge/Go-1.26.6-00ADD8?logo=go&logoColor=white">
+  <img alt="Go 1.26.9" src="https://img.shields.io/badge/Go-1.26.9-00ADD8?logo=go&logoColor=white">
   <img alt="MIT license" src="https://img.shields.io/badge/license-MIT-2ea44f">
   <img alt="coverage 100%" src="https://img.shields.io/badge/coverage-100%25-2ea44f">
   <img alt="MCP ready" src="https://img.shields.io/badge/MCP-ready-7c3aed">
@@ -311,8 +311,10 @@ Automation tips:
 - Use `--json` for machine-readable output and keep status logs on stderr.
 - Use `--timeout <dur>` for bounded shell jobs.
 - Use `open --save-session` for human login, then reuse the state with
-  `--cookies-file`. Save storage state for session-cookie handoff; reopening a
-  profile alone does not guarantee session-cookie persistence.
+  `--cookies-file`. Save storage state for session-cookie handoff; Firefox
+  drops session cookies on restart, so a profile alone does not keep them.
+  `open --profile` without `--save-session` warns on stderr when the run set
+  session cookies.
 - Use `--profile <dir>` when a workflow needs full persistent browser state.
   Relative CLI paths resolve from the command's working directory. Each local
   CLI call starts and closes its own browser; without a profile or imported
@@ -520,7 +522,7 @@ Camoufox without producing Go-only failures?
 Latest checked evidence:
 [docs/BENCHMARKS.md](docs/BENCHMARKS.md),
 [8-site baseline](docs/benchmarks/2026-09-08-full-streamed.json), and
-[100-site node-direct artifact](docs/benchmarks/2026-09-08-node-direct-streamed-readiness.json).
+[100-site node-direct artifact](docs/benchmarks/2026-10-12-node-direct-readiness.json).
 Both runtimes in the extended comparison used this
 [shared Linux persona](docs/personas/2026-09-08-node-direct-readiness.json).
 The current figures include each complete harness process tree: the runner,
@@ -532,8 +534,8 @@ Earlier Python-sidecar results remain in the
 
 | Runtime | Passed | Blocked | Failed | Wall ms | Peak RSS MiB | Peak CPU % | Report tokens |
 |---|---:|---:|---:|---:|---:|---:|---:|
-| Python Camoufox | 90 | 10 | 0 | 351,119 | 3,148.6 | 617.4 | 83,606 |
-| gomoufox, node-direct Go | 90 | 10 | 0 | 349,133 | 3,219.6 | 631.4 | 13,173 |
+| Python Camoufox | 90 | 10 | 0 | 346,618 | 2,671.0 | 493.9 | 83,179 |
+| gomoufox, node-direct Go | 90 | 10 | 0 | 347,170 | 3,063.5 | 584.0 | 13,127 |
 
 Outcome counts come from the second loop; wall time averages both loops, and
 resource figures use the larger peak. Both loops matched all 100 outcomes.
@@ -544,13 +546,13 @@ no screenshots, reused browser, compact Go report, 0s extra load-state wait, and
 gomoufox passed 90, blocked 10, failed 0. Python Camoufox passed 90, blocked 10,
 failed 0. The run had 0 persistent Go-only regressions and 0 paired outcome
 mismatches. See the
-[extended artifact](docs/benchmarks/2026-09-08-node-direct-streamed-readiness.json).
+[extended artifact](docs/benchmarks/2026-10-12-node-direct-readiness.json).
 
 | Ratio | node-direct Go / Python Camoufox |
 |---|---:|
-| Wall time | 0.994 |
-| Peak RSS | 1.023 |
-| Peak CPU | 1.023 |
+| Wall time | 1.002 |
+| Peak RSS | 1.147 |
+| Peak CPU | 1.182 |
 | Report tokens | 0.158 |
 
 The release evidence check passed its timing, resource and report-size limits.

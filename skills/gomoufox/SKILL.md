@@ -39,7 +39,7 @@ gomoufox open https://example.com --save-session state.json --wait
 gomoufox fetch https://example.com/api/me --cookies-file state.json
 ```
 
-Wait for the operator to log in and close the window before using the saved state. --cookies-file works on get, fetch and record. A persistent --profile path resolves from the working directory; use an absolute path across projects. Each CLI call creates a new page. An owned profile must be reused through its owner or closed before another process opens it; keep lock files intact.
+Wait for the operator to log in and close the window before using the saved state. --cookies-file works on get, screenshot, eval, fetch and record. A persistent --profile path resolves from the working directory; use an absolute path across projects. Each CLI call creates a new page. An owned profile must be reused through its owner or closed before another process opens it; keep lock files intact.
 
 Local HTTP(S) requires --allow-localhost. Other private networks and metadata endpoints remain blocked. CLI browser calls are headless except interactive open/record or explicit headful mode.
 

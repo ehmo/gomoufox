@@ -18,11 +18,11 @@ valid = [
     'gomoufox mcp --transport http --auth-token "$TOKEN"',
     'gomoufox skills show core --version 0.1.1',
     'gomoufox session import --file state.json --out profile',
+    'gomoufox screenshot https://example.com --out page.png --cookies-file state.json',
+    'gomoufox eval https://example.com --enable-eval --script "() => 1" --cookies-file state.json',
 ]
 invalid = [
     'gomoufox screenshot https://example.com --output image.png',
-    'gomoufox screenshot https://example.com --cookies-file state.json',
-    'gomoufox eval https://example.com --cookies-file state.json',
     'gomoufox get https://example.com --format text',
     'gomoufox get https://example.com --timeout 25',
     'gomoufox get https://example.com --max-bytes 600000',

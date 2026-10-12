@@ -150,14 +150,32 @@ func (l realGomoufoxLauncher) Launch(ctx context.Context, opts sessionOptions, d
 	if l.policy.AllowLocalhost {
 		launchOpts = append(launchOpts, gomoufox.WithAllowLocalhost(true))
 	}
-	browser, err := newGomoufoxForMCP(ctx, launchOpts...)
-	if err != nil {
+	// gomoufox.New closes the browser when its ctx ends. HTTP transport cancels
+	// the request ctx after each response, so the browser gets its own
+	// lifetime ctx. The request ctx still cancels a launch in progress.
+	lifetime, endLifetime := context.WithCancel(context.WithoutCancel(ctx))
+	stopWatch := context.AfterFunc(ctx, endLifetime)
+	browser, err := newGomoufoxForMCP(lifetime, launchOpts...)
+	if !stopWatch() {
+		endLifetime()
+		if err == nil {
+			err = ctx.Err()
+		}
 		return nil, err
 	}
-	return adaptBrowser(browser), nil
+	if err != nil {
+		endLifetime()
+		return nil, err
+	}
+	adapter := adaptBrowser(browser)
+	adapter.close = func() error {
+		defer endLifetime()
+		return browser.Close()
+	}
+	return adapter, nil
 }
 
-func adaptBrowser(b *gomoufox.Browser) mcpBrowser {
+func adaptBrowser(b *gomoufox.Browser) browserAdapter {
 	return browserAdapter{
 		newContext: func(ctx context.Context, opts ...gomoufox.ContextOption) (mcpContext, error) {
 			c, err := b.NewContext(ctx, opts...)

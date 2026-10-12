@@ -90,7 +90,7 @@
     "eval": {
       "constraints": [
         "Global flags can precede or follow the command. A separate CLI call creates a new browser context; --profile and storage state persist authentication, not page state.",
-        "Requires --enable-eval and exactly one of --script or --script-file. --arg and --arg-file are mutually exclusive; the script must be a function to receive its JSON argument."
+        "Requires --enable-eval and exactly one of --script or --script-file. --arg and --arg-file are mutually exclusive; the script must be a function to receive its JSON argument. --cookies-file excludes --profile."
       ],
       "flags": {
         "arg": {
@@ -105,6 +105,11 @@
           "format": "path",
           "max_bytes": 245760,
           "notes": "File contents must be JSON.",
+          "type": "string"
+        },
+        "cookies-file": {
+          "default": "",
+          "format": "path",
           "type": "string"
         },
         "enable-eval": {
@@ -517,7 +522,7 @@
     "open": {
       "constraints": [
         "Global flags can precede or follow the command. A separate CLI call creates a new browser context; --profile and storage state persist authentication, not page state.",
-        "Forces headful mode; rejects --headless and --no-wait. Storage export happens after window closure."
+        "Forces headful mode; rejects --headless and --no-wait. Prints the final URL (with --json, a window_ready event) as soon as navigation succeeds. Storage export happens after window closure; if a browser quit prevents it, the last snapshot taken while the window was open is saved. --profile does not keep session cookies across restarts; without --save-session, open warns on stderr when the run set any."
       ],
       "flags": {
         "humanize": {
@@ -604,7 +609,8 @@
     },
     "screenshot": {
       "constraints": [
-        "Global flags can precede or follow the command. A separate CLI call creates a new browser context; --profile and storage state persist authentication, not page state."
+        "Global flags can precede or follow the command. A separate CLI call creates a new browser context; --profile and storage state persist authentication, not page state.",
+        "--cookies-file excludes --profile."
       ],
       "flags": {
         "clip": {
@@ -612,6 +618,11 @@
           "format": "x,y,width,height (numbers)",
           "type": "string",
           "units": "CSS pixels"
+        },
+        "cookies-file": {
+          "default": "",
+          "format": "path",
+          "type": "string"
         },
         "full-page": {
           "default": false,

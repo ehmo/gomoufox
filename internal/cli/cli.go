@@ -150,6 +150,9 @@ type LocalCommandRequest struct {
 	AllowedOrigins []string
 	AllowedHosts   []string
 	DisplayOut     string
+	// Progress receives lines that a caller must see before the command
+	// returns, such as the open ready line. Nil keeps all output buffered.
+	Progress io.Writer
 }
 
 type LocalCommandResponse struct {
@@ -738,14 +741,14 @@ func commandHelps() []commandHelp {
 			Name:     "screenshot",
 			Usage:    "gomoufox screenshot <url> --out <path> [--full-page|--wait-selector <css>]",
 			Summary:  "capture a page or element screenshot",
-			Flags:    []string{"--out", "--full-page", "--width", "--height", "--wait-selector", "--wait-load-state", "--quality", "--clip", "--max-bytes"},
+			Flags:    []string{"--out", "--full-page", "--width", "--height", "--wait-selector", "--wait-load-state", "--quality", "--clip", "--max-bytes", "--cookies-file"},
 			Examples: []string{"gomoufox screenshot https://example.com --out page.png"},
 		},
 		{
 			Name:     "eval",
 			Usage:    "gomoufox eval <url> --enable-eval (--script <js>|--script-file <path>)",
 			Summary:  "run JavaScript only when explicitly enabled",
-			Flags:    []string{"--enable-eval", "--width", "--height", "--script", "--script-file", "--wait-selector", "--wait-load-state", "--arg", "--arg-file"},
+			Flags:    []string{"--enable-eval", "--width", "--height", "--script", "--script-file", "--wait-selector", "--wait-load-state", "--arg", "--arg-file", "--cookies-file"},
 			Notes:    []string{"--arg passes JSON to a function parameter; it creates no global variable. --arg-file reads the same JSON from a file."},
 			Examples: []string{"gomoufox --json eval https://example.com --enable-eval --script 'arg => arg.selector' --arg '{\"selector\":\"h1\"}'"},
 		},
@@ -1157,27 +1160,118 @@ func localRequestFromDaemonEnvelope(verb string, env daemon.Envelope) (LocalComm
 	}, nil
 }
 
+// daemonJail confines daemon file paths to the session directory and reserves
+// its profiles subdirectory for persistent profiles. File flags cannot read or
+// write profile data such as cookies.sqlite or user.js.
+type daemonJail struct {
+	policy.Jail
+}
+
+func (j daemonJail) read(path string) (string, error) {
+	resolved, err := j.ResolveRead(path)
+	if err != nil {
+		return "", err
+	}
+	return resolved, j.outsideProfiles(resolved)
+}
+
+func (j daemonJail) write(path string, overwrite bool) (string, error) {
+	resolved, err := j.ResolveWrite(path, overwrite)
+	if err != nil {
+		return "", err
+	}
+	return resolved, j.outsideProfiles(resolved)
+}
+
+func (j daemonJail) outsideProfiles(resolved string) error {
+	sep := string(filepath.Separator)
+	if !strings.HasPrefix(resolved+sep, filepath.Join(j.Root, "profiles")+sep) {
+		return nil
+	}
+	return errors.New("path is inside the profiles directory")
+}
+
+// profiles returns the profile jail. A symlinked profiles directory would move
+// the profile root out of the session directory, so it is rejected.
+func (j daemonJail) profiles() (policy.Jail, error) {
+	dir := filepath.Join(j.Root, "profiles")
+	if st, err := os.Lstat(dir); err == nil && st.Mode()&os.ModeSymlink != 0 {
+		return policy.Jail{}, errors.New("profiles directory is a symlink")
+	}
+	return policy.NewJail(dir)
+}
+
+// jailDaemonBrowserPaths confines the cookies file, the eval script file, the
+// screenshot output
+// and the persistent profile of a daemon browser command. Profiles live under
+// <session dir>/profiles, as for session export.
+func jailDaemonBrowserPaths(jail daemonJail, req *LocalCommandRequest) error {
+	for _, flag := range []string{"cookies_file", "script_file"} {
+		if path := flagString(*req, flag, ""); path != "" {
+			resolved, err := jail.read(path)
+			if err != nil {
+				return err
+			}
+			req.Flags[flag] = resolved
+		}
+	}
+
+	if path := flagString(*req, "out", ""); path != "" && req.Command == "screenshot" {
+		// Screenshots overwrite an existing file, as the standalone CLI does.
+		dst, err := jail.write(path, true)
+		if err != nil {
+			return err
+		}
+		displayOut, _ := jail.ConfinedPath(dst)
+		req.Flags["out"] = dst
+		req.DisplayOut = displayOut
+	}
+
+	if req.Profile == "" {
+		return nil
+	}
+	profileJail, err := jail.profiles()
+	if err != nil {
+		return err
+	}
+	profile, err := profileJail.ResolveDir(req.Profile)
+	if err != nil {
+		return err
+	}
+	req.Profile = profile
+	return nil
+}
+
 func jailDaemonSessionPaths(serve ServeRequest, req *LocalCommandRequest) error {
-	if req.Command == "fetch" {
+	switch req.Command {
+	case "fetch":
 		if flagString(*req, "out", "") == "" && flagString(*req, "data_file", "") == "" && flagString(*req, "cookies_file", "") == "" && len(flagStringList(*req, "form_file")) == 0 {
 			return nil
 		}
-	} else if req.Command != "session import" && req.Command != "session export" {
+	case "get", "screenshot", "eval":
+		if flagString(*req, "cookies_file", "") == "" && flagString(*req, "script_file", "") == "" && flagString(*req, "out", "") == "" && req.Profile == "" {
+			return nil
+		}
+	case "session import", "session export":
+	default:
 		return nil
 	}
 	root := serve.SessionDir
 	if root == "" {
 		root = defaultServeSessionDir()
 	}
-	jail, err := policy.NewJail(root)
+	base, err := policy.NewJail(root)
 	if err != nil {
 		return err
 	}
+	jail := daemonJail{base}
 	switch req.Command {
+	case "get", "screenshot", "eval":
+		return jailDaemonBrowserPaths(jail, req)
 	case "fetch":
 		for _, flag := range []string{"data_file", "cookies_file"} {
 			if path := flagString(*req, flag, ""); path != "" {
-				resolved, err := jail.ResolveRead(path)
+				resolved, err := jail.read(path)
 				if err != nil {
 					return err
 				}
@@ -1190,7 +1284,7 @@ func jailDaemonSessionPaths(serve ServeRequest, req *LocalCommandRequest) error 
 			if err != nil {
 				return err
 			}
-			resolved, err := jail.ResolveRead(path)
+			resolved, err := jail.read(path)
 			if err != nil {
 				return err
 			}
@@ -1200,7 +1294,7 @@ func jailDaemonSessionPaths(serve ServeRequest, req *LocalCommandRequest) error 
 			req.Flags["form_file"] = files
 		}
 		if path := flagString(*req, "out", ""); path != "" {
-			dst, err := jail.ResolveWrite(path, localBool(*req, "overwrite"))
+			dst, err := jail.write(path, localBool(*req, "overwrite"))
 			if err != nil {
 				return err
 			}
@@ -1209,11 +1303,11 @@ func jailDaemonSessionPaths(serve ServeRequest, req *LocalCommandRequest) error 
 			req.DisplayOut = displayOut
 		}
 	case "session import":
-		src, err := jail.ResolveRead(flagString(*req, "file", ""))
+		src, err := jail.read(flagString(*req, "file", ""))
 		if err != nil {
 			return err
 		}
-		dst, err := jail.ResolveWrite(flagString(*req, "out", ""), localBool(*req, "overwrite"))
+		dst, err := jail.write(flagString(*req, "out", ""), localBool(*req, "overwrite"))
 		if err != nil {
 			return err
 		}
@@ -1222,12 +1316,12 @@ func jailDaemonSessionPaths(serve ServeRequest, req *LocalCommandRequest) error 
 		req.Flags["out"] = dst
 		req.DisplayOut = displayOut
 	case "session export":
-		dst, err := jail.ResolveWrite(flagString(*req, "out", ""), false)
+		dst, err := jail.write(flagString(*req, "out", ""), false)
 		if err != nil {
 			return err
 		}
 		displayOut, _ := jail.ConfinedPath(dst)
-		profileJail, err := policy.NewJail(filepath.Join(jail.Root, "profiles"))
+		profileJail, err := jail.profiles()
 		if err != nil {
 			return err
 		}
@@ -1332,6 +1426,7 @@ func daemonFlagSpecs(command string) (map[string]flagSpec, bool) {
 			"quality":         {Kind: flagValue},
 			"clip":            {Kind: flagValue},
 			"max-bytes":       {Kind: flagValue},
+			"cookies-file":    {Kind: flagValue},
 		} {
 			add(name, spec)
 		}
@@ -1364,6 +1459,7 @@ func daemonFlagSpecs(command string) (map[string]flagSpec, bool) {
 			"wait-load-state": {Kind: flagValue},
 			"arg":             {Kind: flagValue},
 			"enable-eval":     {Kind: flagBool},
+			"cookies-file":    {Kind: flagValue},
 		} {
 			add(name, spec)
 		}
@@ -2076,6 +2172,7 @@ func screenshotFlagSpecs() map[string]flagSpec {
 		"quality":         {Kind: flagValue},
 		"clip":            {Kind: flagValue},
 		"max-bytes":       {Kind: flagValue},
+		"cookies-file":    {Kind: flagValue},
 	}
 }
 
@@ -2090,6 +2187,7 @@ func evalFlagSpecs() map[string]flagSpec {
 		"arg":             {Kind: flagValue},
 		"arg-file":        {Kind: flagValue},
 		"enable-eval":     {Kind: flagBool},
+		"cookies-file":    {Kind: flagValue},
 	}
 }
 
@@ -2550,7 +2648,7 @@ func (r Runner) validateBrowserInputs(ctx context.Context, global globalFlags, p
 		_, _ = fmt.Fprintln(streams.Stderr, "gomoufox record does not support --profile; use --cookies-file storage state")
 		return ExitUsage
 	}
-	if global.Profile != "" && (kind == commandGet || kind == commandFetch) && parsed.value("cookies-file") != "" {
+	if global.Profile != "" && (kind == commandGet || kind == commandFetch || kind == commandScreenshot || kind == commandEval) && parsed.value("cookies-file") != "" {
 		_, _ = fmt.Fprintln(streams.Stderr, "--cookies-file is mutually exclusive with --profile")
 		return ExitUsage
 	}
@@ -2642,6 +2740,7 @@ func (r Runner) executeLocalCommand(ctx context.Context, global globalFlags, com
 		Profile:        global.Profile,
 		JSON:           global.JSON,
 		AllowLocalhost: global.AllowLocalhost,
+		Progress:       streams.Stdout,
 	})
 	if err != nil {
 		writeDiagnosticLine(streams.Stderr, err)

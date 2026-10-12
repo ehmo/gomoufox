@@ -85,3 +85,21 @@ func TestRealLocalPagePreservesContentFailuresAndInternalMetrics(t *testing.T) {
 		t.Fatalf("viewport option missing: %d %v", len(opts), err)
 	}
 }
+
+// A daemon screenshot reports its session-relative path, not the host path.
+func TestScreenshotReportsDisplayPath(t *testing.T) {
+	page := &fakeLocalPage{screenshot: []byte("png")}
+	original := openPageForLocal
+	t.Cleanup(func() { openPageForLocal = original })
+	openPageForLocal = func(context.Context, LocalCommandRequest, []gomoufox.ContextOption) (localPage, func(), error) {
+		return page, func() {}, nil
+	}
+	out := filepath.Join(t.TempDir(), "page.png")
+	response, err := localScreenshot(context.Background(), LocalCommandRequest{Args: []string{"https://example.com"}, Flags: map[string]any{"out": out}, DisplayOut: "page.png"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(response.Stdout) != "page.png\n" {
+		t.Fatalf("stdout = %q", response.Stdout)
+	}
+}

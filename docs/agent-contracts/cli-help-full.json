@@ -120,7 +120,8 @@
         "--wait-load-state",
         "--quality",
         "--clip",
-        "--max-bytes"
+        "--max-bytes",
+        "--cookies-file"
       ],
       "name": "screenshot",
       "summary": "capture a page or element screenshot",
@@ -139,7 +140,8 @@
         "--wait-selector",
         "--wait-load-state",
         "--arg",
-        "--arg-file"
+        "--arg-file",
+        "--cookies-file"
       ],
       "name": "eval",
       "notes": [
