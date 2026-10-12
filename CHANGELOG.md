@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.1.31
+
+- Republish the v0.1.30 changes. The v0.1.30 public release stopped at its
+  container smoke test because example.com no longer shows "Example Domain"
+  in its page body. The release smoke tests now check the page title from
+  `get --json`.
+
 ## v0.1.30
 
 - Report `open` readiness right after navigation: print the final URL, or a

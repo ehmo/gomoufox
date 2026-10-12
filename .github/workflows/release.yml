@@ -126,8 +126,8 @@ jobs:
           test "$ready" = true
           GOMOUFOX_DAEMON_TOKEN=container-smoke-token \
             "$client" --server "http://$address" \
-            get https://example.com --text > /tmp/gomoufox-container-page.txt
-          grep -q "Example Domain" /tmp/gomoufox-container-page.txt
+            --json get https://example.com > /tmp/gomoufox-container-page.json
+          grep -q '"title":"Example Domain"' /tmp/gomoufox-container-page.json
       - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
           name: gomoufox-${{ steps.tag.outputs.tag }}-candidate
@@ -300,5 +300,5 @@ jobs:
             --env GOMOUFOX_DAEMON_TOKEN=container-smoke-token \
             "$image" \
             --server http://127.0.0.1:3741 \
-            get https://example.com --text > /tmp/gomoufox-published-container-page.txt
-          grep -q "Example Domain" /tmp/gomoufox-published-container-page.txt
+            --json get https://example.com > /tmp/gomoufox-published-container-page.json
+          grep -q '"title":"Example Domain"' /tmp/gomoufox-published-container-page.json
