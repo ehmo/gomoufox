@@ -286,7 +286,7 @@ func (p *Page) WaitForSelector(ctx context.Context, selector string, opts ...Wai
 		opt(&cfg)
 	}
 	el, err := p.raw.WaitForSelector(selector, pwbridge.WaitForSelectorOptions{Timeout: boundTimeoutToContext(ctx, cfg.timeout), State: cfg.state})
-	if err != nil {
+	if err != nil || el == nil {
 		return nil, err
 	}
 	return &ElementHandle{raw: el}, nil

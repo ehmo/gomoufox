@@ -371,7 +371,8 @@ func (d *realDownload) Delete() error             { return d.raw.Delete() }
 
 type realElement struct{ raw playwright.ElementHandle }
 
-func (e *realElement) Raw() any { return e.raw }
+func (e *realElement) Raw() any       { return e.raw }
+func (e *realElement) Dispose() error { return e.raw.Dispose() }
 
 type realRoute struct{ raw playwright.Route }
 

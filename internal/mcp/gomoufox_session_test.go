@@ -2846,7 +2846,8 @@ func (p *fakePWPage) Raw() any     { return p }
 
 type fakePWElement struct{}
 
-func (fakePWElement) Raw() any { return nil }
+func (fakePWElement) Raw() any       { return nil }
+func (fakePWElement) Dispose() error { return nil }
 
 func gomoufoxRequestForTest(rawURL, method string, headers map[string]string) *gomoufox.Request {
 	request := &gomoufox.Request{}

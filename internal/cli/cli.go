@@ -150,6 +150,7 @@ type LocalCommandRequest struct {
 	AllowedOrigins []string
 	AllowedHosts   []string
 	DisplayOut     string
+	inputRoot      string
 	// Progress receives lines that a caller must see before the command
 	// returns, such as the open ready line. Nil keeps all output buffered.
 	Progress io.Writer
@@ -1245,7 +1246,7 @@ func jailDaemonBrowserPaths(jail daemonJail, req *LocalCommandRequest) error {
 func jailDaemonSessionPaths(serve ServeRequest, req *LocalCommandRequest) error {
 	switch req.Command {
 	case "fetch":
-		if flagString(*req, "out", "") == "" && flagString(*req, "data_file", "") == "" && flagString(*req, "cookies_file", "") == "" && len(flagStringList(*req, "form_file")) == 0 {
+		if flagString(*req, "out", "") == "" && flagString(*req, "data_file", "") == "" && flagString(*req, "cookies_file", "") == "" && len(flagStringList(*req, "form_file")) == 0 && req.Profile == "" {
 			return nil
 		}
 	case "get", "screenshot", "eval":
@@ -1265,18 +1266,20 @@ func jailDaemonSessionPaths(serve ServeRequest, req *LocalCommandRequest) error 
 		return err
 	}
 	jail := daemonJail{base}
+	req.inputRoot = jail.Root
 	switch req.Command {
 	case "get", "screenshot", "eval":
 		return jailDaemonBrowserPaths(jail, req)
 	case "fetch":
-		for _, flag := range []string{"data_file", "cookies_file"} {
-			if path := flagString(*req, flag, ""); path != "" {
-				resolved, err := jail.read(path)
-				if err != nil {
-					return err
-				}
-				req.Flags[flag] = resolved
+		if err := jailDaemonBrowserPaths(jail, req); err != nil {
+			return err
+		}
+		if path := flagString(*req, "data_file", ""); path != "" {
+			resolved, err := jail.read(path)
+			if err != nil {
+				return err
 			}
+			req.Flags["data_file"] = resolved
 		}
 		files := flagStringList(*req, "form_file")
 		for i, raw := range files {
@@ -1524,6 +1527,9 @@ func validateDaemonSessionExportEnabled(serve ServeRequest, command string) erro
 }
 
 func validateDaemonGlobalFlags(req LocalCommandRequest) error {
+	if req.Profile != "" && flagString(req, "cookies_file", "") != "" {
+		return errors.New("--cookies-file is mutually exclusive with --profile")
+	}
 	if raw := flagString(req, "timeout", ""); raw != "" {
 		if _, err := ParseDuration(raw, 30*time.Second); err != nil {
 			return err

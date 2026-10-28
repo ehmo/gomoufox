@@ -39,8 +39,8 @@ func TestContextNewPageMissingWindowStopsAtDeadline(t *testing.T) {
 	c := &Context{raw: raw}
 	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
 	defer cancel()
-	if _, err := c.NewPage(ctx); !errors.Is(err, windowErr) {
-		t.Fatalf("NewPage err = %v, want the window error", err)
+	if _, err := c.NewPage(ctx); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("NewPage err = %v, want context deadline exceeded", err)
 	}
 	if attempts < 2 {
 		t.Fatalf("attempts = %d, want a retry before the deadline", attempts)
@@ -57,5 +57,17 @@ func TestContextNewPageDoesNotRetryOtherErrors(t *testing.T) {
 	c := &Context{raw: raw}
 	if _, err := c.NewPage(context.Background()); !errors.Is(err, boom) || attempts != 1 {
 		t.Fatalf("NewPage err = %v attempts = %d", err, attempts)
+	}
+}
+
+func TestNewPageRetryReturnsContextCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	wrapped := Context{raw: &fakeContext{newPageFunc: func() (pwbridge.Page, error) {
+		cancel()
+		return nil, errors.New("window is null")
+	}}}
+	if _, err := wrapped.NewPage(ctx); !errors.Is(err, context.Canceled) {
+		t.Fatalf("err = %v, want context.Canceled", err)
 	}
 }

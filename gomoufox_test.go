@@ -2184,6 +2184,9 @@ func (p *fakePage) WaitForSelector(selector string, opts pwbridge.WaitForSelecto
 	if p.waitSelectorErr != nil {
 		return nil, p.waitSelectorErr
 	}
+	if opts.State == "hidden" || opts.State == "detached" {
+		return nil, nil
+	}
 	return &fakeElement{}, nil
 }
 func (p *fakePage) WaitForURL(pattern string, opts pwbridge.GotoOptions) error {
@@ -2254,7 +2257,35 @@ func (p *fakePage) resultResponse() pwbridge.Response {
 
 type fakeElement struct{}
 
-func (fakeElement) Raw() any { return nil }
+func (fakeElement) Raw() any       { return nil }
+func (fakeElement) Dispose() error { return nil }
+
+type trackedElement struct {
+	fakeElement
+	disposed bool
+	err      error
+}
+
+func (e *trackedElement) Dispose() error { e.disposed = true; return e.err }
+
+func TestElementHandleDispose(t *testing.T) {
+	want := errors.New("dispose failed")
+	raw := &trackedElement{err: want}
+	handle := &ElementHandle{raw: raw}
+	if err := handle.Dispose(); !raw.disposed || !errors.Is(err, want) {
+		t.Fatalf("disposed=%v error=%v", raw.disposed, err)
+	}
+}
+
+func TestPageWaitForAbsentSelectorReturnsNoHandle(t *testing.T) {
+	page := &Page{raw: &fakePage{}}
+	for _, state := range []string{"hidden", "detached"} {
+		handle, err := page.WaitForSelector(context.Background(), "#gone", WaitForSelectorState(state))
+		if err != nil || handle != nil {
+			t.Fatalf("%s wait returned handle=%v err=%v", state, handle, err)
+		}
+	}
+}
 
 type fakeDownload struct {
 	url               string

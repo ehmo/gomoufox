@@ -40,11 +40,14 @@
     "docs/benchmarks/2026-09-08-full-streamed.json",
     "docs/benchmarks/2026-09-08-node-direct-streamed-readiness.json",
     "docs/benchmarks/2026-10-12-node-direct-readiness.json",
+    "docs/benchmarks/2026-10-28-full.json",
     "docs/personas/2026-07-29-node-direct-readiness.json",
     "docs/personas/2026-08-20-node-direct-readiness.json",
     "docs/personas/2026-08-22-node-direct-readiness.json",
     "docs/personas/2026-09-08-full.json",
-    "docs/personas/2026-09-08-node-direct-readiness.json"
+    "docs/personas/2026-09-08-node-direct-readiness.json",
+    "docs/personas/2026-10-28-full.json",
+    "docs/benchmarks/2026-10-28-node-direct-readiness.json"
   ],
   "scripts": [
     "audit-public-release.py",

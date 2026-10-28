@@ -100,6 +100,10 @@ type ElementHandle struct{ raw pwbridge.ElementHandle }
 
 func (e *ElementHandle) Raw() any { return e.raw.Raw() }
 
+// Dispose releases the remote element handle. Call it when the handle is no
+// longer needed, especially for repeated waits in a long-lived page.
+func (e *ElementHandle) Dispose() error { return e.raw.Dispose() }
+
 func wrapRouteHandler(handler RouteHandler) pwbridge.RouteHandler {
 	if handler == nil {
 		return nil

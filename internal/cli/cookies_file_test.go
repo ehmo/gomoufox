@@ -3,11 +3,15 @@ package cli
 import (
 	"bytes"
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 
+	"github.com/ehmo/gomoufox"
 	"github.com/ehmo/gomoufox/internal/daemon"
 )
 
@@ -221,5 +225,184 @@ func TestDaemonRejectsProfilesSymlink(t *testing.T) {
 		if err := jailDaemonSessionPaths(ServeRequest{SessionDir: root}, &req); err == nil {
 			t.Fatalf("%s: profiles symlink accepted: %q", command, req.Profile)
 		}
+	}
+}
+
+func TestDaemonFetchConfinesProfile(t *testing.T) {
+	root := t.TempDir()
+	outside := t.TempDir()
+	req := LocalCommandRequest{Command: "fetch", Profile: outside, Flags: map[string]any{}}
+	if err := jailDaemonSessionPaths(ServeRequest{SessionDir: root}, &req); err == nil {
+		t.Fatalf("outside profile accepted: %q", req.Profile)
+	}
+	req.Profile = "work"
+	if err := jailDaemonSessionPaths(ServeRequest{SessionDir: root}, &req); err != nil {
+		t.Fatal(err)
+	}
+	realRoot, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := filepath.Join(realRoot, "profiles", "work"); req.Profile != want {
+		t.Fatalf("profile = %q, want %q", req.Profile, want)
+	}
+}
+
+func TestDaemonRejectsCookiesFileWithProfile(t *testing.T) {
+	t.Cleanup(fakeOpenPage(t, &fakeLocalPage{}))
+	for _, command := range []string{"get", "screenshot", "fetch", "eval"} {
+		t.Run(command, func(t *testing.T) {
+			root := t.TempDir()
+			if err := os.WriteFile(filepath.Join(root, "state.json"), []byte(`{"cookies":[],"origins":[]}`), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			flags := map[string]any{"cookies_file": "state.json"}
+			if command == "screenshot" {
+				flags["out"] = "page.png"
+			}
+			if command == "eval" {
+				flags["enable_eval"] = true
+				flags["script"] = "() => 1"
+			}
+			result := executeDaemonLocalCommand(context.Background(), ServeRequest{SessionDir: root, EnableEval: true}, command, daemon.Envelope{
+				Args: []string{"http://93.184.216.34/"}, Profile: "work", Flags: flags,
+			})
+			if result.ExitCode != ExitUsage || !strings.Contains(result.Stderr, "mutually exclusive") {
+				t.Fatalf("result = %#v", result)
+			}
+		})
+	}
+}
+
+func TestDaemonInputAcquisitionRejectsSymlinkSwap(t *testing.T) {
+	for _, insideProfiles := range []bool{false, true} {
+		for _, parentSwap := range []bool{false, true} {
+			for _, command := range []string{"get", "eval", "fetch", "multipart", "session import"} {
+				t.Run(command+map[bool]string{false: "/file", true: "/parent"}[parentSwap]+map[bool]string{false: "/outside", true: "/profiles"}[insideProfiles], func(t *testing.T) {
+					root := t.TempDir()
+					outside := t.TempDir()
+					if insideProfiles {
+						outside = filepath.Join(root, "profiles", "work")
+						if err := os.MkdirAll(outside, 0o700); err != nil {
+							t.Fatal(err)
+						}
+					}
+					inputDir := filepath.Join(root, "input")
+					if err := os.Mkdir(inputDir, 0o700); err != nil {
+						t.Fatal(err)
+					}
+					for _, dir := range []string{inputDir, outside} {
+						if err := os.WriteFile(filepath.Join(dir, "state.json"), []byte(`{"cookies":[],"origins":[]}`), 0o600); err != nil {
+							t.Fatal(err)
+						}
+					}
+					req := LocalCommandRequest{Command: command, Flags: map[string]any{}}
+					switch command {
+					case "get":
+						req.Flags["cookies_file"] = "input/state.json"
+					case "eval":
+						req.Flags["script_file"] = "input/state.json"
+					case "fetch":
+						req.Flags["data_file"] = "input/state.json"
+					case "multipart":
+						req.Command = "fetch"
+						req.Flags["form_file"] = []string{"file=input/state.json"}
+					case "session import":
+						req.Flags["file"] = "input/state.json"
+						req.Flags["out"] = "copy.json"
+					}
+					if err := jailDaemonSessionPaths(ServeRequest{SessionDir: root}, &req); err != nil {
+						t.Fatal(err)
+					}
+					link, target := filepath.Join(inputDir, "state.json"), filepath.Join(outside, "state.json")
+					if parentSwap {
+						link, target = inputDir, outside
+						if err := os.Rename(inputDir, inputDir+"-old"); err != nil {
+							t.Fatal(err)
+						}
+					} else if err := os.Remove(link); err != nil {
+						t.Fatal(err)
+					}
+					if err := os.Symlink(target, link); err != nil {
+						t.Fatal(err)
+					}
+					var err error
+					switch command {
+					case "get":
+						_, err = contextOptionsForLocal(req, nil)
+					case "eval":
+						_, err = scriptFromFlags(req)
+					case "fetch":
+						_, err = bodyFromFlags(req)
+					case "multipart":
+						_, _, err = multipartBody(req)
+					case "session import":
+						_, err = localSessionImport(req)
+					}
+					if err == nil {
+						t.Fatal("input escaped the session directory after validation")
+					}
+				})
+			}
+		}
+	}
+}
+
+type blockingSessionSnapshotPage struct {
+	*fakeLocalPage
+	snapshotFunc func(context.Context) (*gomoufox.StorageState, error)
+}
+
+func (p blockingSessionSnapshotPage) SessionSnapshot(ctx context.Context) (*gomoufox.StorageState, error) {
+	return p.snapshotFunc(ctx)
+}
+
+func TestWaitClosedSnapshotsBoundsBlockedSnapshot(t *testing.T) {
+	oldTimeout, oldInterval := sessionSnapshotTimeout, sessionSnapshotInterval
+	sessionSnapshotTimeout, sessionSnapshotInterval = 10*time.Millisecond, time.Millisecond
+	t.Cleanup(func() { sessionSnapshotTimeout, sessionSnapshotInterval = oldTimeout, oldInterval })
+	release := make(chan struct{})
+	defer close(release)
+	entered := make(chan struct{}, 1)
+	var calls atomic.Int32
+	page := blockingSessionSnapshotPage{fakeLocalPage: &fakeLocalPage{closeWait: make(chan struct{})}, snapshotFunc: func(ctx context.Context) (*gomoufox.StorageState, error) {
+		calls.Add(1)
+		if _, ok := ctx.Deadline(); !ok {
+			t.Error("snapshot has no deadline")
+		}
+		entered <- struct{}{}
+		<-release
+		return nil, nil
+	}}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { _, err := waitClosedSnapshots(ctx, page); done <- err }()
+	<-entered
+	time.Sleep(30 * time.Millisecond)
+	close(page.closeWait)
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(100 * time.Millisecond):
+		t.Fatal("closed waiter was stalled by SessionSnapshot")
+	}
+	if calls.Load() != 1 {
+		t.Fatalf("started %d blocked snapshots", calls.Load())
+	}
+}
+
+func TestWaitClosedSnapshotsReturnsOuterCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	page := blockingSessionSnapshotPage{fakeLocalPage: &fakeLocalPage{closeWait: make(chan struct{})}, snapshotFunc: func(ctx context.Context) (*gomoufox.StorageState, error) {
+		cancel()
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}}
+	_, err := waitClosedSnapshots(ctx, page)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("err = %v, want context.Canceled", err)
 	}
 }

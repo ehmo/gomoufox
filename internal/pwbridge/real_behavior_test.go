@@ -1549,6 +1549,16 @@ func (d *fakeDownload) Delete() error {
 
 type fakeElement struct {
 	playwright.ElementHandle
+	disposed bool
+}
+
+func (e *fakeElement) Dispose() error { e.disposed = true; return nil }
+
+func TestRealElementDisposesRemoteHandle(t *testing.T) {
+	raw := &fakeElement{}
+	if err := (&realElement{raw: raw}).Dispose(); err != nil || !raw.disposed {
+		t.Fatalf("Dispose: disposed=%t err=%v", raw.disposed, err)
+	}
 }
 
 type fakeFrame struct {

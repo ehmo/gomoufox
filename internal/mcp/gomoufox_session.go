@@ -742,11 +742,9 @@ func (s *gomoufoxSession) WaitFor(ctx context.Context, condition waitCondition) 
 	defer cancel()
 	switch condition.Kind {
 	case "selector":
-		_, err := s.page.WaitForSelector(ctx, condition.Value, gomoufox.WaitForSelectorTimeout(condition.Timeout), gomoufox.WaitForSelectorState("visible"))
-		return err
+		return s.waitForSelector(ctx, condition.Value, condition.Timeout)
 	case "text":
-		_, err := s.page.WaitForSelector(ctx, "text="+condition.Value, gomoufox.WaitForSelectorTimeout(condition.Timeout), gomoufox.WaitForSelectorState("visible"))
-		return err
+		return s.waitForSelector(ctx, "text="+condition.Value, condition.Timeout)
 	case "url_contains":
 		// Poll the URL directly: a "**<value>**" glob degrades to [^/]* around
 		// non-slash text under Playwright glob rules, so it can never match an
@@ -768,6 +766,14 @@ func (s *gomoufoxSession) WaitFor(ctx context.Context, condition waitCondition) 
 	default:
 		return ErrInvalidCall
 	}
+}
+
+func (s *gomoufoxSession) waitForSelector(ctx context.Context, selector string, timeout time.Duration) error {
+	handle, err := s.page.WaitForSelector(ctx, selector, gomoufox.WaitForSelectorTimeout(timeout), gomoufox.WaitForSelectorState("visible"))
+	if err != nil || handle == nil {
+		return err
+	}
+	return handle.Dispose()
 }
 
 func (s *gomoufoxSession) Screenshot(ctx context.Context, opts screenshotOptions) (screenshotResult, error) {

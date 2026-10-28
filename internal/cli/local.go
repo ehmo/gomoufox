@@ -28,7 +28,15 @@ import (
 )
 
 var localOpenFile = os.Open
+var localOpenInputRoot = func(path string) (localInputRoot, error) { return os.OpenRoot(path) }
 var errFileInputTooLarge = errors.New("file input too large")
+
+type localInputRoot interface {
+	Lstat(string) (os.FileInfo, error)
+	OpenRoot(string) (*os.Root, error)
+	Open(string) (*os.File, error)
+	Close() error
+}
 
 func defaultLocalCommand(ctx context.Context, req LocalCommandRequest) (LocalCommandResponse, error) {
 	switch req.Command {
@@ -503,11 +511,11 @@ func localOpen(ctx context.Context, req LocalCommandRequest) (LocalCommandRespon
 		stdout = []byte(finalURL + "\n")
 	}
 	sessionPath := flagString(req, "save_session", "")
-	var saved savedSession
+	var note string
 	if sessionPath == "" && req.Profile != "" {
-		saved, err = waitClosedProfile(ctx, p)
+		note, err = waitClosedProfile(ctx, p)
 	} else {
-		saved, err = waitClosedSaving(ctx, p, sessionPath)
+		note, err = waitClosedSaving(ctx, p, sessionPath)
 	}
 	if err != nil {
 		return LocalCommandResponse{}, err
@@ -517,12 +525,12 @@ func localOpen(ctx context.Context, req LocalCommandRequest) (LocalCommandRespon
 		if sessionPath != "" {
 			event["session_path"] = sessionPath
 		}
-		return LocalCommandResponse{ExitCode: ExitOK, Stdout: mustJSONLine(event), Stderr: saved.note}, nil
+		return LocalCommandResponse{ExitCode: ExitOK, Stdout: mustJSONLine(event), Stderr: note}, nil
 	}
 	if sessionPath != "" {
 		stdout = append(stdout, []byte(sessionPath+"\n")...)
 	}
-	return LocalCommandResponse{ExitCode: ExitOK, Stdout: stdout, Stderr: saved.note}, nil
+	return LocalCommandResponse{ExitCode: ExitOK, Stdout: stdout, Stderr: note}, nil
 }
 
 // writeOpenReady tells the caller that the window is usable. open blocks until
@@ -545,11 +553,7 @@ func mustJSONLine(value any) []byte {
 
 // sessionSnapshotInterval is a var so tests can shorten it.
 var sessionSnapshotInterval = time.Second
-
-type savedSession struct {
-	// note explains a fallback to the snapshot taken while the page was open.
-	note string
-}
+var sessionSnapshotTimeout = 5 * time.Second
 
 // waitClosedSaving waits for the user to close the page and, when path is set,
 // writes the context storage state there. A browser quit (Cmd+Q on macOS)
@@ -557,47 +561,47 @@ type savedSession struct {
 // pages to read localStorage. The function therefore snapshots cookies and the
 // current origin's localStorage while the page is open and saves the snapshot
 // when the full export fails.
-func waitClosedSaving(ctx context.Context, p localPage, path string) (savedSession, error) {
+func waitClosedSaving(ctx context.Context, p localPage, path string) (string, error) {
 	if path == "" {
 		if err := p.WaitClosed(ctx); err != nil && !isExpectedPageCloseError(err) {
-			return savedSession{}, err
+			return "", err
 		}
-		return savedSession{}, nil
+		return "", nil
 	}
 
 	snapshot, err := waitClosedSnapshots(ctx, p)
-	if err != nil && !isExpectedPageCloseError(err) {
-		return savedSession{}, err
+	if err != nil {
+		return "", err
 	}
 
-	var saved savedSession
+	var note string
 	state, err := p.StorageState(ctx)
 	if err != nil {
-		if latest, snapErr := p.SessionSnapshot(ctx); snapErr == nil && latest != nil {
+		if latest, snapErr := boundedSessionSnapshot(ctx, p); snapErr == nil && latest != nil {
 			snapshot = mergeSessionSnapshot(snapshot, latest)
 		}
 		if snapshot == nil {
-			return savedSession{}, err
+			return "", err
 		}
 		state = snapshot
-		saved.note = fmt.Sprintf("storage state export after close failed (%v); saved the last snapshot taken while the window was open\n", err)
+		note = fmt.Sprintf("storage state export after close failed (%v); saved the last snapshot taken while the window was open\n", err)
 	}
 	if err := writeFile0600(path, mustJSON(state), true); err != nil {
-		return savedSession{}, err
+		return "", err
 	}
-	return saved, nil
+	return note, nil
 }
 
 // waitClosedProfile waits for the user to close the page and warns when the
 // run set session cookies. Firefox drops cookies without an expiry on restart,
 // so a login that depends on them does not survive in the profile.
-func waitClosedProfile(ctx context.Context, p localPage) (savedSession, error) {
+func waitClosedProfile(ctx context.Context, p localPage) (string, error) {
 	snapshot, err := waitClosedSnapshots(ctx, p)
-	if err != nil && !isExpectedPageCloseError(err) {
-		return savedSession{}, err
+	if err != nil {
+		return "", err
 	}
 	if snapshot == nil {
-		return savedSession{}, nil
+		return "", nil
 	}
 
 	count := 0
@@ -607,14 +611,14 @@ func waitClosedProfile(ctx context.Context, p localPage) (savedSession, error) {
 		}
 	}
 	if count == 0 {
-		return savedSession{}, nil
+		return "", nil
 	}
 
 	noun := "cookies"
 	if count == 1 {
 		noun = "cookie"
 	}
-	return savedSession{note: fmt.Sprintf("--profile keeps only cookies with an expiry; this run set %d session %s, and the browser drops them when it closes. To keep a login, rerun open with --save-session <file> and pass that file to later commands with --cookies-file\n", count, noun)}, nil
+	return fmt.Sprintf("--profile keeps only cookies with an expiry; this run set %d session %s, and the browser drops them when it closes. To keep a login, rerun open with --save-session <file> and pass that file to later commands with --cookies-file\n", count, noun), nil
 }
 
 func waitClosedSnapshots(ctx context.Context, p localPage) (*gomoufox.StorageState, error) {
@@ -622,9 +626,18 @@ func waitClosedSnapshots(ctx context.Context, p localPage) (*gomoufox.StorageSta
 	go func() { done <- p.WaitClosed(ctx) }()
 
 	var snapshot *gomoufox.StorageState
+	snapshotsEnabled := true
 	take := func() {
-		if latest, err := p.SessionSnapshot(ctx); err == nil && latest != nil {
+		if !snapshotsEnabled {
+			return
+		}
+		latest, err := boundedSessionSnapshot(ctx, p)
+		if err == nil && latest != nil {
 			snapshot = mergeSessionSnapshot(snapshot, latest)
+		}
+		// A timed-out raw call may still be blocked. Do not start more of them.
+		if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+			snapshotsEnabled = false
 		}
 	}
 	take()
@@ -632,13 +645,50 @@ func waitClosedSnapshots(ctx context.Context, p localPage) (*gomoufox.StorageSta
 	ticker := time.NewTicker(sessionSnapshotInterval)
 	defer ticker.Stop()
 	for {
+		var err error
 		select {
-		case err := <-done:
-			return snapshot, err
+		case <-ctx.Done():
+		case err = <-done:
 		case <-ticker.C:
 			take()
+			continue
 		}
+		if ctx.Err() != nil {
+			return snapshot, ctx.Err()
+		}
+		if isExpectedPageCloseError(err) {
+			return snapshot, nil
+		}
+		return snapshot, err
 	}
+}
+
+// boundedSessionSnapshot bounds the wait even when a raw call ignores context.
+// Periodic attempts stop after timeout so unfinished calls do not accumulate.
+func boundedSessionSnapshot(ctx context.Context, p localPage) (*gomoufox.StorageState, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	ctx, cancel := context.WithTimeout(ctx, sessionSnapshotTimeout)
+	defer cancel()
+	type result struct {
+		state *gomoufox.StorageState
+		err   error
+	}
+	done := make(chan result, 1)
+	go func() {
+		state, err := p.SessionSnapshot(ctx)
+		done <- result{state: state, err: err}
+	}()
+	var out result
+	select {
+	case out = <-done:
+	case <-ctx.Done():
+	}
+	if ctx.Err() != nil {
+		return nil, ctx.Err()
+	}
+	return out.state, out.err
 }
 
 // mergeSessionSnapshot keeps the newest cookies and the newest localStorage per
@@ -689,7 +739,7 @@ func localRecord(ctx context.Context, req LocalCommandRequest) (LocalCommandResp
 		return blocked, nil
 	}
 	sessionPath := flagString(req, "save_session", "")
-	saved, err := waitClosedSaving(ctx, p, sessionPath)
+	note, err := waitClosedSaving(ctx, p, sessionPath)
 	if err != nil {
 		return LocalCommandResponse{}, err
 	}
@@ -717,14 +767,14 @@ func localRecord(ctx context.Context, req LocalCommandRequest) (LocalCommandResp
 			payload["session_path"] = sessionPath
 		}
 		resp, err := jsonResponse(payload)
-		resp.Stderr = saved.note
+		resp.Stderr = note
 		return resp, err
 	}
 	stdout := []byte(finalURL + "\n" + harPath + "\n")
 	if sessionPath != "" {
 		stdout = append(stdout, []byte(sessionPath+"\n")...)
 	}
-	return LocalCommandResponse{ExitCode: ExitOK, Stdout: stdout, Stderr: saved.note}, nil
+	return LocalCommandResponse{ExitCode: ExitOK, Stdout: stdout, Stderr: note}, nil
 }
 
 func localSessionImport(req LocalCommandRequest) (LocalCommandResponse, error) {
@@ -734,7 +784,7 @@ func localSessionImport(req LocalCommandRequest) (LocalCommandResponse, error) {
 	if req.DisplayOut != "" {
 		displayDst = req.DisplayOut
 	}
-	data, err := readCappedFileBytes(src, policy.InlineSessionLoadBytes)
+	data, err := readCappedInputFileBytes(req, src, policy.InlineSessionLoadBytes)
 	if err != nil {
 		return LocalCommandResponse{}, err
 	}
@@ -830,7 +880,7 @@ func contextOptionsForLocal(req LocalCommandRequest, base []gomoufox.ContextOpti
 		opts = append(opts, gomoufox.WithContextLocale(locale))
 	}
 	if path := flagString(req, "cookies_file", ""); path != "" {
-		state, err := readStorageStateFile(path)
+		state, err := readStorageStateFileAt(path, req.inputRoot)
 		if err != nil {
 			return nil, err
 		}
@@ -840,7 +890,11 @@ func contextOptionsForLocal(req LocalCommandRequest, base []gomoufox.ContextOpti
 }
 
 func readStorageStateFile(path string) (*gomoufox.StorageState, error) {
-	data, err := readCappedFileBytes(path, policy.InlineSessionLoadBytes)
+	return readStorageStateFileAt(path, "")
+}
+
+func readStorageStateFileAt(path, root string) (*gomoufox.StorageState, error) {
+	data, err := readCappedInputFileBytes(LocalCommandRequest{inputRoot: root}, path, policy.InlineSessionLoadBytes)
 	if err != nil {
 		return nil, err
 	}
@@ -922,18 +976,27 @@ func (p realLocalPage) StorageState(ctx context.Context) (*gomoufox.StorageState
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
+	browserContext, err := p.browserContext()
+	if err != nil {
+		return nil, err
+	}
+	state, err := browserContext.StorageState()
+	if err != nil {
+		return nil, err
+	}
+	return storageStateFromPlaywright(state)
+}
+
+func (p realLocalPage) browserContext() (playwright.BrowserContext, error) {
 	raw, ok := p.p.Raw().(interface {
 		Context() playwright.BrowserContext
 	})
 	if !ok {
 		return nil, errors.New("page storage state is not supported")
 	}
-	state, err := raw.Context().StorageState()
-	if err != nil {
-		return nil, err
-	}
-	return storageStateFromPlaywright(state)
+	return raw.Context(), nil
 }
+
 func (p realLocalPage) Close() error { return p.p.Close() }
 
 const localStorageSnapshotScript = `() => ({ origin: location.origin, entries: Object.entries(localStorage) })`
@@ -945,13 +1008,11 @@ func (p realLocalPage) SessionSnapshot(ctx context.Context) (*gomoufox.StorageSt
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	raw, ok := p.p.Raw().(interface {
-		Context() playwright.BrowserContext
-	})
-	if !ok {
-		return nil, errors.New("page storage state is not supported")
+	browserContext, err := p.browserContext()
+	if err != nil {
+		return nil, err
 	}
-	cookies, err := raw.Context().Cookies()
+	cookies, err := browserContext.Cookies()
 	if err != nil {
 		return nil, err
 	}
@@ -966,7 +1027,9 @@ func (p realLocalPage) SessionSnapshot(ctx context.Context) (*gomoufox.StorageSt
 }
 
 func (p realLocalPage) localStorageOrigin(ctx context.Context) (gomoufox.Origin, bool) {
-	value, err := p.p.Evaluate(ctx, localStorageSnapshotScript)
+	// The snapshot watchdog stops sampling on timeout. Do not let evaluation's
+	// cancellation path close the user's interactive page in the background.
+	value, err := p.p.Evaluate(context.WithoutCancel(ctx), localStorageSnapshotScript)
 	if err != nil {
 		return gomoufox.Origin{}, false
 	}
@@ -1117,11 +1180,11 @@ func scriptFromFlags(req LocalCommandRequest) (string, error) {
 	if script := flagString(req, "script", ""); script != "" {
 		return script, nil
 	}
-	script, err := readCappedFile(flagString(req, "script_file", ""), 64*1024)
+	data, err := readCappedInputFileBytes(req, flagString(req, "script_file", ""), 64*1024)
 	if errors.Is(err, errFileInputTooLarge) {
 		return "", errors.New(scriptSizeHint)
 	}
-	return script, err
+	return string(data), err
 }
 
 func bodyFromFlags(req LocalCommandRequest) ([]byte, error) {
@@ -1129,7 +1192,7 @@ func bodyFromFlags(req LocalCommandRequest) ([]byte, error) {
 		return []byte(body), nil
 	}
 	if path := flagString(req, "data_file", ""); path != "" {
-		return readCappedFileBytes(path, gomoufox.MaxTransferFileBytes)
+		return readCappedInputFileBytes(req, path, gomoufox.MaxTransferFileBytes)
 	}
 	return nil, nil
 }
@@ -1241,19 +1304,83 @@ func readCappedFile(path string, cap int) (string, error) {
 }
 
 func readCappedFileBytes(path string, cap int) ([]byte, error) {
-	info, err := os.Stat(path)
+	return readCappedInputFileBytes(LocalCommandRequest{}, path, cap)
+}
+
+func readCappedInputFileBytes(req LocalCommandRequest, path string, cap int) ([]byte, error) {
+	if req.inputRoot == "" {
+		info, err := os.Stat(path)
+		if err != nil {
+			return nil, err
+		}
+		if !info.Mode().IsRegular() {
+			return nil, fmt.Errorf("%s is not a regular file", path)
+		}
+	}
+	file, err := openInputFile(req, path)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+	info, err := file.Stat()
 	if err != nil {
 		return nil, err
 	}
 	if !info.Mode().IsRegular() {
 		return nil, fmt.Errorf("%s is not a regular file", path)
 	}
-	file, err := localOpenFile(path)
-	if err != nil {
-		return nil, err
-	}
-	defer file.Close()
 	return readCappedReader(file, cap)
+}
+
+func openInputFile(req LocalCommandRequest, path string) (*os.File, error) {
+	if req.inputRoot == "" {
+		return localOpenFile(path)
+	}
+	rejected := newDaemonUsageError(errors.New("path_rejected"))
+	rel, err := (policy.Jail{Root: req.inputRoot}).ConfinedPath(path)
+	if err != nil {
+		return nil, rejected
+	}
+	root, err := localOpenInputRoot(req.inputRoot)
+	if err != nil {
+		return nil, rejected
+	}
+	defer func() { _ = root.Close() }()
+	// Check descriptor identity at each component so a symlink swap cannot
+	// redirect an input into the reserved profiles directory within the root.
+	parts := strings.Split(filepath.FromSlash(rel), string(filepath.Separator))
+	for _, part := range parts[:len(parts)-1] {
+		info, err := root.Lstat(part)
+		if err != nil || info.Mode()&os.ModeSymlink != 0 {
+			return nil, rejected
+		}
+		next, err := root.OpenRoot(part)
+		if err != nil {
+			return nil, rejected
+		}
+		opened, err := next.Stat(".")
+		if err != nil || !os.SameFile(info, opened) {
+			_ = next.Close()
+			return nil, rejected
+		}
+		_ = root.Close()
+		root = next
+	}
+	part := parts[len(parts)-1]
+	info, err := root.Lstat(part)
+	if err != nil || !info.Mode().IsRegular() {
+		return nil, rejected
+	}
+	file, err := root.Open(part)
+	if err != nil {
+		return nil, rejected
+	}
+	opened, err := file.Stat()
+	if err != nil || !os.SameFile(info, opened) {
+		_ = file.Close()
+		return nil, rejected
+	}
+	return file, nil
 }
 
 func readCappedReader(reader io.Reader, cap int) ([]byte, error) {

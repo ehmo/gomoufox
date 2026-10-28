@@ -1,5 +1,26 @@
 # Changelog
 
+## v0.1.32
+
+- Dispose remote element handles after MCP selector and text waits so repeated
+  waits do not retain them for the life of the page. Hidden and detached
+  selector waits return no handle.
+- Preserve bounded runtime crash diagnostics and classify unexpected Node
+  heap-exhaustion exits without printing raw stderr at the default log level.
+- Open daemon input files relative to the session directory with symlink and
+  descriptor checks, and confine fetch profiles to the profile directory.
+- Reject daemon requests that combine `--cookies-file` with `--profile`.
+- Bound session snapshots by a five-second deadline and stop periodic retries
+  after a snapshot times out, without closing the interactive page.
+- Return context cancellation from new-page retries.
+- Build with Go 1.26.10 and `golang.org/x/net` v0.62.0 to fix reachable
+  certificate-trust and HTML parsing vulnerabilities found by the release gate.
+- Refresh the hash-locked Python dependencies and Go/Python benchmark evidence.
+
+The 41-cycle synthetic MCP regression passes with no extra retained element
+handles. The original authenticated heap-exhaustion workflow has not
+been rerun; this release does not establish that its OOM is fixed.
+
 ## v0.1.31
 
 - Republish the v0.1.30 changes. The v0.1.30 public release stopped at its

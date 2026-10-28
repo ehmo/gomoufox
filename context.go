@@ -66,7 +66,7 @@ func (c *Context) newRawPage(ctx context.Context) (pwbridge.Page, error) {
 		select {
 		case <-ctx.Done():
 			timer.Stop()
-			return nil, err
+			return nil, ctx.Err()
 		case <-timer.C:
 		}
 	}

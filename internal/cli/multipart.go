@@ -62,7 +62,7 @@ func multipartBody(req LocalCommandRequest) ([]byte, string, error) {
 		if path == "" || strings.ContainsAny(filepath.Base(path), "\r\n\x00") {
 			return nil, "", fmt.Errorf("--form-file requires name=path with a valid filename")
 		}
-		file, err := localOpenFile(path)
+		file, err := openInputFile(req, path)
 		if err != nil {
 			return nil, "", err
 		}

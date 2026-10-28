@@ -29,24 +29,32 @@ var (
 	sidecarAssignProcessBoundary = assignProcessBoundary
 	sidecarWritePidfile          = writePidfile
 	sidecarStdoutPipe            = func(cmd *exec.Cmd) (io.ReadCloser, error) { return cmd.StdoutPipe() }
-	sidecarStderrPipe            = func(cmd *exec.Cmd) (io.ReadCloser, error) { return cmd.StderrPipe() }
-	sidecarStopKillTimeout       = 5 * time.Second
+	sidecarStderrPipe            = func(cmd *exec.Cmd) (io.ReadCloser, error) {
+		reader, writer := io.Pipe()
+		// A writer makes Cmd.Wait drain stderr before it closes the OS pipe.
+		// StderrPipe can lose the final crash lines when Wait races its reader.
+		cmd.Stderr = writer
+		return reader, nil
+	}
+	sidecarStopKillTimeout = 5 * time.Second
 )
 
 const sidecarStartupStderrLimit = 8 * 1024
 
 type Manager struct {
-	cfg      Config
-	mu       sync.Mutex
-	state    State
-	cmd      *exec.Cmd
-	endpoint string
-	done     chan struct{}
-	info     Info
-	lock     *ProfileLock
-	proxy    *http.Server
-	proxyLn  net.Listener
-	pidfile  string
+	cfg             Config
+	mu              sync.Mutex
+	state           State
+	cmd             *exec.Cmd
+	endpoint        string
+	done            chan struct{}
+	info            Info
+	lock            *ProfileLock
+	proxy           *http.Server
+	proxyLn         net.Listener
+	pidfile         string
+	diagnostics     *startupDiagnostics
+	diagnosticsDone <-chan struct{}
 }
 
 func New(cfg Config) *Manager {
@@ -155,6 +163,9 @@ func (m *Manager) Start(ctx context.Context) (string, error) {
 		return "", err
 	}
 	cmd.Env = append(os.Environ(), m.cfg.ExtraEnv...)
+	// A child may inherit stderr after its launcher exits. Bound the copy
+	// goroutine wait while allowing the final crash diagnostics to drain.
+	cmd.WaitDelay = time.Second
 	setProcessGroup(cmd)
 	stdout, err := sidecarStdoutPipe(cmd)
 	if err != nil {
@@ -163,16 +174,32 @@ func (m *Manager) Start(ctx context.Context) (string, error) {
 	}
 	stderr, err := sidecarStderrPipe(cmd)
 	if err != nil {
+		_ = stdout.Close()
 		m.setDead()
 		return "", err
 	}
+	diagnostics := newStartupDiagnostics(sidecarStartupStderrLimit)
+	runtimeDiagnostics := &startupDiagnostics{limit: sidecarStartupStderrLimit, tail: true}
+	diagnosticsDone := make(chan struct{})
+	m.mu.Lock()
+	m.diagnostics = runtimeDiagnostics
+	m.diagnosticsDone = diagnosticsDone
+	m.mu.Unlock()
+	go func() {
+		defer close(diagnosticsDone)
+		defer stderr.Close()
+		m.forwardDiagnostics(stderr, diagnostics, runtimeDiagnostics)
+	}()
 	if err := cmd.Start(); err != nil {
+		closeDiagnosticWriter(cmd)
+		_ = stdout.Close()
 		m.setDead()
 		return "", err
 	}
 	if err := sidecarAssignProcessBoundary(cmd); err != nil {
 		_ = cmd.Process.Kill()
 		_ = cmd.Wait()
+		closeDiagnosticWriter(cmd)
 		m.setDead()
 		return "", fmt.Errorf("%w: assign process boundary: %v", ErrSidecarStart, err)
 	}
@@ -181,12 +208,6 @@ func (m *Manager) Start(ctx context.Context) (string, error) {
 	m.info.Runtime = runtimeName
 	m.info.PID = cmd.Process.Pid
 	m.mu.Unlock()
-	diagnostics := newStartupDiagnostics(sidecarStartupStderrLimit)
-	diagnosticsDone := make(chan struct{})
-	go func() {
-		defer close(diagnosticsDone)
-		m.forwardDiagnostics(stderr, diagnostics)
-	}()
 	waitStarted := false
 	startWait := func() {
 		if !waitStarted {
@@ -315,11 +336,37 @@ func (m *Manager) Config() Config {
 }
 
 func (m *Manager) wait() {
+	var exitErr error
 	if m.cmd != nil {
-		_ = m.cmd.Wait()
+		exitErr = m.cmd.Wait()
+		closeDiagnosticWriter(m.cmd)
 		releaseProcessBoundary(m.cmd)
 	}
+	m.mu.Lock()
+	expected := m.state == StateShuttingDown || m.state == StateDead
+	diagnostics, diagnosticsDone, info := m.diagnostics, m.diagnosticsDone, m.info
+	m.mu.Unlock()
+	if exitErr != nil && !expected {
+		select {
+		case <-diagnosticsDone:
+		case <-time.After(100 * time.Millisecond):
+		}
+		reason := "process_exit"
+		excerpt := strings.ToLower(diagnostics.Excerpt())
+		if strings.Contains(excerpt, "heap out of memory") || strings.Contains(excerpt, "reached heap limit") || strings.Contains(excerpt, "fatalprocessoutofmemory") {
+			reason = "out_of_memory"
+		}
+		// Raw stderr can contain page data. Report only the exit status and
+		// fixed classification at the default log level.
+		slog.Error("gomoufox sidecar exited unexpectedly", "runtime", info.Runtime, "pid", info.PID, "exit_error", exitErr, "reason", reason)
+	}
 	m.setDead()
+}
+
+func closeDiagnosticWriter(cmd *exec.Cmd) {
+	if writer, ok := cmd.Stderr.(*io.PipeWriter); ok {
+		_ = writer.Close()
+	}
 }
 
 func (m *Manager) setDead() {
@@ -350,19 +397,19 @@ func (m *Manager) setDead() {
 	}
 }
 
-func (m *Manager) forwardDiagnostics(r io.Reader, capture *startupDiagnostics) {
+func (m *Manager) forwardDiagnostics(r io.Reader, captures ...*startupDiagnostics) {
 	scanner := bufio.NewScanner(r)
 	scanner.Buffer(make([]byte, 0, 8192), 1024*1024)
 	for scanner.Scan() {
 		line := scanner.Text()
-		if capture != nil {
+		for _, capture := range captures {
 			capture.WriteString(line + "\n")
 		}
 		slog.Debug("gomoufox sidecar", "stderr", policy.Redact(line))
 	}
 	if err := scanner.Err(); err != nil {
 		text := err.Error()
-		if capture != nil {
+		for _, capture := range captures {
 			capture.WriteString(text + "\n")
 		}
 		slog.Debug("gomoufox sidecar", "stderr", policy.Redact(text))
@@ -374,6 +421,7 @@ type startupDiagnostics struct {
 	limit     int
 	buf       []byte
 	truncated bool
+	tail      bool
 }
 
 func newStartupDiagnostics(limit int) *startupDiagnostics {
@@ -386,6 +434,20 @@ func (d *startupDiagnostics) WriteString(text string) {
 	}
 	d.mu.Lock()
 	defer d.mu.Unlock()
+	if d.tail {
+		if len(text) >= d.limit {
+			d.truncated = d.truncated || len(d.buf)+len(text) > d.limit
+			d.buf = append(d.buf[:0], text[len(text)-d.limit:]...)
+		} else {
+			overflow := len(d.buf) + len(text) - d.limit
+			if overflow > 0 {
+				d.buf = append(d.buf[:0], d.buf[overflow:]...)
+				d.truncated = true
+			}
+			d.buf = append(d.buf, text...)
+		}
+		return
+	}
 	remaining := d.limit - len(d.buf)
 	if remaining <= 0 {
 		d.truncated = true
@@ -411,7 +473,11 @@ func (d *startupDiagnostics) Excerpt() string {
 		return ""
 	}
 	if truncated {
-		text += "\n... <truncated>"
+		if d.tail {
+			text = "... <truncated>\n" + text
+		} else {
+			text += "\n... <truncated>"
+		}
 	}
 	return text
 }

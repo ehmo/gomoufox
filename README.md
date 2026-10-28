@@ -5,7 +5,7 @@
 # gomoufox
 
 <p align="center">
-  <img alt="Go 1.26.9" src="https://img.shields.io/badge/Go-1.26.9-00ADD8?logo=go&logoColor=white">
+  <img alt="Go 1.26.10" src="https://img.shields.io/badge/Go-1.26.10-00ADD8?logo=go&logoColor=white">
   <img alt="MIT license" src="https://img.shields.io/badge/license-MIT-2ea44f">
   <img alt="coverage 100%" src="https://img.shields.io/badge/coverage-100%25-2ea44f">
   <img alt="MCP ready" src="https://img.shields.io/badge/MCP-ready-7c3aed">
@@ -521,8 +521,8 @@ Camoufox without producing Go-only failures?
 
 Latest checked evidence:
 [docs/BENCHMARKS.md](docs/BENCHMARKS.md),
-[8-site baseline](docs/benchmarks/2026-09-08-full-streamed.json), and
-[100-site node-direct artifact](docs/benchmarks/2026-10-12-node-direct-readiness.json).
+[8-site baseline](docs/benchmarks/2026-10-28-full.json), and
+[100-site node-direct artifact](docs/benchmarks/2026-10-28-node-direct-readiness.json).
 Both runtimes in the extended comparison used this
 [shared Linux persona](docs/personas/2026-09-08-node-direct-readiness.json).
 The current figures include each complete harness process tree: the runner,
@@ -534,31 +534,30 @@ Earlier Python-sidecar results remain in the
 
 | Runtime | Passed | Blocked | Failed | Wall ms | Peak RSS MiB | Peak CPU % | Report tokens |
 |---|---:|---:|---:|---:|---:|---:|---:|
-| Python Camoufox | 90 | 10 | 0 | 346,618 | 2,671.0 | 493.9 | 83,179 |
-| gomoufox, node-direct Go | 90 | 10 | 0 | 347,170 | 3,063.5 | 584.0 | 13,127 |
+| Python Camoufox | 87 | 13 | 0 | 345,438 | 2,686.4 | 478.3 | 83,172 |
+| gomoufox, node-direct Go | 89 | 11 | 0 | 346,182 | 2,548.7 | 451.0 | 13,192 |
 
 Outcome counts come from the second loop; wall time averages both loops, and
-resource figures use the larger peak. Both loops matched all 100 outcomes.
+resource figures use the larger peak.
 
 Latest extended validation: 100 targets, 60s timeout, `commit` wait, 3s settle,
 no screenshots, reused browser, compact Go report, 0s extra load-state wait, and
 250,000-byte classification cap. The artifact contains two alternating loops.
-gomoufox passed 90, blocked 10, failed 0. Python Camoufox passed 90, blocked 10,
-failed 0. The run had 0 persistent Go-only regressions and 0 paired outcome
+gomoufox passed 89, blocked 11, failed 0. Python Camoufox passed 87, blocked 13,
+failed 0. The run had 0 persistent Go-only regressions and 2 paired outcome
 mismatches. See the
-[extended artifact](docs/benchmarks/2026-10-12-node-direct-readiness.json).
+[extended artifact](docs/benchmarks/2026-10-28-node-direct-readiness.json).
 
 | Ratio | node-direct Go / Python Camoufox |
 |---|---:|
 | Wall time | 1.002 |
-| Peak RSS | 1.147 |
-| Peak CPU | 1.182 |
-| Report tokens | 0.158 |
+| Peak RSS | 0.949 |
+| Peak CPU | 0.943 |
+| Report tokens | 0.159 |
 
 The release evidence check passed its timing, resource and report-size limits.
-The separate node-direct promotion comparison remains blocked. Failed criteria:
-`peak_rss_beats_python`, `peak_cpu_beats_python`.
-The promotion RSS and CPU criteria each require a ratio at or below 0.95.
+The node-direct benchmark reports `candidate`; all its recorded criteria passed.
+Its RSS and CPU criteria each require a ratio at or below 0.95.
 Consumer no-Python readiness is checked separately. Treat a report-token ratio
 above 0.50 as a regression.
 Release gates use `--unsafe-direct-network`, block reproducible outcome mismatch,

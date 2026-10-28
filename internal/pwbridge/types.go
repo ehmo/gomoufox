@@ -194,6 +194,7 @@ type PDFOptions struct {
 
 type ElementHandle interface {
 	Raw() any
+	Dispose() error
 }
 
 type RouteHandler func(Route)
