@@ -19,6 +19,14 @@ import (
 // TestLiveMCPLongLivedPagination uses the MCP handlers and managed runtime.
 // Heap samples describe the Node sidecar, not the browser or Go process.
 func TestLiveMCPLongLivedPagination(t *testing.T) {
+	testLiveMCPPagination(t, 0)
+}
+
+func TestLiveMCPNetworkPagination(t *testing.T) {
+	testLiveMCPPagination(t, 128)
+}
+
+func testLiveMCPPagination(t *testing.T, requestsPerPage int) {
 	skipUnlessLiveMCP(t)
 	dir := os.Getenv("GOMOUFOX_MEMORY_EVIDENCE")
 	if dir == "" {
@@ -41,6 +49,13 @@ const collectGarbage = require('vm').runInNewContext('gc');
 const path = require('path');
 const root = path.dirname(require.resolve('playwright-core', {paths: [path.dirname(process.argv[1])]}));
 const {ElementHandleDispatcher} = require(path.join(root, 'lib/server/dispatchers/elementHandlerDispatcher.js'));
+const {DispatcherConnection} = require(path.join(root, 'lib/server/dispatchers/dispatcher.js'));
+let connection;
+const register = DispatcherConnection.prototype.registerDispatcher;
+DispatcherConnection.prototype.registerDispatcher = function(dispatcher) {
+  connection = new WeakRef(this);
+  return register.call(this, dispatcher);
+};
 let last = '', busy = false;
 setInterval(() => {
   if (busy || !fs.existsSync(%s)) return;
@@ -50,7 +65,9 @@ setInterval(() => {
   const checkpoint = JSON.parse(request);
   const sample = () => {
     const elementHandles = checkpoint.gc ? v8.queryObjects(ElementHandleDispatcher) : -1;
-    fs.appendFileSync(%s, JSON.stringify({checkpoint: checkpoint.cycle, pid: process.pid, elementHandles, ...process.memoryUsage(), ...v8.getHeapStatistics()}) + '\n', {mode: 0o600});
+    const dispatcherCounts = {};
+    for (const [bucket, entries] of connection?.deref()?._dispatchersByBucket || []) dispatcherCounts[bucket] = entries.size;
+    fs.appendFileSync(%s, JSON.stringify({checkpoint: checkpoint.cycle, pid: process.pid, elementHandles, dispatcherCounts, ...process.memoryUsage(), ...v8.getHeapStatistics()}) + '\n', {mode: 0o600});
     busy = false;
   };
   if (checkpoint.gc) collectGarbage();
@@ -79,18 +96,27 @@ setInterval(() => {
 			http.Error(w, "missing login", http.StatusUnauthorized)
 			return
 		}
-		fmt.Fprint(w, `<!doctype html><title>Library fixture</title><style>#rows {height:600px;overflow:auto}</style><main><p id="status"></p><button id="select">Select All</button><button id="deliver">Deliver to device</button><div id="rows"></div><dialog id="delivery"><input id="device" type="checkbox"><button id="apply">Make Changes</button></dialog><dialog id="result"><p>Request to deliver title(s) has been sent.</p><button id="close">Close</button></dialog><button id="next">Next page</button></main><script>
+		if r.URL.Path == "/asset" {
+			w.Header().Set("Content-Type", "text/plain")
+			w.Header().Set("X-Fixture-Padding", strings.Repeat("x", 4096))
+			fmt.Fprint(w, "asset")
+			return
+		}
+		page := `<!doctype html><title>Library fixture</title><style>#rows {height:600px;overflow:auto}</style><main><p id="status"></p><button id="select">Select All</button><button id="deliver">Deliver to device</button><div id="rows"></div><dialog id="delivery"><input id="device" type="checkbox"><button id="apply">Make Changes</button></dialog><dialog id="result"><p>Request to deliver title(s) has been sent.</p><button id="close">Close</button></dialog><button id="next">Next page</button></main><script>
 let cycle=1;
-function render() {
+async function render() {
  document.querySelector('#status').textContent='Page '+cycle+' authenticated='+localStorage.getItem('fixture-auth');
  document.querySelector('#rows').innerHTML=Array.from({length:2000},(_,i)=>'<article><span>'+('row '+i+' ').repeat(40)+'</span><button id="item'+i+'">Item '+i+'</button></article>').join('');
+ await Promise.all(Array.from({length:REQUESTS_PER_PAGE},(_,i)=>fetch('/asset?cycle='+cycle+'&item='+i).then(response=>response.text())));
+ document.querySelector('#status').dataset.ready=String(cycle);
 }
 document.querySelector('#select').onclick=()=>document.querySelector('#status').textContent+=' Selected 25';
 document.querySelector('#deliver').onclick=()=>document.querySelector('#delivery').showModal();
 document.querySelector('#apply').onclick=()=>{document.querySelector('#delivery').close();document.querySelector('#result').showModal();};
 document.querySelector('#close').onclick=()=>document.querySelector('#result').close();
 document.querySelector('#next').onclick=()=>{cycle++;render();};
-render();</script>`)
+render();</script>`
+		fmt.Fprint(w, strings.ReplaceAll(page, "REQUESTS_PER_PAGE", fmt.Sprint(requestsPerPage)))
 	}))
 	defer fixture.Close()
 	cfg := Config{Policy: policy.DefaultConfig(), SessionDir: t.TempDir()}
@@ -109,9 +135,10 @@ render();</script>`)
 		return res.Payload
 	}
 	type heapSample struct {
-		Checkpoint int    `json:"checkpoint"`
-		HeapUsed   uint64 `json:"heapUsed"`
-		Handles    int    `json:"elementHandles"`
+		Checkpoint       int            `json:"checkpoint"`
+		HeapUsed         uint64         `json:"heapUsed"`
+		Handles          int            `json:"elementHandles"`
+		DispatcherCounts map[string]int `json:"dispatcherCounts"`
 	}
 	sample := func(cycle int, gc bool) heapSample {
 		t.Helper()
@@ -148,6 +175,7 @@ render();</script>`)
 	}
 	baseline := sample(0, true)
 	for cycle := 1; cycle <= 41; cycle++ {
+		call("browser_wait_for", map[string]any{"selector": fmt.Sprintf("#status[data-ready='%d']", cycle), "timeout_ms": 30000})
 		call("browser_snapshot", map[string]any{"interactive_only": true, "max_elements": 250})
 		call("browser_click", map[string]any{"selector": "#select"})
 		status := call("browser_get_content", map[string]any{"selector": "#status", "format": "text", "max_bytes": 8000})
@@ -168,6 +196,13 @@ render();</script>`)
 			call("browser_click", map[string]any{"selector": "#next"})
 		}
 		retained := sample(cycle, cycle == 41)
+		if requestsPerPage > 0 {
+			for _, bucket := range []string{"Request", "Response"} {
+				if count := retained.DispatcherCounts[bucket]; count > 512+requestsPerPage {
+					t.Fatalf("cycle %d retained %d %s dispatchers", cycle, count, bucket)
+				}
+			}
+		}
 		if cycle == 41 && retained.HeapUsed > baseline.HeapUsed+16*1024*1024 {
 			t.Errorf("Node retained heap grew by %d bytes after 41 cycles", retained.HeapUsed-baseline.HeapUsed)
 		}

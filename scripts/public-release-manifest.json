@@ -47,7 +47,9 @@
     "docs/personas/2026-09-08-full.json",
     "docs/personas/2026-09-08-node-direct-readiness.json",
     "docs/personas/2026-10-28-full.json",
-    "docs/benchmarks/2026-10-28-node-direct-readiness.json"
+    "docs/benchmarks/2026-10-28-node-direct-readiness.json",
+    "docs/benchmarks/2026-10-28-network-retention-full.json",
+    "docs/benchmarks/2026-10-28-network-retention-extended.json"
   ],
   "scripts": [
     "audit-public-release.py",

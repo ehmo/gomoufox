@@ -1,5 +1,20 @@
 # Changelog
 
+## v0.1.33
+
+- Collect older completed request and response dispatchers in node-direct
+  before their retained metadata exhausts the sidecar heap. The new collector
+  targets 512 completed requests and preserves in-flight requests, active
+  protocol operations and objects under construction, subject to upstream
+  dispatcher limits. The 64 MiB old-space limit is unchanged.
+- Add a 41-cycle network-heavy MCP regression that reproduced the OOM before
+  the change and passes in headless and headful mode afterward.
+- Refresh the full and alternating 100-site Go/Python benchmark evidence.
+
+The authenticated Amazon workflow completed 41 pages without OOM after the
+change. Pointer stalls still required keyboard controls, and retained object
+counts still grew. Those limitations remain under investigation.
+
 ## v0.1.32
 
 - Dispose remote element handles after MCP selector and text waits so repeated

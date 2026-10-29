@@ -300,6 +300,7 @@ func TestRuntimeLaunchServerPinsIPv4Loopback(t *testing.T) {
   async launchServer(options) {
     if (options.host !== "127.0.0.1")
       throw new Error("launch server did not pin IPv4 loopback");
+    require("./server/dispatchers/dispatcher.js").checkNetworkRetention();
     return {
       wsEndpoint: () => "ws://" + options.host + ":4321/token",
       close: async () => {}
@@ -307,6 +308,70 @@ func TestRuntimeLaunchServerPinsIPv4Loopback(t *testing.T) {
   }
 };`
 	if err := os.WriteFile(filepath.Join(internalDir, "browserServerImpl.js"), []byte(stub), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	dispatcherDir := filepath.Join(internalDir, "server", "dispatchers")
+	if err := os.MkdirAll(dispatcherDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	dispatcherStub := `const assert = require("assert");
+class DispatcherConnection {
+  constructor() {
+    this._dispatchersByBucket = new Map([["Request", new Set()]]);
+    this._dispatcherByGuid = new Map();
+    this.collected = [];
+  }
+  maybeDisposeStaleDispatchers(bucket) { this.collected.push(bucket); }
+}
+exports.DispatcherConnection = DispatcherConnection;
+exports.checkNetworkRetention = () => {
+  const connection = new DispatcherConnection();
+  const disposed = [];
+  const add = (guid, timing, failure = null, active = false, childActive = false) => {
+    const dispatcher = {
+      _object: {_responseEndTiming: timing, _failureText: failure},
+      _activeProgressControllers: new Set(active ? [1] : []),
+      _dispatchers: new Map(childActive ? [["response", {
+        _activeProgressControllers: new Set([1]), _dispatchers: new Map()
+      }]] : []),
+      _dispose(reason) {
+        assert.equal(reason, "gc");
+        disposed.push(guid);
+        connection._dispatchersByBucket.get("Request").delete(guid);
+        connection._dispatcherByGuid.delete(guid);
+      }
+    };
+    connection._dispatchersByBucket.get("Request").add(guid);
+    connection._dispatcherByGuid.set(guid, dispatcher);
+  };
+  add("inflight", -1);
+  add("active-request", 1, null, true);
+  add("active-response", 1, null, false, true);
+  add("failed", -1, "failed");
+  for (let i = 0; i < 600; i++) add("completed-" + i, 1);
+  connection.maybeDisposeStaleDispatchers("Response");
+  assert.equal(connection._dispatchersByBucket.get("Request").size, 513);
+  assert(disposed.includes("failed"));
+  for (const guid of ["inflight", "active-request", "active-response"])
+    assert(connection._dispatcherByGuid.has(guid), guid + " was evicted");
+  const count = disposed.length;
+  connection.maybeDisposeStaleDispatchers("ElementHandle");
+  assert.equal(disposed.length, count);
+  assert.deepEqual(connection.collected, ["Response", "ElementHandle"]);
+  connection._dispatchersByBucket.set("Request", new Set());
+  connection._dispatcherByGuid.clear();
+  for (let i = 0; i < 600; i++) add("busy-" + i, 1, null, true);
+  add("constructing-request", 1);
+  connection.maybeDisposeStaleDispatchers("Request");
+  assert(connection._dispatcherByGuid.has("constructing-request"));
+  connection._dispatchersByBucket.set("Response", new Set(["constructing-response"]));
+  connection._dispatcherByGuid.set("constructing-response", {
+    _parent: connection._dispatcherByGuid.get("constructing-request")
+  });
+  connection.maybeDisposeStaleDispatchers("Response");
+  assert(connection._dispatcherByGuid.has("constructing-request"));
+};`
+	if err := os.WriteFile(filepath.Join(dispatcherDir, "dispatcher.js"), []byte(dispatcherStub), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	cmd := exec.Command(node, launchScript)

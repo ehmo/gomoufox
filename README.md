@@ -221,6 +221,12 @@ Use the library when your program owns the browser lifecycle. Use the CLI when a
 shell script needs a page snapshot, screenshot, or browser-context fetch. Use MCP
 when an agent needs browser tools over stdio or HTTP.
 
+The node-direct runtime targets a history of 512 completed network requests,
+plus requests still in flight or serving a protocol call. This collector
+preserves those requests; upstream dispatcher limits still apply. Older request
+and response handles can be reclaimed. Copy metadata and consume response bodies
+promptly instead of retaining those handles for the session's lifetime.
+
 HAR recording is a context option and finalizes on `Context.Close` (or when its
 owning page closes):
 
@@ -521,8 +527,8 @@ Camoufox without producing Go-only failures?
 
 Latest checked evidence:
 [docs/BENCHMARKS.md](docs/BENCHMARKS.md),
-[8-site baseline](docs/benchmarks/2026-10-28-full.json), and
-[100-site node-direct artifact](docs/benchmarks/2026-10-28-node-direct-readiness.json).
+[8-site baseline](docs/benchmarks/2026-10-28-network-retention-full.json), and
+[100-site node-direct artifact](docs/benchmarks/2026-10-28-network-retention-extended.json).
 Both runtimes in the extended comparison used this
 [shared Linux persona](docs/personas/2026-09-08-node-direct-readiness.json).
 The current figures include each complete harness process tree: the runner,
@@ -534,8 +540,8 @@ Earlier Python-sidecar results remain in the
 
 | Runtime | Passed | Blocked | Failed | Wall ms | Peak RSS MiB | Peak CPU % | Report tokens |
 |---|---:|---:|---:|---:|---:|---:|---:|
-| Python Camoufox | 87 | 13 | 0 | 345,438 | 2,686.4 | 478.3 | 83,172 |
-| gomoufox, node-direct Go | 89 | 11 | 0 | 346,182 | 2,548.7 | 451.0 | 13,192 |
+| Python Camoufox | 88 | 12 | 0 | 348,015 | 3,072.3 | 608.8 | 83,268 |
+| gomoufox, node-direct Go | 86 | 14 | 0 | 349,292 | 2,863.0 | 380.6 | 13,210 |
 
 Outcome counts come from the second loop; wall time averages both loops, and
 resource figures use the larger peak.
@@ -543,16 +549,16 @@ resource figures use the larger peak.
 Latest extended validation: 100 targets, 60s timeout, `commit` wait, 3s settle,
 no screenshots, reused browser, compact Go report, 0s extra load-state wait, and
 250,000-byte classification cap. The artifact contains two alternating loops.
-gomoufox passed 89, blocked 11, failed 0. Python Camoufox passed 87, blocked 13,
-failed 0. The run had 0 persistent Go-only regressions and 2 paired outcome
+gomoufox passed 86, blocked 14, failed 0. Python Camoufox passed 88, blocked 12,
+failed 0. The run had 0 persistent Go-only regressions and 4 paired outcome
 mismatches. See the
-[extended artifact](docs/benchmarks/2026-10-28-node-direct-readiness.json).
+[extended artifact](docs/benchmarks/2026-10-28-network-retention-extended.json).
 
 | Ratio | node-direct Go / Python Camoufox |
 |---|---:|
-| Wall time | 1.002 |
-| Peak RSS | 0.949 |
-| Peak CPU | 0.943 |
+| Wall time | 1.004 |
+| Peak RSS | 0.932 |
+| Peak CPU | 0.625 |
 | Report tokens | 0.159 |
 
 The release evidence check passed its timing, resource and report-size limits.

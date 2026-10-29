@@ -849,6 +849,46 @@ const runtimeLaunchServerJS = `"use strict";
 const path = require("path");
 const playwrightRoot = path.dirname(require.resolve("playwright-core"));
 const { BrowserServerLauncherImpl } = require(path.join(playwrightRoot, "lib", "browserServerImpl.js"));
+const { DispatcherConnection } = require(path.join(playwrightRoot, "lib", "server", "dispatchers", "dispatcher.js"));
+
+// The upstream 10,000-request cache can exhaust the sidecar's 64 MiB heap.
+// Disposing a Request also disposes its Response through the protocol's GC path.
+const completedRequestLimit = 512;
+const collectDispatchers = DispatcherConnection.prototype.maybeDisposeStaleDispatchers;
+function hasActiveOperation(dispatcher) {
+  if (dispatcher._activeProgressControllers.size) return true;
+  for (const child of dispatcher._dispatchers.values()) {
+    if (hasActiveOperation(child)) return true;
+  }
+  return false;
+}
+DispatcherConnection.prototype.maybeDisposeStaleDispatchers = function(bucket) {
+  if (bucket === "Request" || bucket === "Response") {
+    const requests = this._dispatchersByBucket.get("Request");
+    if (requests && requests.size > completedRequestLimit) {
+      // This hook runs inside the newest dispatcher's constructor.
+      const newestGuid = Array.from(this._dispatchersByBucket.get(bucket) || []).pop();
+      const newest = this._dispatcherByGuid.get(newestGuid);
+      const constructingRequest = bucket === "Request" ? newest : newest?._parent;
+      let completed = 0;
+      const candidates = [];
+      for (const guid of requests) {
+        const dispatcher = this._dispatcherByGuid.get(guid);
+        if (!dispatcher) continue;
+        const request = dispatcher._object;
+        if (request._responseEndTiming < 0 && request._failureText === null) continue;
+        completed++;
+        if (dispatcher !== constructingRequest && !hasActiveOperation(dispatcher)) candidates.push(dispatcher);
+      }
+      for (const dispatcher of candidates) {
+        if (completed <= completedRequestLimit) break;
+        dispatcher._dispose("gc");
+        completed--;
+      }
+    }
+  }
+  return collectDispatchers.call(this, bucket);
+};
 
 async function main() {
   let input = "";
