@@ -103,7 +103,7 @@ func FindPython(override string) (string, error) {
 	if env := os.Getenv("GOMOUFOX_PYTHON"); env != "" {
 		candidates = append(candidates, env)
 	}
-	candidates = append(candidates, "python3", "python", "python3.13", "python3.12", "python3.11", "python3.10", "python3.9")
+	candidates = append(candidates, "python3", "python", "python3.15", "python3.14", "python3.13", "python3.12")
 	for _, candidate := range candidates {
 		path, err := exec.LookPath(candidate)
 		if err != nil {
@@ -113,7 +113,7 @@ func FindPython(override string) (string, error) {
 			return path, nil
 		}
 	}
-	return "", fmt.Errorf("gomoufox: Python 3.9+ not found")
+	return "", fmt.Errorf("gomoufox: Python 3.12 through 3.15 not found; install a supported interpreter or select it with --python or GOMOUFOX_PYTHON")
 }
 
 func EnsureVenv(ctx context.Context, pythonBin, venvDir string) error {
@@ -152,6 +152,7 @@ func compatibleInstalled(ctx context.Context, venvDir string) bool {
 }
 
 func checkPythonVersion(path string) error {
-	cmd := exec.Command(path, "-c", "import sys; raise SystemExit(0 if sys.version_info >= (3, 9) else 1)")
+	// Keep discovery within the Python range validated against the embedded wheel locks.
+	cmd := exec.Command(path, "-c", "import sys; raise SystemExit(0 if (3, 12) <= sys.version_info < (3, 16) else 1)")
 	return cmd.Run()
 }

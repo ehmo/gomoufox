@@ -1480,6 +1480,9 @@ func reportForGate(rep report, allowedBlocked, allowedFailed map[string]bool) re
 		filtered.Results = append(filtered.Results, result)
 	}
 	filtered.Summary = summarize(filtered.Results)
+	unfiltered := summarize(rep.Results)
+	filtered.Summary.PeakRSSMiB = max(rep.Summary.PeakRSSMiB, unfiltered.PeakRSSMiB)
+	filtered.Summary.PeakCPUPercent = max(rep.Summary.PeakCPUPercent, unfiltered.PeakCPUPercent)
 	return filtered
 }
 

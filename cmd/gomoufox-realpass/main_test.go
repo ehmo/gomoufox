@@ -718,6 +718,89 @@ func TestEvaluateReportGateThresholds(t *testing.T) {
 	}
 }
 
+func TestRunCompareAllowedOutcomesKeepAbsoluteResourceCaps(t *testing.T) {
+	for _, outcome := range []string{"blocked", "failed"} {
+		for _, source := range []string{"results", "summary"} {
+			for _, tc := range []struct {
+				name      string
+				resources resourceSummary
+				want      string
+			}{
+				{"rss", resourceSummary{PeakRSSMiB: 6001}, "peak RSS 6001.0 MiB > max 6000.0 MiB"},
+				{"cpu", resourceSummary{MaxCPUPercent: 901}, "peak CPU 901.0% > max 900.0%"},
+				{"boundary", resourceSummary{PeakRSSMiB: 6000, MaxCPUPercent: 900}, ""},
+			} {
+				t.Run(outcome+"/"+source+"/"+tc.name, func(t *testing.T) {
+					rep := report{Results: []targetResult{
+						{Name: "example", Outcome: "passed"},
+						{Name: "npmjs", Outcome: outcome, Resources: tc.resources},
+					}}
+					if source == "summary" {
+						rep.Summary = summarize(rep.Results)
+						rep.Results[1].Resources = resourceSummary{}
+					}
+					path := filepath.Join(t.TempDir(), "report.json")
+					writeReportForTest(t, path, rep)
+					code, stdout, stderr := runCompareForTest(t,
+						"--go", path, "--python", path,
+						"--require-outcome-match", "--expect-passed", "1",
+						"--max-blocked", "0", "--max-failed", "0",
+						"--allow-"+outcome+"-target", "npmjs",
+						"--max-rss-mib", "6000", "--max-cpu-percent", "900",
+					)
+					if tc.want == "" {
+						if code != 0 || !strings.Contains(stdout, "compare: ok") || stderr != "" {
+							t.Fatalf("boundary code=%d stdout=%q stderr=%q", code, stdout, stderr)
+						}
+					} else if code != 1 || !strings.Contains(stderr, "go: "+tc.want) || !strings.Contains(stderr, "python: "+tc.want) {
+						t.Fatalf("resource cap code=%d stdout=%q stderr=%q", code, stdout, stderr)
+					}
+				})
+			}
+		}
+	}
+}
+
+func TestRunCompareAllowedBlockStillRejectsDriftMissingAndFailure(t *testing.T) {
+	for _, other := range []string{"passed", "failed", "missing"} {
+		for _, runtime := range []string{"go", "python"} {
+			t.Run(runtime+"/"+other, func(t *testing.T) {
+				dir := t.TempDir()
+				paths := map[string]string{"go": filepath.Join(dir, "go.json"), "python": filepath.Join(dir, "python.json")}
+				for name, path := range paths {
+					result := []targetResult{{Name: "npmjs", Outcome: "blocked"}}
+					if name == runtime {
+						if other == "missing" {
+							result = nil
+						} else {
+							result[0].Outcome = other
+						}
+					}
+					writeReportForTest(t, path, report{Summary: summarize(result), Results: result})
+				}
+				code, _, stderr := runCompareForTest(t,
+					"--go", paths["go"], "--python", paths["python"],
+					"--allow-blocked-target", "npmjs", "--require-outcome-match",
+					"--require-target", "npmjs", "--max-failed", "0",
+				)
+				if code != 1 || !strings.Contains(stderr, "outcome mismatch npmjs:") {
+					t.Fatalf("allowed-block drift code=%d stderr=%q", code, stderr)
+				}
+			})
+		}
+	}
+	path := filepath.Join(t.TempDir(), "report.json")
+	results := []targetResult{{Name: "npmjs", Outcome: "failed"}}
+	writeReportForTest(t, path, report{Summary: summarize(results), Results: results})
+	code, _, stderr := runCompareForTest(t,
+		"--go", path, "--python", path, "--allow-blocked-target", "npmjs",
+		"--require-outcome-match", "--max-failed", "0",
+	)
+	if code != 1 || !strings.Contains(stderr, "go: failed 1 > max 0") || !strings.Contains(stderr, "python: failed 1 > max 0") {
+		t.Fatalf("allowed-block shared failure code=%d stderr=%q", code, stderr)
+	}
+}
+
 func TestRunCompareReportsFailsOnOutcomeDriftAndThresholds(t *testing.T) {
 	dir := t.TempDir()
 	goPath := filepath.Join(dir, "go.json")

@@ -117,7 +117,7 @@ func runtimeRecovery(reason, executable, dir, runtimeName string) RuntimeRecover
 	case "download_failed":
 		r.Hint = "A pinned runtime download failed. Check network access and upstream asset availability before retrying the same installation; do not substitute an unverified version."
 	case "missing_python":
-		r.Hint = "The Python runtime needs Python 3.9 or newer. Install it or select its executable with --python, then retry."
+		r.Hint = "The locked Python runtime needs Python 3.12 through 3.15. Install a supported interpreter or select its executable with --python or GOMOUFOX_PYTHON, then retry."
 	case "dependency_install_failed":
 		r.Hint = "The locked Python dependency installation failed. Check the reported package-index or interpreter error before retrying; keep the hash-locked requirements."
 	case "permission_denied":
@@ -148,7 +148,7 @@ func installationFailureReason(err error) string {
 		return "fetch_disabled"
 	case strings.Contains(message, "unsupported for"), strings.Contains(message, "no pinned playwright node.js asset for"):
 		return "unsupported_platform"
-	case strings.Contains(message, "python 3.9+ not found"):
+	case strings.Contains(message, "python 3.12 through 3.15 not found"):
 		return "missing_python"
 	case strings.Contains(message, "checksum"), strings.Contains(message, "failed manifest verification"):
 		return "integrity_mismatch"

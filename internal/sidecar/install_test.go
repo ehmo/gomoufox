@@ -245,6 +245,69 @@ exit 1
 	}
 }
 
+func TestCheckPythonVersionMatchesLockedWheels(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("fake Python executable is unix-only")
+	}
+	realPython, err := exec.LookPath("python3")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, version := range []struct {
+		minor int
+		ok    bool
+	}{{8, false}, {9, false}, {10, false}, {11, false}, {12, true}, {13, true}, {14, true}, {15, true}, {16, false}} {
+		t.Run("3."+strconv.Itoa(version.minor), func(t *testing.T) {
+			python := fakePython(t, "#!"+realPython+"\nimport sys\nsys.version_info = (3, "+strconv.Itoa(version.minor)+", 0)\nexec(sys.argv[2])\n")
+			if err := checkPythonVersion(python); (err == nil) != version.ok {
+				t.Fatalf("Python 3.%d accepted = %v, want %v", version.minor, err == nil, version.ok)
+			}
+		})
+	}
+}
+
+func TestFindPythonSkipsUnsupportedDefaultInterpreter(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("fake Python executable is unix-only")
+	}
+	realPython, err := exec.LookPath("python3")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name       string
+		candidates map[string]int
+		want       string
+	}{
+		{"supported default", map[string]int{"python3": 15, "python3.14": 14}, "python3"},
+		{"new default", map[string]int{"python3": 16, "python": 11, "python3.15": 15, "python3.14": 14}, "python3.15"},
+		{"3.14 fallback", map[string]int{"python3": 16, "python3.14": 14}, "python3.14"},
+		{"older fallback", map[string]int{"python3": 16, "python3.13": 13}, "python3.13"},
+		{"minimum fallback", map[string]int{"python3": 16, "python3.12": 12}, "python3.12"},
+		{"unsupported only", map[string]int{"python3": 16, "python": 11}, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			for name, minor := range tc.candidates {
+				script := "#!" + realPython + "\nimport sys\nsys.version_info = (3, " + strconv.Itoa(minor) + ", 0)\nexec(sys.argv[2])\n"
+				if err := os.WriteFile(filepath.Join(dir, name), []byte(script), 0700); err != nil {
+					t.Fatal(err)
+				}
+			}
+			t.Setenv("PATH", dir)
+			t.Setenv("GOMOUFOX_PYTHON", "")
+			got, err := FindPython("")
+			if tc.want == "" {
+				if got != "" || err == nil || !strings.Contains(err.Error(), "Python 3.12 through 3.15") || !strings.Contains(err.Error(), "GOMOUFOX_PYTHON") {
+					t.Fatalf("unsupported interpreters: path=%q err=%v", got, err)
+				}
+			} else if err != nil || got != filepath.Join(dir, tc.want) {
+				t.Fatalf("FindPython = %q, %v; want %s", got, err, tc.want)
+			}
+		})
+	}
+}
+
 func TestRunInstallCommandVerbose(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("shell command is unix-only")
@@ -603,7 +666,7 @@ func TestEnsureInstalledPropagatesLocalFailureBranches(t *testing.T) {
 
 	t.Setenv("PATH", t.TempDir())
 	t.Setenv("GOMOUFOX_PYTHON", "")
-	if err := EnsureInstalled(context.Background(), InstallOptions{VenvDir: t.TempDir(), PythonBin: "missing-python", Runtime: RuntimePython}); err == nil || !strings.Contains(err.Error(), "Python 3.9") {
+	if err := EnsureInstalled(context.Background(), InstallOptions{VenvDir: t.TempDir(), PythonBin: "missing-python", Runtime: RuntimePython}); err == nil || !strings.Contains(err.Error(), "Python 3.12 through 3.15") {
 		t.Fatalf("python discovery err = %v", err)
 	}
 
@@ -682,7 +745,7 @@ func TestInstallLifecycleAdditionalLocalBranchEdges(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("PATH", t.TempDir())
 	t.Setenv("GOMOUFOX_PYTHON", "")
-	if err := EnsureInstalled(context.Background(), InstallOptions{Runtime: RuntimePython}); err == nil || !strings.Contains(err.Error(), "Python 3.9") {
+	if err := EnsureInstalled(context.Background(), InstallOptions{Runtime: RuntimePython}); err == nil || !strings.Contains(err.Error(), "Python 3.12 through 3.15") {
 		t.Fatalf("default venv install err = %v", err)
 	}
 

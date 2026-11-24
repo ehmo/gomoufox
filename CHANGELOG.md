@@ -1,5 +1,14 @@
 # Changelog
 
+## v0.1.34
+
+- Keep realpass memory and CPU caps when a blocked or failed outcome is allowed.
+- Refresh the hash-locked Python dependencies, including PyYAML 6.0.4, so
+  Python 3.15 can install the legacy sidecar used by interactive `open`.
+- Limit interpreter discovery to Python 3.12 through 3.15, add versioned
+  fallbacks and report the supported range when no interpreter is available.
+- Build with Go 1.26.11 to fix `GO-2026-6859` in the standard HTTP library.
+
 ## v0.1.33
 
 - Collect older completed request and response dispatchers in node-direct

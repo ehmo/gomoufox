@@ -52,7 +52,7 @@ func TestInstallationFailureReasons(t *testing.T) {
 		{context.Canceled, "canceled"}, {context.DeadlineExceeded, "timeout"}, {gomoufox.ErrTimeout, "timeout"},
 		{os.ErrPermission, "permission_denied"}, {errors.New("mkdir: permission denied"), "permission_denied"},
 		{errors.New("fetch is disabled"), "fetch_disabled"}, {errors.New("runtime assets unsupported for windows/arm64"), "unsupported_platform"},
-		{errors.New("Python 3.9+ not found"), "missing_python"},
+		{errors.New("Python 3.12 through 3.15 not found"), "missing_python"},
 		{errors.New("download archive checksum mismatch synthetic-private-marker"), "integrity_mismatch"},
 		{errors.New("download pinned driver: HTTP 404 Not Found"), "download_failed"},
 		{errors.New("pip install locked requirements failed"), "dependency_install_failed"},
@@ -62,6 +62,9 @@ func TestInstallationFailureReasons(t *testing.T) {
 			result := installResult(InstallRequest{Dir: t.TempDir()}, tc.err)
 			if result.Recovery.Reason != tc.reason {
 				t.Fatalf("reason = %#v", result.Recovery)
+			}
+			if tc.reason == "missing_python" && (!strings.Contains(result.Recovery.Hint, "Python 3.12 through 3.15") || !strings.Contains(result.Recovery.Hint, "GOMOUFOX_PYTHON")) {
+				t.Fatalf("Python recovery hint = %q", result.Recovery.Hint)
 			}
 			encoded, _ := json.Marshal(result)
 			if bytes.Contains(encoded, []byte("synthetic-private-marker")) {

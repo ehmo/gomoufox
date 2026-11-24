@@ -5,7 +5,7 @@
 # gomoufox
 
 <p align="center">
-  <img alt="Go 1.26.10" src="https://img.shields.io/badge/Go-1.26.10-00ADD8?logo=go&logoColor=white">
+  <img alt="Go 1.26.11" src="https://img.shields.io/badge/Go-1.26.11-00ADD8?logo=go&logoColor=white">
   <img alt="MIT license" src="https://img.shields.io/badge/license-MIT-2ea44f">
   <img alt="coverage 100%" src="https://img.shields.io/badge/coverage-100%25-2ea44f">
   <img alt="MCP ready" src="https://img.shields.io/badge/MCP-ready-7c3aed">
@@ -170,6 +170,13 @@ Python-sidecar path. That path uses hash-locked wheels and the same exact-tag,
 manifest-verified browser tree and checksum-pinned Playwright driver as
 node-direct. It does not use Camoufox's moving global browser download, and
 fails closed on a missing package or hash mismatch.
+
+The locked Python sidecar requires Python 3.12 through 3.15. Automatic
+selection skips unsupported interpreters, including Python 3.16, and checks
+`python3`, `python`, then `python3.15`, `python3.14`, `python3.13` and `python3.12`.
+Use `gomoufox install --runtime python --python /path/to/python3.14` or
+`GOMOUFOX_PYTHON=/path/to/python3.14` to select an interpreter. Interactive
+`open` uses the Python sidecar because humanize is enabled by default.
 
 Homebrew installs on macOS Apple Silicon and Linux amd64, because those are the
 hosts where the pinned browser has an upstream binary. Other Go archives still
@@ -527,8 +534,8 @@ Camoufox without producing Go-only failures?
 
 Latest checked evidence:
 [docs/BENCHMARKS.md](docs/BENCHMARKS.md),
-[8-site baseline](docs/benchmarks/2026-10-28-network-retention-full.json), and
-[100-site node-direct artifact](docs/benchmarks/2026-10-28-network-retention-extended.json).
+[8-site baseline](docs/benchmarks/2026-11-24-python-bootstrap-full.json), and
+[100-site node-direct artifact](docs/benchmarks/2026-11-24-python-bootstrap-extended.json).
 Both runtimes in the extended comparison used this
 [shared Linux persona](docs/personas/2026-09-08-node-direct-readiness.json).
 The current figures include each complete harness process tree: the runner,
@@ -539,9 +546,9 @@ Earlier Python-sidecar results remain in the
 [2026-06-08 artifact](docs/benchmarks/2026-06-08-release-gate.json).
 
 | Runtime | Passed | Blocked | Failed | Wall ms | Peak RSS MiB | Peak CPU % | Report tokens |
-|---|---:|---:|---:|---:|---:|---:|---:|
-| Python Camoufox | 88 | 12 | 0 | 348,015 | 3,072.3 | 608.8 | 83,268 |
-| gomoufox, node-direct Go | 86 | 14 | 0 | 349,292 | 2,863.0 | 380.6 | 13,210 |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| Python Camoufox | 89 | 11 | 0 | 355,031 | 2,820.7 | 439.9 | 83,188 |
+| gomoufox, node-direct Go | 89 | 11 | 0 | 352,321 | 2,592.9 | 383.9 | 13,211 |
 
 Outcome counts come from the second loop; wall time averages both loops, and
 resource figures use the larger peak.
@@ -549,16 +556,16 @@ resource figures use the larger peak.
 Latest extended validation: 100 targets, 60s timeout, `commit` wait, 3s settle,
 no screenshots, reused browser, compact Go report, 0s extra load-state wait, and
 250,000-byte classification cap. The artifact contains two alternating loops.
-gomoufox passed 86, blocked 14, failed 0. Python Camoufox passed 88, blocked 12,
-failed 0. The run had 0 persistent Go-only regressions and 4 paired outcome
+gomoufox passed 89, blocked 11, failed 0. Python Camoufox passed 89, blocked 11,
+failed 0. The run had 0 persistent Go-only regressions and 1 paired outcome
 mismatches. See the
-[extended artifact](docs/benchmarks/2026-10-28-network-retention-extended.json).
+[extended artifact](docs/benchmarks/2026-11-24-python-bootstrap-extended.json).
 
 | Ratio | node-direct Go / Python Camoufox |
 |---|---:|
-| Wall time | 1.004 |
-| Peak RSS | 0.932 |
-| Peak CPU | 0.625 |
+| Wall time | 0.992 |
+| Peak RSS | 0.919 |
+| Peak CPU | 0.873 |
 | Report tokens | 0.159 |
 
 The release evidence check passed its timing, resource and report-size limits.
